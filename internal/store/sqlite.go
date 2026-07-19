@@ -147,6 +147,17 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_hash ON refresh_tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  default_scopes TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -401,6 +412,81 @@ func (s *SQLite) RevokeRefreshToken(id string) error {
 func (s *SQLite) RevokeRefreshTokensForUser(userID string) error {
 	_, err := s.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0`, userID)
 	return err
+}
+
+func (s *SQLite) CreateAgent(a *Agent) error {
+	scopes, err := MarshalJSON(a.DefaultScopes)
+	if err != nil {
+		return err
+	}
+	if scopes == nil {
+		scopes = []byte("[]")
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, created_at) VALUES (?,?,?,?,?,?,?)`,
+		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status, string(scopes),
+		a.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) GetAgent(ownerUserID, id string) (*Agent, error) {
+	row := s.db.QueryRow(
+		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE id = ? AND owner_user_id = ?`,
+		id, ownerUserID,
+	)
+	return scanAgent(row)
+}
+
+func (s *SQLite) ListAgents(ownerUserID string) ([]*Agent, error) {
+	rows, err := s.db.Query(
+		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE owner_user_id = ? ORDER BY created_at DESC`,
+		ownerUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Agent
+	for rows.Next() {
+		a, err := scanAgentRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteAgent(ownerUserID, id string) error {
+	res, err := s.db.Exec(`DELETE FROM agents WHERE id = ? AND owner_user_id = ?`, id, ownerUserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+func scanAgent(row interface{ Scan(dest ...any) error }) (*Agent, error) {
+	var a Agent
+	var scopes string
+	var created string
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &created); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("agent not found")
+		}
+		return nil, err
+	}
+	_ = UnmarshalJSON([]byte(scopes), &a.DefaultScopes)
+	a.CreatedAt = parseTime(created)
+	return &a, nil
+}
+
+func scanAgentRows(rows *sql.Rows) (*Agent, error) {
+	return scanAgent(rows)
 }
 
 func (s *SQLite) UpdateUserPassword(userID, hash string) error {

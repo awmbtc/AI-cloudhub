@@ -46,7 +46,8 @@ func (s *Service) IssueTokens(userID, username, role string, tokenVersion int) (
 		role = RoleUser
 	}
 	accessTTL := s.tokenTTLOrDefault()
-	access, err := s.issue(userID, username, role, tokenVersion, accessTTL)
+	// Human login tokens: no agent_id / unrestricted scopes.
+	access, err := s.issue(userID, username, role, tokenVersion, accessTTL, "", nil)
 	if err != nil {
 		return nil, err
 	}

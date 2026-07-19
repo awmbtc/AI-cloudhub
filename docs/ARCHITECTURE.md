@@ -5,7 +5,7 @@
 > **技术：100% Go 自研控制面 + 本机/云端 Runtime；不是魔改 MinIO，不是网盘。**  
 > **存储：BYOS**（用户自带 R2 / S3 / OSS / MinIO…）；字节不经控制面。
 
-配套：[VENDORS.md](./VENDORS.md) · [BUDGET-WOOL.md](./BUDGET-WOOL.md) · [RISK-COST.md](./RISK-COST.md) · [DECISIONS.md](./DECISIONS.md)
+配套：[VENDORS.md](./VENDORS.md) · [BUDGET-WOOL.md](./BUDGET-WOOL.md) · [RISK-COST.md](./RISK-COST.md) · [DECISIONS.md](./DECISIONS.md) · **[ROADMAP-2.0.md](./ROADMAP-2.0.md)**（可落脚演进）
 
 ---
 
@@ -81,12 +81,13 @@
 
 ```text
 Tenant / User
+  ├── Agent[]        智能体主体（不直接继承用户全权；见 ROADMAP-2.0）
   ├── Provider[]     云厂商凭证（加密静态存储）
   ├── Drive[]        逻辑盘 = provider + bucket + prefix + 策略
   ├── Binding[]      某 Device/Runner 上的挂载实例（desired / actual）
   ├── Device[]       本机 hubd 设备身份
-  ├── Job[]          云端 Agent 任务
-  └── Quota / Policy 限流、并发、路径策略
+  ├── Job[]          云端 Agent 任务（后续可挂 agent_id）
+  └── Quota / Policy 限流、并发、路径策略、scope
 ```
 
 | 概念 | 含义 |
@@ -94,10 +95,21 @@ Tenant / User
 | **Provider** | 一把（组）对象存储 API Key + endpoint |
 | **Drive** | 逻辑盘（与「在哪台机器」无关） |
 | **Binding** | Drive 在具体设备上的挂载：`mount_point`、`desired=mounted`、`actual`、错误与延迟 |
-| **Runtime** | 执行 desired→actual 的守护进程/容器 |
-| **Manifest** | 给 Agent 的机器可读工作区契约 |
+| **Agent** | 用户名下的智能体身份；用 **Capability Token**（`aid` + `scopes`）访问 API，而非裸用用户密码 token |
+| **Runtime** | 执行 desired→actual 的守护进程/容器；**路径 jail** 约束工作区 |
+| **Manifest** | 给 Agent 的机器可读工作区契约（含 allowed_paths） |
 
 同一 **Drive ID** 可同时：本机 `G:` + 云端 `/workspace`，对象命名空间一致。
+
+### 3.1 身份分层（1.x→2.0）
+
+```text
+Human User Token     → 全权限（兼容）；管理 Agent / Provider
+Agent Token          → aid + scopes（最小权限）
+STS Session          → 对象存储短时凭证（挂载用，不替代 API 身份）
+```
+
+演进施工图见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)。**不**默认拆微服务；**不**默认建设平台大规模 Runner 池。
 
 ---
 
@@ -367,6 +379,9 @@ S3 兼容统一 Driver；模板差异（endpoint / path-style / region）。
 | **P1** | PG · 密钥加密 · Binding 状态机 · 限流配额 · 审计 |
 | **P2** | 缓存档位 · write barrier · 区域调度 · 厂商 B 批 |
 | **P3** | Job **编排 API**（调度到用户侧/计费 SKU，非免费大池）· MCP · 可观测 · 厂商 C 批 |
+| **1.x→2.0** | **Agent Identity · Capability scopes · Runtime path jail**（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)） |
+
+P0–P3 骨架已基本落地；当前主线是 **ROADMAP 阶段 A/B**，不是继续堆网盘功能。
 
 ---
 
@@ -376,4 +391,5 @@ S3 兼容统一 Driver；模板差异（endpoint / path-style / region）。
 > 用户 API Key 定义逻辑盘；Runtime 自动挂载并注入 Agent 工作区契约；  
 > 文件直打用户对象存储，写缓存保证体感接近本地；  
 > 多用户靠 STS、会话隔离与无状态 API 水平扩展。  
+> **Agent 使用降权 Token + 路径 jail，不默认继承用户全权。**  
 > **不是网盘，不是魔改 MinIO——是给人和 Agent 用的多云磁盘操作系统。**

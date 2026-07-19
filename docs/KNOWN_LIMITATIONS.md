@@ -9,6 +9,8 @@
   - 登录返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换 refresh。
   - 单会话吊销：`POST /v1/auth/logout`（可选 body `refresh_token`）
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
+- **Agent 身份（阶段 A）：** `POST /v1/agents` + `POST /v1/agents/{id}/token` 签发带 `aid`/`scopes` 的 token；人登录 token 仍全权。Policy 引擎 / Drive 绑定限制尚未做。
+- **Runtime jail：** runner 默认路径 jail（`AI_CLOUDHUB_JAIL`）；非完整 seccomp/namespace。
 - **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。
 - **Provider 密钥：** 生产请设置 `AI_CLOUDHUB_MASTER_KEY`（信封加密）；未设置时明文落库（仅开发）。
 - **STS 会话：** 默认短时 conf 内嵌密钥（`source=embedded`/`refresh`）。原生 STS 为 best-effort：

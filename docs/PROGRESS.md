@@ -94,11 +94,21 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 可选 HSTS：`AI_CLOUDHUB_HSTS=1`
 - [x] JSON `Content-Type` 校验（非 json 的 POST → 415）
 
-## 仍可后续增强
+## 阶段 A · ROADMAP-2.0（当前主线）
 
-- 更多厂商原生 STS（若 API 成熟）
-- WinFsp 官方签名安装包分发
-- MCP 协议级认证兼容
-- PG 集成测试（需本地 Postgres）
-- 按字节/对象的存储配额（需厂商 usage API）
+施工图：[ROADMAP-2.0.md](./ROADMAP-2.0.md) · 决策 D-002
+
+- [x] 正式路线图 + ARCHITECTURE/DECISIONS 对齐
+- [x] Agent CRUD：`/v1/agents` + store（memory/sqlite/pg）
+- [x] Agent Token：`POST /v1/agents/{id}/token`（`aid` + `scopes`）
+- [x] Scope 校验：agent token 写 drive/provider/job 需对应 scope；人 token 不受限
+- [x] Admin API 拒绝 agent token
+- [x] `internal/sandbox` 路径 jail + runner 默认启用（`AI_CLOUDHUB_JAIL=0` 关闭）
+
+## 仍可后续增强（阶段 B+）
+
+- Policy v0 JSON、Manifest permissions、audit.agent_id
+- Sandbox v1（env 白名单 / 网络策略）
+- MCP 工具级权限 + 路径 jail
+- Snapshot v0、更多厂商原生 STS
 - Admin IP allowlist

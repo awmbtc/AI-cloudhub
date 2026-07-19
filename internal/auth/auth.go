@@ -41,12 +41,23 @@ type Service struct {
 }
 
 type tokenPayload struct {
-	UserID       string `json:"uid"`
-	Username     string `json:"un"`
-	Role         string `json:"role"`
-	Exp          int64  `json:"exp"`
-	JTI          string `json:"jti,omitempty"`
-	TokenVersion int    `json:"tv,omitempty"`
+	UserID       string   `json:"uid"`
+	Username     string   `json:"un"`
+	Role         string   `json:"role"`
+	Exp          int64    `json:"exp"`
+	JTI          string   `json:"jti,omitempty"`
+	TokenVersion int      `json:"tv,omitempty"`
+	AgentID      string   `json:"aid,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+}
+
+// Principal is the authenticated API caller (human or agent token).
+type Principal struct {
+	UserID   string
+	Username string
+	Role     string
+	AgentID  string
+	Scopes   []string
 }
 
 // New creates an auth service backed by store.
@@ -155,16 +166,53 @@ func (s *Service) Login(username, password string) (*TokenPair, error) {
 }
 
 // Parse validates a bearer token and returns user id, name, role.
+// Prefer ParsePrincipal when agent_id/scopes are needed.
 func (s *Service) Parse(token string) (userID, username, role string, err error) {
-	p, err := s.parsePayload(token)
+	pr, err := s.ParsePrincipal(token)
 	if err != nil {
 		return "", "", "", err
 	}
-	role = p.Role
+	return pr.UserID, pr.Username, pr.Role, nil
+}
+
+// ParsePrincipal validates a bearer token and returns full principal context.
+func (s *Service) ParsePrincipal(token string) (*Principal, error) {
+	p, err := s.parsePayload(token)
+	if err != nil {
+		return nil, err
+	}
+	role := p.Role
 	if role == "" {
 		role = RoleUser
 	}
-	return p.UserID, p.Username, role, nil
+	return &Principal{
+		UserID:   p.UserID,
+		Username: p.Username,
+		Role:     role,
+		AgentID:  p.AgentID,
+		Scopes:   append([]string(nil), p.Scopes...),
+	}, nil
+}
+
+// IssueAgentToken mints a short-lived access token bound to an agent principal.
+// scopes empty → use provided defaults; unknown scopes rejected.
+func (s *Service) IssueAgentToken(userID, username, role, agentID string, tokenVersion int, scopes []string, ttl time.Duration) (string, error) {
+	if agentID == "" {
+		return "", fmt.Errorf("agent_id required")
+	}
+	scopes = NormalizeScopes(scopes)
+	for _, sc := range scopes {
+		if !IsKnownScope(sc) {
+			return "", fmt.Errorf("unknown scope %q", sc)
+		}
+	}
+	if ttl <= 0 {
+		ttl = s.tokenTTLOrDefault()
+		if ttl > time.Hour {
+			ttl = time.Hour // agent tokens default-cap 1h when using long human TTL
+		}
+	}
+	return s.issue(userID, username, role, tokenVersion, ttl, agentID, scopes)
 }
 
 func (s *Service) parsePayload(token string) (*tokenPayload, error) {
@@ -389,7 +437,7 @@ func (s *Service) ListAudit(limit int, userID, action string) ([]*store.AuditEve
 	return s.store.ListAudit(store.AuditFilter{Limit: limit, UserID: userID, Action: action})
 }
 
-func (s *Service) issue(userID, username, role string, tokenVersion int, ttl time.Duration) (string, error) {
+func (s *Service) issue(userID, username, role string, tokenVersion int, ttl time.Duration, agentID string, scopes []string) (string, error) {
 	if role == "" {
 		role = RoleUser
 	}
@@ -400,6 +448,8 @@ func (s *Service) issue(userID, username, role string, tokenVersion int, ttl tim
 		Exp:          time.Now().Add(ttl).Unix(),
 		JTI:          uuid.NewString(),
 		TokenVersion: tokenVersion,
+		AgentID:      agentID,
+		Scopes:       scopes,
 	}
 	raw, err := json.Marshal(p)
 	if err != nil {

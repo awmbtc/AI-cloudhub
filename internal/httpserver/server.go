@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awmbtc/AI-cloudhub/internal/agent"
 	"github.com/awmbtc/AI-cloudhub/internal/auth"
 	"github.com/awmbtc/AI-cloudhub/internal/config"
 	"github.com/awmbtc/AI-cloudhub/internal/device"
@@ -23,6 +25,10 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/workspace"
 )
 
+type ctxKey int
+
+const principalCtxKey ctxKey = 1
+
 // Server is the HTTP control plane.
 type Server struct {
 	cfg       config.Config
@@ -32,6 +38,7 @@ type Server struct {
 	drives    *drive.Service
 	devices   *device.Service
 	jobs      *job.Service
+	agents    *agent.Service
 	limit     policy.RateLimiter
 	authLim   *policy.AuthLimiter
 	authFail  *policy.FailureTracker
@@ -47,6 +54,7 @@ type Deps struct {
 	Drives    *drive.Service
 	Devices   *device.Service // may be nil (devices routes omitted)
 	Jobs      *job.Service
+	Agents    *agent.Service
 	Limiter   policy.RateLimiter
 	Store     store.Store
 }
@@ -69,18 +77,23 @@ func New(d Deps) http.Handler {
 	if failWin <= 0 {
 		failWin = 15
 	}
+	agentsSvc := d.Agents
+	if agentsSvc == nil && d.Store != nil {
+		agentsSvc = agent.NewService(d.Store)
+	}
 	s := &Server{
-		cfg:      d.Config,
-		auth:     d.Auth,
-		ws:       d.Workspace,
+		cfg:       d.Config,
+		auth:      d.Auth,
+		ws:        d.Workspace,
 		providers: d.Providers,
-		drives:   d.Drives,
-		devices:  d.Devices,
-		jobs:     d.Jobs,
-		limit:    lim,
-		authLim:  policy.NewAuthLimiter(authRate, 5),
-		authFail: policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
-		store:    d.Store,
+		drives:    d.Drives,
+		devices:   d.Devices,
+		jobs:      d.Jobs,
+		agents:    agentsSvc,
+		limit:     lim,
+		authLim:   policy.NewAuthLimiter(authRate, 5),
+		authFail:  policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
+		store:     d.Store,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.method(http.MethodGet, s.handleHealth))
@@ -96,6 +109,12 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/admin/users", s.withAdmin(s.routeAdminUsersRoot))
 	mux.HandleFunc("/v1/admin/users/", s.withAdmin(s.routeAdminUsers))
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
+
+	// Agent Identity (ROADMAP-2.0 stage A)
+	if s.agents != nil {
+		mux.HandleFunc("/v1/agents", s.withAuth(s.routeAgentsRoot))
+		mux.HandleFunc("/v1/agents/", s.withAuth(s.routeAgentsSub))
+	}
 
 	// Batch A: vendor catalog + provider bindings + drive maps
 	mux.HandleFunc("/v1/providers/catalog", s.method(http.MethodGet, s.handleProviderCatalog))
@@ -150,7 +169,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"p0":      []string{"sts", "manifest", "binding", "hubd", "runner"},
 		"p1":      []string{"sqlite", "secretbox", "ratelimit", "write_barrier", "devices", "binding_quota", "drive_quota", "provider_quota"},
 		"p2":      []string{"region", "sync_workspace", "session_refresh", "runtime_check", "jobs_byoc", "minio_sts"},
-		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user"},
+		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user", "agent_identity", "path_jail"},
 		"version": version.Version,
 	})
 }
@@ -185,6 +204,9 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 	}
 	switch r.Method {
 	case http.MethodPost:
+		if !s.requireScope(w, r, auth.ScopeJobRun) {
+			return
+		}
 		var in job.CreateInput
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -438,6 +460,9 @@ func (s *Server) handleProviderCatalog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routeProvidersRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
 	switch r.Method {
 	case http.MethodPost:
+		if !s.requireScope(w, r, auth.ScopeProviderWrite) {
+			return
+		}
 		var in provider.CreateInput
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -455,6 +480,9 @@ func (s *Server) routeProvidersRoot(w http.ResponseWriter, r *http.Request, user
 		s.auth.Audit(userID, "provider.create", rec.ID, string(rec.Type))
 		writeJSON(w, http.StatusCreated, rec.Public())
 	case http.MethodGet:
+		if !s.requireScope(w, r, auth.ScopeProviderRead) {
+			return
+		}
 		list := s.providers.List(userID)
 		items := make([]map[string]interface{}, 0, len(list))
 		for _, rec := range list {
@@ -507,6 +535,9 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 		}
 		writeJSON(w, http.StatusOK, rec.Public())
 	case http.MethodDelete:
+		if !s.requireScope(w, r, auth.ScopeProviderWrite) {
+			return
+		}
 		// Capture name/type for audit before delete removes the row.
 		var detail string
 		if rec, err := s.providers.Get(userID, id); err == nil {
@@ -526,6 +557,9 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
 	switch r.Method {
 	case http.MethodPost:
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
 		var in drive.CreateInput
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -543,6 +577,9 @@ func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID,
 		s.auth.Audit(userID, "drive.create", m.ID, m.Name)
 		writeJSON(w, http.StatusCreated, m)
 	case http.MethodGet:
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.drives.List(userID)})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -661,6 +698,9 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 func (s *Server) routeBindingsRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
 	switch r.Method {
 	case http.MethodPost:
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
 		var in drive.BindingCreate
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -1029,6 +1069,15 @@ func (e errString) Error() string { return string(e) }
 
 type authed func(w http.ResponseWriter, r *http.Request, userID, username, role string)
 
+func principalFrom(r *http.Request) *auth.Principal {
+	if v := r.Context().Value(principalCtxKey); v != nil {
+		if p, ok := v.(*auth.Principal); ok {
+			return p
+		}
+	}
+	return nil
+}
+
 func (s *Server) withAuth(next authed) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
@@ -1036,29 +1085,56 @@ func (s *Server) withAuth(next authed) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		uid, un, role, err := s.auth.Parse(strings.TrimPrefix(h, "Bearer "))
+		pr, err := s.auth.ParsePrincipal(strings.TrimPrefix(h, "Bearer "))
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		if s.limit != nil && !s.limit.Allow(uid) {
+		if s.limit != nil && !s.limit.Allow(pr.UserID) {
 			metrics.IncRateLimited()
 			writeErr(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
 		metrics.IncHTTP()
-		next(w, r, uid, un, role)
+		ctx := context.WithValue(r.Context(), principalCtxKey, pr)
+		next(w, r.WithContext(ctx), pr.UserID, pr.Username, pr.Role)
 	}
 }
 
 func (s *Server) withAdmin(next authed) http.HandlerFunc {
 	return s.withAuth(func(w http.ResponseWriter, r *http.Request, userID, username, role string) {
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+			writeErr(w, http.StatusForbidden, "agent token cannot use admin APIs")
+			return
+		}
 		if role != auth.RoleAdmin {
 			writeErr(w, http.StatusForbidden, "admin required")
 			return
 		}
 		next(w, r, userID, username, role)
 	})
+}
+
+// requireScope enforces capability scopes for agent tokens; human tokens always pass.
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, need string) bool {
+	pr := principalFrom(r)
+	if pr == nil {
+		return true
+	}
+	if auth.HasScope(pr.AgentID, pr.Scopes, need) {
+		return true
+	}
+	writeErr(w, http.StatusForbidden, "missing scope: "+need)
+	return false
+}
+
+func (s *Server) requireHuman(w http.ResponseWriter, r *http.Request) bool {
+	pr := principalFrom(r)
+	if pr != nil && pr.AgentID != "" {
+		writeErr(w, http.StatusForbidden, "human session required")
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
@@ -1076,11 +1152,151 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, userID, userna
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	out := map[string]interface{}{
 		"id":       userID,
 		"username": username,
 		"role":     role,
-	})
+	}
+	if pr := principalFrom(r); pr != nil {
+		if pr.AgentID != "" {
+			out["agent_id"] = pr.AgentID
+			out["scopes"] = pr.Scopes
+			out["principal"] = "agent"
+		} else {
+			out["principal"] = "human"
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) routeAgentsRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
+	if s.agents == nil {
+		writeErr(w, http.StatusNotFound, "agents disabled")
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if !s.requireHuman(w, r) {
+			return
+		}
+		if !requireJSON(w, r) {
+			return
+		}
+		var in agent.CreateInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		rec, err := s.agents.Create(userID, in)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "agent.create", rec.ID, rec.Name)
+		writeJSON(w, http.StatusCreated, rec)
+	case http.MethodGet:
+		// human or agent with any drive scope can list own agents? keep human-only for list of agents management
+		if !s.requireHuman(w, r) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.agents.List(userID)})
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) routeAgentsSub(w http.ResponseWriter, r *http.Request, userID, username, role string) {
+	if s.agents == nil {
+		writeErr(w, http.StatusNotFound, "agents disabled")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/v1/agents/")
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	id := parts[0]
+	if len(parts) == 2 && parts[1] == "token" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireHuman(w, r) {
+			return
+		}
+		rec, err := s.agents.Get(userID, id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if rec.Status != agent.StatusActive {
+			writeErr(w, http.StatusBadRequest, "agent disabled")
+			return
+		}
+		var body struct {
+			Scopes []string `json:"scopes"`
+			TTLMin int      `json:"ttl_min"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		scopes := body.Scopes
+		if len(scopes) == 0 {
+			scopes = rec.DefaultScopes
+		}
+		ttl := time.Duration(body.TTLMin) * time.Minute
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		// load token_version
+		u, err := s.store.GetUserByID(userID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		tok, err := s.auth.IssueAgentToken(userID, username, role, rec.ID, u.TokenVersion, scopes, ttl)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "agent.token", rec.ID, strings.Join(scopes, ","))
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"token":      tok,
+			"token_type": "Bearer",
+			"expires_in": int64(ttl.Seconds()),
+			"agent_id":   rec.ID,
+			"scopes":     scopes,
+		})
+		return
+	}
+	if len(parts) != 1 {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if !s.requireHuman(w, r) {
+			return
+		}
+		rec, err := s.agents.Get(userID, id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, rec)
+	case http.MethodDelete:
+		if !s.requireHuman(w, r) {
+			return
+		}
+		if err := s.agents.Delete(userID, id); err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "agent.delete", id, "")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, userID, username, role string) {

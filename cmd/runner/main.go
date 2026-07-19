@@ -18,8 +18,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/awmbtc/AI-cloudhub/internal/sandbox"
 )
 
 func main() {
@@ -272,6 +275,24 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		log.Printf("ready mode=%s path=%s (no command); waiting signal", mode, mountPoint)
 		<-sig
 		return nil
+	}
+
+	// Path jail v0: reject command args that resolve outside workspace.
+	// Opt-out: AI_CLOUDHUB_JAIL=0 (dev only).
+	if env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false" {
+		jail := sandbox.NewPathJail(mountPoint)
+		if err := jail.Allow(mountPoint); err != nil {
+			return fmt.Errorf("jail mount: %w", err)
+		}
+		for _, a := range args[1:] {
+			// only check path-looking args (absolute or containing / or ..)
+			if a == "" || (!strings.Contains(a, "/") && !strings.Contains(a, `\`) && !strings.Contains(a, "..")) {
+				continue
+			}
+			if err := jail.Allow(a); err != nil {
+				return fmt.Errorf("path jail: arg %q: %w", a, err)
+			}
+		}
 	}
 
 	agent := exec.Command(args[0], args[1:]...)

@@ -20,6 +20,8 @@
 - Audit filter by action: `GET /v1/admin/audit?action=`
 - Refresh tokens (opaque, hashed); `POST /v1/auth/refresh` with rotation
 - Admin create user `POST /v1/admin/users`; optional HSTS; JSON Content-Type 415
+- ROADMAP-2.0 + D-002: Agent Identity CRUD, capability scopes on tokens, runner path jail
+- Docs: formal evolution roadmap aligned with architecture
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

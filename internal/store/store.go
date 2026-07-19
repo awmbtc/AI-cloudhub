@@ -97,6 +97,17 @@ type RefreshToken struct {
 	Revoked   bool
 }
 
+// Agent is a user-owned agent principal (not a human login).
+type Agent struct {
+	ID            string
+	OwnerUserID   string
+	Name          string
+	Description   string
+	Status        string // active | disabled
+	DefaultScopes []string
+	CreatedAt     time.Time
+}
+
 // Job is a BYOC work item (compute on user runners only).
 type Job struct {
 	ID         string
@@ -149,6 +160,12 @@ type Store interface {
 	GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error)
 	RevokeRefreshToken(id string) error
 	RevokeRefreshTokensForUser(userID string) error
+
+	// Agents (Agent Identity)
+	CreateAgent(a *Agent) error
+	GetAgent(ownerUserID, id string) (*Agent, error)
+	ListAgents(ownerUserID string) ([]*Agent, error)
+	DeleteAgent(ownerUserID, id string) error
 
 	// Providers
 	CreateProvider(p *Provider) error

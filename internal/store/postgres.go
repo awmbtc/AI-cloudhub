@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_hash ON refresh_tokens(token_hash);
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  default_scopes TEXT NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -370,6 +380,72 @@ func (p *Postgres) RevokeRefreshToken(id string) error {
 func (p *Postgres) RevokeRefreshTokensForUser(userID string) error {
 	_, err := p.db.Exec(`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`, userID)
 	return err
+}
+
+func (p *Postgres) CreateAgent(a *Agent) error {
+	scopes, err := MarshalJSON(a.DefaultScopes)
+	if err != nil {
+		return err
+	}
+	if scopes == nil {
+		scopes = []byte("[]")
+	}
+	_, err = p.db.Exec(
+		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status, string(scopes), a.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) GetAgent(ownerUserID, id string) (*Agent, error) {
+	row := p.db.QueryRow(
+		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE id = $1 AND owner_user_id = $2`,
+		id, ownerUserID,
+	)
+	var a Agent
+	var scopes string
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &a.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("agent not found")
+		}
+		return nil, err
+	}
+	_ = UnmarshalJSON([]byte(scopes), &a.DefaultScopes)
+	return &a, nil
+}
+
+func (p *Postgres) ListAgents(ownerUserID string) ([]*Agent, error) {
+	rows, err := p.db.Query(
+		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE owner_user_id = $1 ORDER BY created_at DESC`,
+		ownerUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Agent
+	for rows.Next() {
+		var a Agent
+		var scopes string
+		if err := rows.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		_ = UnmarshalJSON([]byte(scopes), &a.DefaultScopes)
+		out = append(out, &a)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteAgent(ownerUserID, id string) error {
+	res, err := p.db.Exec(`DELETE FROM agents WHERE id = $1 AND owner_user_id = $2`, id, ownerUserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
 }
 
 func (p *Postgres) UpdateUserPassword(userID, hash string) error {

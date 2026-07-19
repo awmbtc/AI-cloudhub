@@ -18,6 +18,7 @@ type Memory struct {
 	audits     []*AuditEvent
 	revokedJTI map[string]time.Time // jti -> expiresAt
 	refresh    map[string]*RefreshToken // id -> token
+	agents     map[string]*Agent        // id -> agent
 }
 
 // NewMemory returns an empty in-memory store.
@@ -32,6 +33,7 @@ func NewMemory() *Memory {
 		audits:     nil,
 		revokedJTI: make(map[string]time.Time),
 		refresh:    make(map[string]*RefreshToken),
+		agents:     make(map[string]*Agent),
 	}
 }
 
@@ -245,6 +247,59 @@ func (m *Memory) RevokeRefreshTokensForUser(userID string) error {
 			t.Revoked = true
 		}
 	}
+	return nil
+}
+
+func (m *Memory) CreateAgent(a *Agent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *a
+	if cp.DefaultScopes != nil {
+		cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
+	}
+	m.agents[a.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetAgent(ownerUserID, id string) (*Agent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, ok := m.agents[id]
+	if !ok || a.OwnerUserID != ownerUserID {
+		return nil, fmt.Errorf("agent not found")
+	}
+	cp := *a
+	if a.DefaultScopes != nil {
+		cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) ListAgents(ownerUserID string) ([]*Agent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Agent
+	for _, a := range m.agents {
+		if a.OwnerUserID != ownerUserID {
+			continue
+		}
+		cp := *a
+		if a.DefaultScopes != nil {
+			cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
+		}
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (m *Memory) DeleteAgent(ownerUserID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agents[id]
+	if !ok || a.OwnerUserID != ownerUserID {
+		return fmt.Errorf("agent not found")
+	}
+	delete(m.agents, id)
 	return nil
 }
 

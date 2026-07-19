@@ -132,8 +132,63 @@ P0 + P1 安全子集
 
 ---
 
+---
+
+## D-002 · 2.0 演进：Agent IAM 优先，拒绝过早微服务与万能连接器
+
+| 字段 | 内容 |
+|------|------|
+| **日期** | 2026-07-20 |
+| **状态** | **已采纳（Accepted）** |
+| **范围** | 产品演进主线、架构边界、与外部 2.0/3.0 愿景的对齐方式 |
+| **施工图** | [ROADMAP-2.0.md](./ROADMAP-2.0.md) |
+
+### 背景
+
+外部审计与《2.0/3.0 架构演进》报告将产品定位从「AI 文件系统」拉到「Agent Workspace Infrastructure / Data Plane」。方向正确，但清单过大（微服务拆分、Marketplace、Memory Kernel、Git/DB/SaaS 一等存储）。需书面裁剪，避免实现漂移。
+
+### 决策结论
+
+#### 1. 采纳的北极星
+
+- 产品是 **Agent 访问用户自有数据的安全数据平面**，不是 C 端网盘 UI  
+- **Human Identity ≠ Agent Identity**；Agent 用 Capability Token（scopes + 可选资源范围）  
+- Runtime 必须 **Sandbox / path jail**，否则 BYOS 叙事在执行端断链  
+
+#### 2. 演进接到现有模型（禁止平行宇宙）
+
+- Workspace ≈ Drive + Binding + Manifest（增强字段，不另起一套）  
+- Policy v0 = scope 校验 + 归属 + 后续 JSON 规则；**不**一上来 OPA 全家桶  
+- Audit Graph v0 = 扩展 `audit_events` 关联字段，**不**先上图数据库  
+
+#### 3. 默认禁止（本阶段）
+
+| 禁止 | 原因 |
+|------|------|
+| 未成规模前拆 identity/policy/memory 等微服务 | 拖慢真正缺口；monorepo 模块边界足够 |
+| 2.0 初版做 Marketplace / 完整 Memory Kernel | 无客户验证的范围膨胀 |
+| 对象存储未做深即把 Git/DB/SaaS 列为一等存储 | 稀释 Drive Map + STS + Mount 独特性 |
+| Agent 默认使用用户登录全权 token | 扩大泄露与越权面 |
+
+#### 4. 阶段顺序（摘要）
+
+```text
+阶段 A（当前）  Agent CRUD + agent token(scopes) + path jail
+阶段 B（2.0）   Policy v0 · Sandbox v1 · Manifest permissions · audit agent_id · snapshot v0
+阶段 C（3.0）   规模化后再 Kernel 叙事/可选服务拆分/生态/连接器扩展
+```
+
+### 相关链接
+
+- [ROADMAP-2.0.md](./ROADMAP-2.0.md)  
+- [ARCHITECTURE.md §3.1](./ARCHITECTURE.md)  
+- D-001 大规模 Runner 池黑名单  
+
+---
+
 ## 记录索引
 
 | ID | 标题 | 状态 |
 |----|------|------|
 | D-001 | 决策基线与自建大规模 Runner 池黑名单 | Accepted |
+| D-002 | 2.0 演进：Agent IAM 优先，拒绝过早微服务 | Accepted |
