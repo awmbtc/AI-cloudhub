@@ -98,7 +98,16 @@ components:
       properties:
         token:
           type: string
-          description: Bearer token for subsequent requests
+          description: Access bearer token
+        refresh_token:
+          type: string
+          description: Opaque refresh token (rotated on /v1/auth/refresh)
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+        token_type:
+          type: string
+          example: Bearer
         user:
           $ref: '#/components/schemas/User'
 
@@ -951,13 +960,47 @@ paths:
         '429':
           description: Rate limited or locked after failures
 
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Exchange refresh_token for new access+refresh (rotation)
+      operationId: authRefresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/auth/logout:
     post:
       tags: [auth]
-      summary: Revoke current bearer token (jti denylist)
+      summary: Revoke current access token (optional refresh_token in body)
       operationId: authLogout
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
       responses:
         '200':
           description: Logged out
@@ -1036,6 +1079,36 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [admin]
+      summary: Create user (admin; for closed registration)
+      operationId: adminCreateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+                role: { type: string, enum: [admin, user], default: user }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /v1/admin/users/{id}/role:
     post:

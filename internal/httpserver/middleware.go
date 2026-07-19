@@ -26,7 +26,8 @@ func withRequestID(next http.Handler) http.Handler {
 }
 
 // withSecurityHeaders adds conservative browser security headers on every response.
-func withSecurityHeaders(next http.Handler) http.Handler {
+// hsts enables Strict-Transport-Security (only enable when the API is served over HTTPS).
+func withSecurityHeaders(hsts bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -37,8 +38,33 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		if h.Get("Cache-Control") == "" {
 			h.Set("Cache-Control", "no-store")
 		}
+		if hsts {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireJSON returns false and writes 415 if Content-Type is not application/json
+// for methods that typically carry a JSON body.
+func requireJSON(w http.ResponseWriter, r *http.Request) bool {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	default:
+		return true
+	}
+	ct := r.Header.Get("Content-Type")
+	if ct == "" {
+		// allow empty for tiny clients; decoder still works
+		return true
+	}
+	// Accept application/json and application/json; charset=utf-8
+	base := strings.TrimSpace(strings.Split(ct, ";")[0])
+	if !strings.EqualFold(base, "application/json") {
+		writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return false
+	}
+	return true
 }
 
 // withMaxBody caps request body size (DoS guard). zero → 1 MiB.

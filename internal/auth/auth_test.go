@@ -43,16 +43,19 @@ func TestLoginWithBcrypt(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	tok, u, err := svc.Login("bob", "hunter2xx")
+	pair, err := svc.Login("bob", "hunter2xx")
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	if tok == "" || u.Username != "bob" {
-		t.Fatalf("unexpected login result: tok=%q user=%+v", tok, u)
+	if pair.AccessToken == "" || pair.User == nil || pair.User.Username != "bob" {
+		t.Fatalf("unexpected login result: %+v", pair)
+	}
+	if pair.RefreshToken == "" {
+		t.Fatal("expected refresh token")
 	}
 
 	// Wrong password
-	if _, _, err := svc.Login("bob", "wrong"); err == nil {
+	if _, err := svc.Login("bob", "wrong"); err == nil {
 		t.Fatal("expected invalid credentials")
 	}
 }
@@ -69,12 +72,12 @@ func TestLoginUpgradesLegacyPlaintext(t *testing.T) {
 	}
 
 	svc := New("test-secret", st)
-	tok, u, err := svc.Login("legacy", "old-plain")
+	pair, err := svc.Login("legacy", "old-plain")
 	if err != nil {
 		t.Fatalf("Login legacy: %v", err)
 	}
-	if tok == "" || u.ID != "legacy-1" {
-		t.Fatalf("unexpected login: tok=%q user=%+v", tok, u)
+	if pair.AccessToken == "" || pair.User == nil || pair.User.ID != "legacy-1" {
+		t.Fatalf("unexpected login: %+v", pair)
 	}
 
 	rec, err := st.GetUserByUsername("legacy")
@@ -89,16 +92,16 @@ func TestLoginUpgradesLegacyPlaintext(t *testing.T) {
 	}
 
 	// Subsequent login must work with the new hash.
-	tok2, _, err := svc.Login("legacy", "old-plain")
+	pair2, err := svc.Login("legacy", "old-plain")
 	if err != nil {
 		t.Fatalf("Login after upgrade: %v", err)
 	}
-	if tok2 == "" {
+	if pair2.AccessToken == "" {
 		t.Fatal("empty token after upgrade login")
 	}
 
 	// Wrong password still fails after upgrade.
-	if _, _, err := svc.Login("legacy", "nope"); err == nil {
+	if _, err := svc.Login("legacy", "nope"); err == nil {
 		t.Fatal("expected invalid credentials after upgrade")
 	}
 }

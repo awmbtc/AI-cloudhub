@@ -87,6 +87,16 @@ type AuditFilter struct {
 	Limit  int
 }
 
+// RefreshToken is a long-lived opaque credential (hash stored only).
+type RefreshToken struct {
+	ID        string
+	UserID    string
+	TokenHash string // sha256 hex of raw token
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	Revoked   bool
+}
+
 // Job is a BYOC work item (compute on user runners only).
 type Job struct {
 	ID         string
@@ -132,6 +142,13 @@ type Store interface {
 	RevokeJTI(jti string, expiresAt time.Time) error
 	// IsJTIRevoked reports whether jti is on the denylist (and not expired).
 	IsJTIRevoked(jti string) (bool, error)
+
+	// Refresh tokens (opaque; store only SHA-256 hash of secret).
+	CreateRefreshToken(t *RefreshToken) error
+	// GetRefreshTokenByHash returns non-revoked, non-expired token by hash.
+	GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error)
+	RevokeRefreshToken(id string) error
+	RevokeRefreshTokensForUser(userID string) error
 
 	// Providers
 	CreateProvider(p *Provider) error

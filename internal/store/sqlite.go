@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS revoked_jtis (
   expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_revoked_jtis_exp ON revoked_jtis(expires_at);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_hash ON refresh_tokens(token_hash);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -335,6 +346,61 @@ func (s *SQLite) IsJTIRevoked(jti string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func (s *SQLite) CreateRefreshToken(t *RefreshToken) error {
+	rev := 0
+	if t.Revoked {
+		rev = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at, revoked) VALUES (?,?,?,?,?,?)`,
+		t.ID, t.UserID, t.TokenHash,
+		t.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		t.CreatedAt.UTC().Format(time.RFC3339Nano),
+		rev,
+	)
+	return err
+}
+
+func (s *SQLite) GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, token_hash, expires_at, created_at, revoked FROM refresh_tokens WHERE token_hash = ?`,
+		tokenHash,
+	)
+	var t RefreshToken
+	var exp, created string
+	var rev int
+	if err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &exp, &created, &rev); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("refresh token not found")
+		}
+		return nil, err
+	}
+	t.ExpiresAt = parseTime(exp)
+	t.CreatedAt = parseTime(created)
+	t.Revoked = rev != 0
+	if t.Revoked || time.Now().After(t.ExpiresAt) {
+		return nil, fmt.Errorf("refresh token invalid")
+	}
+	return &t, nil
+}
+
+func (s *SQLite) RevokeRefreshToken(id string) error {
+	res, err := s.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("refresh token not found")
+	}
+	return nil
+}
+
+func (s *SQLite) RevokeRefreshTokensForUser(userID string) error {
+	_, err := s.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0`, userID)
+	return err
 }
 
 func (s *SQLite) UpdateUserPassword(userID, hash string) error {

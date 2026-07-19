@@ -17,6 +17,7 @@ type Memory struct {
 	jobs       map[string]*Job
 	audits     []*AuditEvent
 	revokedJTI map[string]time.Time // jti -> expiresAt
+	refresh    map[string]*RefreshToken // id -> token
 }
 
 // NewMemory returns an empty in-memory store.
@@ -30,6 +31,7 @@ func NewMemory() *Memory {
 		jobs:       make(map[string]*Job),
 		audits:     nil,
 		revokedJTI: make(map[string]time.Time),
+		refresh:    make(map[string]*RefreshToken),
 	}
 }
 
@@ -194,6 +196,56 @@ func (m *Memory) IsJTIRevoked(jti string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func (m *Memory) CreateRefreshToken(t *RefreshToken) error {
+	if t == nil || t.ID == "" || t.TokenHash == "" {
+		return fmt.Errorf("refresh token incomplete")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *t
+	m.refresh[t.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	now := time.Now()
+	for _, t := range m.refresh {
+		if t.TokenHash != tokenHash {
+			continue
+		}
+		if t.Revoked || now.After(t.ExpiresAt) {
+			return nil, fmt.Errorf("refresh token invalid")
+		}
+		cp := *t
+		return &cp, nil
+	}
+	return nil, fmt.Errorf("refresh token not found")
+}
+
+func (m *Memory) RevokeRefreshToken(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.refresh[id]
+	if !ok {
+		return fmt.Errorf("refresh token not found")
+	}
+	t.Revoked = true
+	return nil
+}
+
+func (m *Memory) RevokeRefreshTokensForUser(userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.refresh {
+		if t.UserID == userID {
+			t.Revoked = true
+		}
+	}
+	return nil
 }
 
 func (m *Memory) UpdateUserPassword(userID, hash string) error {

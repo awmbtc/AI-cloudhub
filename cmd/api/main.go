@@ -47,6 +47,7 @@ func main() {
 
 	authSvc := auth.New(cfg.JWTSecret, st)
 	authSvc.SetTokenTTL(cfg.TokenTTL)
+	authSvc.SetRefreshTTL(cfg.RefreshTTL)
 
 	box, err := secretbox.FromEnv()
 	if err != nil {

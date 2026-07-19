@@ -127,6 +127,16 @@ CREATE TABLE IF NOT EXISTS revoked_jtis (
   expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_revoked_jtis_exp ON revoked_jtis(expires_at);
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  revoked BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_hash ON refresh_tokens(token_hash);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -317,6 +327,49 @@ func (p *Postgres) IsJTIRevoked(jti string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+func (p *Postgres) CreateRefreshToken(t *RefreshToken) error {
+	_, err := p.db.Exec(
+		`INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at, revoked) VALUES ($1,$2,$3,$4,$5,$6)`,
+		t.ID, t.UserID, t.TokenHash, t.ExpiresAt.UTC(), t.CreatedAt.UTC(), t.Revoked,
+	)
+	return err
+}
+
+func (p *Postgres) GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error) {
+	row := p.db.QueryRow(
+		`SELECT id, user_id, token_hash, expires_at, created_at, revoked FROM refresh_tokens WHERE token_hash = $1`,
+		tokenHash,
+	)
+	var t RefreshToken
+	if err := row.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.CreatedAt, &t.Revoked); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("refresh token not found")
+		}
+		return nil, err
+	}
+	if t.Revoked || time.Now().After(t.ExpiresAt) {
+		return nil, fmt.Errorf("refresh token invalid")
+	}
+	return &t, nil
+}
+
+func (p *Postgres) RevokeRefreshToken(id string) error {
+	res, err := p.db.Exec(`UPDATE refresh_tokens SET revoked = TRUE WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("refresh token not found")
+	}
+	return nil
+}
+
+func (p *Postgres) RevokeRefreshTokensForUser(userID string) error {
+	_, err := p.db.Exec(`UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE`, userID)
+	return err
 }
 
 func (p *Postgres) UpdateUserPassword(userID, hash string) error {

@@ -18,6 +18,8 @@
 - Last-admin demotion blocked; security headers; max body size; optional metrics token
 - Session revoke: jti denylist + token_version; logout; admin revoke-sessions; password change invalidates all
 - Audit filter by action: `GET /v1/admin/audit?action=`
+- Refresh tokens (opaque, hashed); `POST /v1/auth/refresh` with rotation
+- Admin create user `POST /v1/admin/users`; optional HSTS; JSON Content-Type 415
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

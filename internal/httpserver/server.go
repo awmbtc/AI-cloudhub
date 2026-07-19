@@ -89,10 +89,11 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/runtime/check", s.method(http.MethodGet, s.handleRuntimeCheck))
 	mux.HandleFunc("/v1/auth/register", s.method(http.MethodPost, s.handleRegister))
 	mux.HandleFunc("/v1/auth/login", s.method(http.MethodPost, s.handleLogin))
+	mux.HandleFunc("/v1/auth/refresh", s.method(http.MethodPost, s.handleRefresh))
 	mux.HandleFunc("/v1/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("/v1/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("/v1/me/password", s.withAuth(s.handleChangePassword))
-	mux.HandleFunc("/v1/admin/users", s.withAdmin(s.handleAdminListUsers))
+	mux.HandleFunc("/v1/admin/users", s.withAdmin(s.routeAdminUsersRoot))
 	mux.HandleFunc("/v1/admin/users/", s.withAdmin(s.routeAdminUsers))
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
 
@@ -124,7 +125,7 @@ func New(d Deps) http.Handler {
 	var h http.Handler = mux
 	h = withMaxBody(d.Config.MaxBodyBytes, h)
 	h = withCORS(h)
-	h = withSecurityHeaders(h)
+	h = withSecurityHeaders(d.Config.HSTS, h)
 	h = withRequestID(h)
 	return h
 }
@@ -149,7 +150,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"p0":      []string{"sts", "manifest", "binding", "hubd", "runner"},
 		"p1":      []string{"sqlite", "secretbox", "ratelimit", "write_barrier", "devices", "binding_quota", "drive_quota", "provider_quota"},
 		"p2":      []string{"region", "sync_workspace", "session_refresh", "runtime_check", "jobs_byoc", "minio_sts"},
-		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke"},
+		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user"},
 		"version": version.Version,
 	})
 }
@@ -310,6 +311,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !requireJSON(w, r) {
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -334,6 +338,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
+	if !requireJSON(w, r) {
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -349,7 +356,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many failed attempts; try later")
 		return
 	}
-	tok, u, err := s.auth.Login(body.Username, body.Password)
+	pair, err := s.auth.Login(body.Username, body.Password)
 	if err != nil {
 		locked := false
 		if s.authFail != nil {
@@ -366,11 +373,35 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.authFail != nil {
 		s.authFail.Clear(lockKey)
 	}
-	s.auth.Audit(u.ID, "auth.login", u.Username, "ok")
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"token": tok,
-		"user":  u, // includes role; first registered user is admin
-	})
+	s.auth.Audit(pair.User.ID, "auth.login", pair.User.Username, "ok")
+	writeJSON(w, http.StatusOK, pair)
+}
+
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if s.authLim != nil && !s.authLim.Allow("refresh:"+ip) {
+		metrics.IncRateLimited()
+		writeErr(w, http.StatusTooManyRequests, "rate limited")
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pair, err := s.auth.Refresh(body.RefreshToken)
+	if err != nil {
+		s.auth.Audit("", "auth.refresh_fail", "", "ip="+ip)
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	s.auth.Audit(pair.User.ID, "auth.refresh", pair.User.Username, "ok")
+	writeJSON(w, http.StatusOK, pair)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -1057,14 +1088,47 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, userID, us
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // optional body
 	h := r.Header.Get("Authorization")
 	tok := strings.TrimPrefix(h, "Bearer ")
-	if err := s.auth.Logout(tok); err != nil {
+	if err := s.auth.Logout(tok, body.RefreshToken); err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	s.auth.Audit(userID, "auth.logout", username, "ok")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) routeAdminUsersRoot(w http.ResponseWriter, r *http.Request, userID, username, role string) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAdminListUsers(w, r, userID, username, role)
+	case http.MethodPost:
+		if !requireJSON(w, r) {
+			return
+		}
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		u, err := s.auth.AdminCreateUser(body.Username, body.Password, body.Role)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "admin.create_user", u.ID, u.Username+" role="+u.Role)
+		writeJSON(w, http.StatusCreated, u)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request, userID, username, role string) {

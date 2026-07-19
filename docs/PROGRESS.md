@@ -86,6 +86,14 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 审计过滤：`GET /v1/admin/audit?user_id=&action=&limit=`
 - [x] store：`revoked_jtis` 表 + users.token_version（sqlite/pg/memory）
 
+## 加固项（第四波）
+
+- [x] Refresh 双令牌：login 返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换
+- [x] refresh 仅存 SHA-256；改密 / revoke-sessions 吊销全部 refresh
+- [x] Admin 建用户：`POST /v1/admin/users`（username/password/role）
+- [x] 可选 HSTS：`AI_CLOUDHUB_HSTS=1`
+- [x] JSON `Content-Type` 校验（非 json 的 POST → 415）
+
 ## 仍可后续增强
 
 - 更多厂商原生 STS（若 API 成熟）
@@ -93,4 +101,4 @@ curl -s localhost:8080/v1/runtime/check
 - MCP 协议级认证兼容
 - PG 集成测试（需本地 Postgres）
 - 按字节/对象的存储配额（需厂商 usage API）
-- Refresh token 双令牌体系
+- Admin IP allowlist

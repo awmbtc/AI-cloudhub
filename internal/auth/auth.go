@@ -34,9 +34,10 @@ const DefaultTokenTTL = 24 * time.Hour
 
 // Service provides register/login and token checks.
 type Service struct {
-	secret   []byte
-	store    store.Store
-	tokenTTL time.Duration
+	secret     []byte
+	store      store.Store
+	tokenTTL   time.Duration
+	refreshTTL time.Duration
 }
 
 type tokenPayload struct {
@@ -122,11 +123,11 @@ func (s *Service) Register(username, password string) (*User, error) {
 	return &User{ID: u.ID, Username: u.Username, Role: role}, nil
 }
 
-// Login verifies credentials and returns a token.
-func (s *Service) Login(username, password string) (string, *User, error) {
+// Login verifies credentials and returns an access+refresh pair.
+func (s *Service) Login(username, password string) (*TokenPair, error) {
 	rec, err := s.store.GetUserByUsername(username)
 	if err != nil {
-		return "", nil, fmt.Errorf("invalid credentials")
+		return nil, fmt.Errorf("invalid credentials")
 	}
 	role := rec.Role
 	if role == "" {
@@ -135,26 +136,22 @@ func (s *Service) Login(username, password string) (string, *User, error) {
 
 	if isBcryptHash(rec.Password) {
 		if err := bcrypt.CompareHashAndPassword([]byte(rec.Password), []byte(password)); err != nil {
-			return "", nil, fmt.Errorf("invalid credentials")
+			return nil, fmt.Errorf("invalid credentials")
 		}
 	} else {
 		if rec.Password != password {
-			return "", nil, fmt.Errorf("invalid credentials")
+			return nil, fmt.Errorf("invalid credentials")
 		}
 		hash, err := HashPassword(password)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
 		if err := s.store.UpdateUserPassword(rec.ID, hash); err != nil {
-			return "", nil, fmt.Errorf("upgrade password hash: %w", err)
+			return nil, fmt.Errorf("upgrade password hash: %w", err)
 		}
 	}
 
-	tok, err := s.issue(rec.ID, rec.Username, role, rec.TokenVersion, s.tokenTTLOrDefault())
-	if err != nil {
-		return "", nil, err
-	}
-	return tok, &User{ID: rec.ID, Username: rec.Username, Role: role}, nil
+	return s.IssueTokens(rec.ID, rec.Username, role, rec.TokenVersion)
 }
 
 // Parse validates a bearer token and returns user id, name, role.
@@ -213,24 +210,66 @@ func (s *Service) parsePayload(token string) (*tokenPayload, error) {
 	return &p, nil
 }
 
-// Logout revokes the current token (jti denylist until natural expiry).
-func (s *Service) Logout(token string) error {
+// Logout revokes the current access token (jti denylist until natural expiry).
+// Optional rawRefresh also revokes that refresh token.
+func (s *Service) Logout(token string, rawRefresh string) error {
 	p, err := s.parsePayload(token)
 	if err != nil {
 		return err
 	}
+	if rawRefresh != "" {
+		s.RevokeRefresh(rawRefresh)
+	}
 	if p.JTI == "" {
 		// Legacy token without jti: bump user version to force re-login.
 		_, err := s.store.BumpTokenVersion(p.UserID)
+		_ = s.store.RevokeRefreshTokensForUser(p.UserID)
 		return err
 	}
 	exp := time.Unix(p.Exp, 0).UTC()
 	return s.store.RevokeJTI(p.JTI, exp)
 }
 
-// RevokeAllSessions bumps token_version so all issued tokens for the user fail Parse.
+// RevokeAllSessions bumps token_version and revokes all refresh tokens.
 func (s *Service) RevokeAllSessions(userID string) (int, error) {
+	_ = s.store.RevokeRefreshTokensForUser(userID)
 	return s.store.BumpTokenVersion(userID)
+}
+
+// AdminCreateUser creates a user with an explicit role (admin-only API).
+// Does not auto-promote first user; callers must pass role admin|user.
+func (s *Service) AdminCreateUser(username, password, role string) (*User, error) {
+	username = strings.TrimSpace(username)
+	if err := ValidateUsername(username); err != nil {
+		return nil, err
+	}
+	if err := ValidatePassword(password); err != nil {
+		return nil, err
+	}
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = RoleUser
+	}
+	if role != RoleAdmin && role != RoleUser {
+		return nil, fmt.Errorf("role must be admin or user")
+	}
+	if _, err := s.store.GetUserByUsername(username); err == nil {
+		return nil, fmt.Errorf("user exists")
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	u := &store.User{
+		ID:       uuid.NewString(),
+		Username: username,
+		Password: hash,
+		Role:     role,
+	}
+	if err := s.store.CreateUser(u); err != nil {
+		return nil, err
+	}
+	return &User{ID: u.ID, Username: u.Username, Role: role}, nil
 }
 
 // SetRole updates a user's role (caller must enforce admin).
@@ -328,6 +367,7 @@ func (s *Service) ChangePassword(userID, oldPassword, newPassword string) error 
 		return err
 	}
 	// Invalidate all existing sessions after password change.
+	_ = s.store.RevokeRefreshTokensForUser(userID)
 	_, _ = s.store.BumpTokenVersion(userID)
 	return nil
 }

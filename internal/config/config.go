@@ -49,11 +49,17 @@ type Config struct {
 	// (zero users). Env: AI_CLOUDHUB_ALLOW_REGISTER (default true).
 	AllowRegister bool
 
-	// TokenTTL is issued session lifetime. Env: AI_CLOUDHUB_TOKEN_TTL_HOURS (default 24).
+	// TokenTTL is access-token lifetime. Env: AI_CLOUDHUB_TOKEN_TTL_HOURS (default 24).
 	TokenTTL time.Duration
+	// RefreshTTL is refresh-token lifetime. Env: AI_CLOUDHUB_REFRESH_TTL_HOURS (default 168 = 7d).
+	RefreshTTL time.Duration
 
 	// MaxBodyBytes caps request bodies. Env: AI_CLOUDHUB_MAX_BODY_BYTES (default 1MiB).
 	MaxBodyBytes int64
+
+	// HSTS enables Strict-Transport-Security response header (set only behind HTTPS).
+	// Env: AI_CLOUDHUB_HSTS=1
+	HSTS bool
 
 	// MetricsToken when set requires Authorization: Bearer <token> (or ?token=) for /metrics.
 	// Env: AI_CLOUDHUB_METRICS_TOKEN.
@@ -72,6 +78,10 @@ func Load() Config {
 	ttlH := getenvInt("AI_CLOUDHUB_TOKEN_TTL_HOURS", 24)
 	if ttlH <= 0 {
 		ttlH = 24
+	}
+	refH := getenvInt("AI_CLOUDHUB_REFRESH_TTL_HOURS", 168)
+	if refH <= 0 {
+		refH = 168
 	}
 	maxBody := getenvInt("AI_CLOUDHUB_MAX_BODY_BYTES", 1<<20) // 1 MiB
 	if maxBody <= 0 {
@@ -92,7 +102,9 @@ func Load() Config {
 		Strict:            getenvBool("AI_CLOUDHUB_STRICT", false),
 		AllowRegister:     getenvBool("AI_CLOUDHUB_ALLOW_REGISTER", true),
 		TokenTTL:          time.Duration(ttlH) * time.Hour,
+		RefreshTTL:        time.Duration(refH) * time.Hour,
 		MaxBodyBytes:      int64(maxBody),
+		HSTS:              getenvBool("AI_CLOUDHUB_HSTS", false),
 		MetricsToken:      getenv("AI_CLOUDHUB_METRICS_TOKEN", ""),
 		AuthRatePerMin:    getenvInt("AI_CLOUDHUB_AUTH_RATE_PER_MIN", 20),
 		AuthFailMax:       getenvInt("AI_CLOUDHUB_AUTH_FAIL_MAX", 8),

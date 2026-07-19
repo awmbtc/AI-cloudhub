@@ -5,10 +5,11 @@
 - **密码：** **bcrypt** 存储；注册/改密最短 8 字符；旧明文密码登录成功后自动升级哈希。
 - **注册：** 默认开放；生产 bootstrap 后设 `AI_CLOUDHUB_ALLOW_REGISTER=0`（仍允许零用户时创建首位 admin）。
 - **登录防爆破：** 按 IP 限速 + 用户名+IP 失败锁定（可配 `AI_CLOUDHUB_AUTH_*`）；失败写入审计 `auth.login_fail`。
-- **会话：** 对称 HMAC token（含 `jti` + `token_version`），TTL 默认 24h。
-  - 单会话吊销：`POST /v1/auth/logout`
+- **会话：** Access = 对称 HMAC（`jti` + `token_version`），默认 TTL 24h；Refresh = 不透明随机串（库内仅 SHA-256），默认 7d。
+  - 登录返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换 refresh。
+  - 单会话吊销：`POST /v1/auth/logout`（可选 body `refresh_token`）
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
-  - 尚无独立 refresh token 双令牌体系。
+- **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。
 - **Provider 密钥：** 生产请设置 `AI_CLOUDHUB_MASTER_KEY`（信封加密）；未设置时明文落库（仅开发）。
 - **STS 会话：** 默认短时 conf 内嵌密钥（`source=embedded`/`refresh`）。原生 STS 为 best-effort：
 
