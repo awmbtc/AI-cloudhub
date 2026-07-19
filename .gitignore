@@ -1,0 +1,12 @@
+.bin/
+/api
+/hubd
+/runner
+/mcp
+data/
+*.db
+*.db-journal
+.env
+.DS_Store
+/tmp/
+*.log

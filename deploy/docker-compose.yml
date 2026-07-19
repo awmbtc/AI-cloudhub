@@ -1,0 +1,38 @@
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Optional: API built from this repo (needs Dockerfile). For local dev, run `go run` on host.
+  # api:
+  #   build:
+  #     context: ..
+  #     dockerfile: deploy/Dockerfile
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     HTTP_ADDR: ":8080"
+  #     S3_ENDPOINT: minio:9000
+  #     S3_ACCESS_KEY: minioadmin
+  #     S3_SECRET_KEY: minioadmin
+  #     S3_USE_SSL: "false"
+  #     JWT_SECRET: dev-change-me
+  #   depends_on:
+  #     - minio
+
+volumes:
+  minio_data:

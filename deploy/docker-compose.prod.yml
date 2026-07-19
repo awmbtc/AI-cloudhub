@@ -1,0 +1,39 @@
+# Optional production-ish stack for control plane only (no platform runner pool).
+# Object storage remains BYOS on the user side.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      AI_CLOUDHUB_DB: postgres://aihub:aihub@postgres:5432/aihub?sslmode=disable
+      AI_CLOUDHUB_REDIS: redis://redis:6379/0
+      AI_CLOUDHUB_REDIS_LIMIT: "120"
+      AI_CLOUDHUB_REDIS_WINDOW_SEC: "60"
+      AI_CLOUDHUB_MASTER_KEY: ${AI_CLOUDHUB_MASTER_KEY:-change-me-use-openssl-rand}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aihub
+      POSTGRES_PASSWORD: aihub
+      POSTGRES_DB: aihub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

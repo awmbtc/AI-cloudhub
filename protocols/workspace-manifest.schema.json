@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cloudhub.local/protocols/workspace-manifest.schema.json",
+  "title": "AI-cloudhub Workspace Manifest",
+  "type": "object",
+  "required": ["version", "product", "drive_id", "mount_point", "mode", "env", "agent"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "product": { "type": "string", "const": "AI-cloudhub" },
+    "drive_id": { "type": "string", "minLength": 1 },
+    "mount_point": { "type": "string", "minLength": 1 },
+    "mode": { "type": "string", "enum": ["mount", "sync_workspace", "direct"] },
+    "write_barrier": { "type": "string" },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "env": {
+      "type": "object",
+      "required": ["AI_CLOUDHUB_WORKSPACE", "AI_CLOUDHUB_DRIVE_ID", "AI_CLOUDHUB_MODE"],
+      "additionalProperties": { "type": "string" }
+    },
+    "agent": {
+      "type": "object",
+      "required": ["allowed_paths", "deny_upload_tools", "instructions"],
+      "properties": {
+        "allowed_paths": { "type": "array", "items": { "type": "string" } },
+        "deny_upload_tools": { "type": "boolean" },
+        "instructions": { "type": "string" }
+      }
+    }
+  }
+}

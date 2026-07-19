@@ -1,0 +1,2055 @@
+openapi: 3.0.3
+info:
+  title: AI-cloudhub HTTP API
+  version: 0.1.0
+  description: |
+    Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
+
+    **Model**
+    - **BYOS**: user brings object storage (R2 / S3 / OSS / COS / B2 / MinIO / …). Bytes do not transit the control plane.
+    - **BYOC**: cloud Agent jobs run on the **user's own compute** via `cmd/runner` / hubd.
+    - **No platform runner pool**: the product does **not** operate a large multi-tenant runner fleet
+      (decision **D-001**). Jobs are claimed only by runners authenticated as the job owner.
+
+    **Auth**: most `/v1/*` routes require `Authorization: Bearer <token>` from `POST /v1/auth/login`.
+    Admin routes additionally require `role=admin` (first registered user is admin).
+
+    **Default listen**: `:8080` (`HTTP_ADDR`). Routes registered in `internal/httpserver/server.go`.
+
+    **Optional routes**
+    - `/v1/devices*` when device service is wired (default in `cmd/api`).
+    - `/v1/workspaces*` only when `ENABLE_PLATFORM_S3=1` (legacy platform S3 workspace; not the primary BYOS path).
+  contact:
+    name: AI-cloudhub
+  license:
+    name: Apache-2.0
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local default
+
+tags:
+  - name: health
+    description: Liveness, readiness, metrics, host runtime preflight
+  - name: auth
+    description: Register, login, current user, password
+  - name: admin
+    description: Admin-only user list, role change, audit
+  - name: providers
+    description: Object-storage provider catalog and credential bindings
+  - name: drives
+    description: Logical drives (provider + bucket + prefix)
+  - name: bindings
+    description: Desired/actual mount state on a device
+  - name: sessions
+    description: Short-lived STS mount sessions and refresh
+  - name: jobs
+    description: Durable BYOC job queue (user runners only; no platform pool)
+  - name: devices
+    description: hubd/runtime device registration (optional service)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque token from POST /v1/auth/login
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: missing bearer token
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+          description: First registered user is admin
+
+    AuthCredentials:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: Alphanumeric start; [a-zA-Z0-9._-]
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Bearer token for subsequent requests
+        user:
+          $ref: '#/components/schemas/User'
+
+    Me:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+
+    ChangePassword:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+
+    Healthz:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        product:
+          type: string
+          example: AI-cloudhub
+        batch_a:
+          type: array
+          items: { type: string }
+        batch_b:
+          type: array
+          items: { type: string }
+        batch_c:
+          type: array
+          items: { type: string }
+        p0:
+          type: array
+          items: { type: string }
+        p1:
+          type: array
+          items: { type: string }
+        p2:
+          type: array
+          items: { type: string }
+        p3:
+          type: array
+          items: { type: string }
+
+    Readyz:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        error:
+          type: string
+          description: Present when store Ping fails
+
+    RuntimeCheck:
+      type: object
+      description: Host preflight for hubd/runner (rclone, FUSE/WinFsp hints)
+      properties:
+        os:
+          type: string
+        arch:
+          type: string
+        rclone_ok:
+          type: boolean
+        rclone_path:
+          type: string
+        rclone_version:
+          type: string
+        fuse_hint:
+          type: string
+        winfsp_ok:
+          type: boolean
+        winfsp_hint:
+          type: string
+        install_hint:
+          type: string
+        ok:
+          type: boolean
+        warnings:
+          type: array
+          items: { type: string }
+        errors:
+          type: array
+          items: { type: string }
+
+    ProviderMeta:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [s3, r2, minio, b2, oss, cos, qiniu, oracle]
+        name:
+          type: string
+        batch:
+          type: string
+        s3_compat:
+          type: boolean
+        implemented:
+          type: boolean
+        fields:
+          type: array
+          items: { type: string }
+        notes:
+          type: string
+
+    ProviderCatalog:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderMeta'
+        batch_a:
+          type: array
+          items: { type: string }
+        batch_b:
+          type: array
+          items: { type: string }
+        docs:
+          type: string
+          example: docs/VENDORS.md
+
+    ProviderCredentials:
+      type: object
+      required: [access_key, secret_key]
+      properties:
+        access_key:
+          type: string
+        secret_key:
+          type: string
+          format: password
+        endpoint:
+          type: string
+          description: Host or URL (vendor-dependent)
+        region:
+          type: string
+        account_id:
+          type: string
+          description: R2 account id when endpoint omitted
+        force_path_style:
+          type: boolean
+          nullable: true
+        use_ssl:
+          type: boolean
+          nullable: true
+
+    ProviderCreate:
+      type: object
+      required: [name, type, credentials]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [s3, r2, minio, b2, oss, cos, qiniu, oracle]
+        credentials:
+          $ref: '#/components/schemas/ProviderCredentials'
+
+    ProviderPublic:
+      type: object
+      description: Provider without secrets
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        endpoint:
+          type: string
+        region:
+          type: string
+        account_id:
+          type: string
+
+    ProviderHealth:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        provider_id:
+          type: string
+        type:
+          type: string
+        endpoint:
+          type: string
+        latency_ms:
+          type: integer
+        bucket_count:
+          type: integer
+        message:
+          type: string
+
+    Drive:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        name:
+          type: string
+        provider_id:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        mount_point:
+          type: string
+          description: "Default hint, e.g. G: or /workspace"
+        region:
+          type: string
+          description: Optional scheduling/locality hint
+        created_at:
+          type: string
+          format: date-time
+
+    DriveCreate:
+      type: object
+      required: [name, provider_id, bucket]
+      properties:
+        name:
+          type: string
+        provider_id:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        mount_point:
+          type: string
+        region:
+          type: string
+
+    Binding:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        drive_id:
+          type: string
+        device_id:
+          type: string
+        mount_point:
+          type: string
+        mode:
+          type: string
+          description: mount | sync_workspace
+        desired:
+          type: string
+          enum: [mounted, unmounted]
+        actual:
+          type: string
+          enum: [unknown, mounted, unmounted, degraded, error]
+        last_error:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    BindingCreate:
+      type: object
+      required: [drive_id]
+      properties:
+        drive_id:
+          type: string
+        device_id:
+          type: string
+          description: Defaults to "default"
+        mount_point:
+          type: string
+        mode:
+          type: string
+          default: mount
+        desired:
+          type: string
+          enum: [mounted, unmounted]
+          default: mounted
+
+    BindingReport:
+      type: object
+      properties:
+        actual:
+          type: string
+          enum: [unknown, mounted, unmounted, degraded, error]
+        last_error:
+          type: string
+
+    BindingDesired:
+      type: object
+      required: [desired]
+      properties:
+        desired:
+          type: string
+          enum: [mounted, unmounted]
+
+    MountSpec:
+      type: object
+      properties:
+        remote_name:
+          type: string
+        remote_path:
+          type: string
+        mount_point:
+          type: string
+        rclone_conf:
+          type: string
+          description: rclone config text (may contain short-lived secrets in session responses)
+        mode:
+          type: string
+
+    Manifest:
+      type: object
+      description: Machine-readable workspace contract for agents
+      properties:
+        version:
+          type: integer
+        product:
+          type: string
+        drive_id:
+          type: string
+        mount_point:
+          type: string
+        mode:
+          type: string
+        write_barrier:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        agent:
+          type: object
+          properties:
+            allowed_paths:
+              type: array
+              items: { type: string }
+            deny_upload_tools:
+              type: boolean
+            instructions:
+              type: string
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        drive_id:
+          type: string
+        device_id:
+          type: string
+        mount_point:
+          type: string
+        mode:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        spec:
+          $ref: '#/components/schemas/MountSpec'
+        manifest:
+          $ref: '#/components/schemas/Manifest'
+        token:
+          type: string
+          description: Opaque session token for refresh
+        source:
+          type: string
+          description: embedded | refresh | minio_sts | aws_sts
+        note:
+          type: string
+
+    SessionBundle:
+      type: object
+      description: Runtime mount grant (STS + drive + manifest)
+      properties:
+        binding:
+          $ref: '#/components/schemas/Binding'
+        drive:
+          $ref: '#/components/schemas/Drive'
+        session:
+          $ref: '#/components/schemas/Session'
+        manifest:
+          $ref: '#/components/schemas/Manifest'
+        spec:
+          $ref: '#/components/schemas/MountSpec'
+        note:
+          type: string
+          description: Includes BYOC guidance; no platform large pool
+
+    IssueSessionRequest:
+      type: object
+      properties:
+        mount_point:
+          type: string
+        device_id:
+          type: string
+        mode:
+          type: string
+          description: mount | sync_workspace
+
+    RefreshSessionRequest:
+      type: object
+      required: [session_token, drive_id]
+      properties:
+        session_token:
+          type: string
+        drive_id:
+          type: string
+
+    Barrier:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        drive_id:
+          type: string
+        device_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, ok, failed]
+        note:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        done_at:
+          type: string
+          format: date-time
+
+    BarrierComplete:
+      type: object
+      properties:
+        drive_id:
+          type: string
+          description: Overwritten from path by server
+        device_id:
+          type: string
+        status:
+          type: string
+          enum: [ok, failed]
+          default: ok
+        note:
+          type: string
+
+    MountBundle:
+      type: object
+      description: Legacy rclone conf helper; prefer POST .../session
+      properties:
+        drive:
+          $ref: '#/components/schemas/Drive'
+        provider:
+          $ref: '#/components/schemas/ProviderPublic'
+        rclone_conf:
+          type: string
+        remote_name:
+          type: string
+        remote_path:
+          type: string
+        spec:
+          $ref: '#/components/schemas/MountSpec'
+        commands:
+          type: object
+          properties:
+            write_conf: { type: string }
+            mount: { type: string }
+            unmount: { type: string }
+        note:
+          type: string
+
+    Job:
+      type: object
+      description: |
+        Work item for a **user-side BYOC runner**. Creating a job does not schedule onto
+        a platform-owned pool; claim with the owner's token via POST /v1/jobs/{id}/claim
+        or POST /v1/jobs/next/claim.
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        drive_id:
+          type: string
+        binding_id:
+          type: string
+        mode:
+          type: string
+        command:
+          type: array
+          items: { type: string }
+        status:
+          type: string
+          enum: [pending, dispatched, running, succeeded, failed, cancelled]
+        region_hint:
+          type: string
+        note:
+          type: string
+          description: Often includes "BYOC only … no platform large pool (D-001)"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    JobCreate:
+      type: object
+      required: [drive_id, command]
+      properties:
+        drive_id:
+          type: string
+        binding_id:
+          type: string
+        mode:
+          type: string
+          default: mount
+        command:
+          type: array
+          items: { type: string }
+          minItems: 1
+          description: Runs on BYOC runner, not a platform pool
+        region_hint:
+          type: string
+        note:
+          type: string
+
+    JobComplete:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        note:
+          type: string
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        name:
+          type: string
+        last_seen:
+          type: string
+          format: date-time
+
+    DeviceRegister:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Optional; hubd should pass AI_CLOUDHUB_DEVICE_ID
+        name:
+          type: string
+
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        action:
+          type: string
+          example: auth.login
+        target:
+          type: string
+        detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    SetRole:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, user]
+
+    ItemsUser:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+
+    ItemsProvider:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderPublic'
+
+    ItemsDrive:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Drive'
+
+    ItemsBinding:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Binding'
+
+    ItemsJob:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+
+    ItemsDevice:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+
+    ItemsAudit:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+
+    ItemsBarrier:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Barrier'
+
+    StatusDeleted:
+      type: object
+      properties:
+        status:
+          type: string
+          example: deleted
+
+    StatusOK:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Admin required or ownership denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadRequest:
+      description: Invalid body or business rule failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Per-user rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: Wrong HTTP method
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness + capability checklist
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Healthz'
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness (store Ping)
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Store ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readyz'
+        '503':
+          description: Store not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readyz'
+
+  /metrics:
+    get:
+      tags: [health]
+      summary: Prometheus text metrics
+      operationId: getMetrics
+      description: |
+        Lightweight Prometheus exposition.
+        When `AI_CLOUDHUB_METRICS_TOKEN` is set, require `Authorization: Bearer <token>`
+        or `?token=<token>`.
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP aicloudhub_http_requests_total Authenticated and public HTTP hits tracked
+                  # TYPE aicloudhub_http_requests_total counter
+                  aicloudhub_http_requests_total 0
+        '401':
+          description: Metrics token required but missing/invalid
+
+  /v1/runtime/check:
+    get:
+      tags: [health]
+      summary: Runtime host preflight (rclone / FUSE / WinFsp)
+      operationId: getRuntimeCheck
+      description: Checks the **API process host** environment, not a remote runner.
+      responses:
+        '200':
+          description: Preflight report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeCheck'
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Register user (first user becomes admin)
+      description: |
+        Disabled when AI_CLOUDHUB_ALLOW_REGISTER=0 except bootstrap (zero users).
+        Rate-limited per client IP.
+      operationId: authRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthCredentials'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Registration disabled
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Login and obtain bearer token
+      description: IP rate limit + failure lockout (auth.login_fail audit).
+      operationId: authLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthCredentials'
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Rate limited or locked after failures
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke current bearer token (jti denylist)
+      operationId: authLogout
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/me:
+    get:
+      tags: [auth]
+      summary: Current user id, username, role
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/me/password:
+    post:
+      tags: [auth]
+      summary: Change password
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePassword'
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOK'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/admin/users:
+    get:
+      tags: [admin]
+      summary: List all users (admin)
+      operationId: adminListUsers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/admin/users/{id}/role:
+    post:
+      tags: [admin]
+      summary: Set user role (admin)
+      operationId: adminSetRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRole'
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  role: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/admin/users/{id}/revoke-sessions:
+    post:
+      tags: [admin]
+      summary: Invalidate all tokens for a user (bump token_version)
+      operationId: adminRevokeSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  token_version: { type: integer }
+                  status: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/admin/audit:
+    get:
+      tags: [admin]
+      summary: Recent audit events (admin)
+      operationId: adminListAudit
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          description: Filter events for one user
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Max events (1–500, default 100)
+          schema: { type: integer, default: 100 }
+        - name: action
+          in: query
+          required: false
+          description: Filter by audit action (exact match), e.g. auth.login_fail
+          schema: { type: string }
+      responses:
+        '200':
+          description: Audit list (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEvent'
+                  limit: { type: integer }
+                  user_id: { type: string }
+                  action: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/providers/catalog:
+    get:
+      tags: [providers]
+      summary: Vendor catalog (public)
+      operationId: providerCatalog
+      responses:
+        '200':
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCatalog'
+
+  /v1/providers:
+    get:
+      tags: [providers]
+      summary: List providers for current user
+      operationId: listProviders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Provider list (no secrets)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [providers]
+      summary: Bind object-storage credentials
+      operationId: createProvider
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCreate'
+      responses:
+        '201':
+          description: Created (public view)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderPublic'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Provider quota exceeded
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/providers/{id}:
+    get:
+      tags: [providers]
+      summary: Get provider (public view)
+      operationId: getProvider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderPublic'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [providers]
+      summary: Delete provider
+      operationId: deleteProvider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusDeleted'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/providers/{id}/health:
+    get:
+      tags: [providers]
+      summary: Probe provider credentials (ListBuckets)
+      operationId: providerHealthGet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealth'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Credentials or network failed (body still has HealthResult)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealth'
+    post:
+      tags: [providers]
+      summary: Probe provider credentials (ListBuckets)
+      operationId: providerHealth
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealth'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Credentials or network failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealth'
+
+  /v1/drives:
+    get:
+      tags: [drives]
+      summary: List logical drives
+      operationId: listDrives
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Drive list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsDrive'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [drives]
+      summary: Create logical drive
+      operationId: createDrive
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriveCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Drive'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Drive quota exceeded
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}:
+    get:
+      tags: [drives]
+      summary: Get drive
+      operationId: getDrive
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Drive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Drive'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [drives]
+      summary: Delete drive
+      operationId: deleteDrive
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusDeleted'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/mount:
+    get:
+      tags: [drives]
+      summary: Legacy mount config (rclone conf + commands)
+      operationId: getDriveMount
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Mount bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MountBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [drives]
+      summary: Legacy mount config (same as GET)
+      operationId: postDriveMount
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Mount bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MountBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/session:
+    post:
+      tags: [drives, sessions]
+      summary: Issue STS session + manifest for a drive
+      operationId: issueDriveSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueSessionRequest'
+      responses:
+        '200':
+          description: Session bundle for hubd/runner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/manifest:
+    get:
+      tags: [drives]
+      summary: Manifest hint (prefer session for full document)
+      operationId: getDriveManifestHint
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Hint only
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  drive_id: { type: string }
+                  mount_point: { type: string }
+                  hint: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/barrier:
+    post:
+      tags: [drives]
+      summary: Complete write barrier (runtime after flush)
+      operationId: completeDriveBarrier
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierComplete'
+      responses:
+        '200':
+          description: Barrier recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Barrier'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/barriers:
+    get:
+      tags: [drives]
+      summary: List write barriers for drive (process-local)
+      operationId: listDriveBarriers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Barriers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsBarrier'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/bindings:
+    get:
+      tags: [bindings]
+      summary: List bindings (optional device filter)
+      operationId: listBindings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Binding list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsBinding'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [bindings]
+      summary: Create binding (desired mount on device)
+      operationId: createBinding
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindingCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Binding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Binding quota exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/bindings/{id}:
+    get:
+      tags: [bindings]
+      summary: Get binding
+      operationId: getBinding
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Binding'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/bindings/{id}/session:
+    post:
+      tags: [bindings, sessions]
+      summary: Issue STS session for binding (hubd)
+      operationId: issueBindingSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Session bundle including binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/bindings/{id}/report:
+    post:
+      tags: [bindings]
+      summary: Report actual mount state (hubd/runner)
+      operationId: reportBindingActual
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindingReport'
+      responses:
+        '200':
+          description: Updated binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Binding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/bindings/{id}/desired:
+    post:
+      tags: [bindings]
+      summary: Set desired mount state
+      operationId: setBindingDesired
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindingDesired'
+      responses:
+        '200':
+          description: Updated binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Binding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sessions/refresh:
+    post:
+      tags: [sessions]
+      summary: Refresh / rotate STS session for a drive
+      operationId: refreshSession
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshSessionRequest'
+      responses:
+        '200':
+          description: New session bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs:
+    get:
+      tags: [jobs]
+      summary: List jobs (BYOC queue)
+      operationId: listJobs
+      description: |
+        Returns jobs for the authenticated user. Query `status=pending` lists claimable
+        pending/dispatched jobs. Jobs run on **user runners only** — no platform pool.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending]
+          description: When pending, returns claimable jobs only
+      responses:
+        '200':
+          description: Job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Jobs service disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [jobs]
+      summary: Create BYOC job
+      operationId: createJob
+      description: |
+        Enqueues work for the owner's runner. Command executes on BYOC compute;
+        note field is annotated with D-001 (no platform large pool).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreate'
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Jobs service disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Get job by id
+      operationId: getJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/{id}/claim:
+    post:
+      tags: [jobs]
+      summary: Claim a specific pending job (BYOC worker)
+      operationId: claimJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Claimed job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/next/claim:
+    post:
+      tags: [jobs]
+      summary: Claim oldest pending job for user (BYOC worker)
+      operationId: claimNextJob
+      description: Path uses id segment `next` with action `claim` (same router as /v1/jobs/{id}/claim).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Claimed job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: No pending jobs or claim failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/{id}/complete:
+    post:
+      tags: [jobs]
+      summary: Complete a claimed job
+      operationId: completeJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobComplete'
+      responses:
+        '200':
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/{id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancel a job
+      operationId: cancelJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancelled job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/devices:
+    get:
+      tags: [devices]
+      summary: List registered devices
+      operationId: listDevices
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsDevice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [devices]
+      summary: Register or refresh device (hubd)
+      operationId: registerDevice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegister'
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/devices/{id}:
+    get:
+      tags: [devices]
+      summary: Get device
+      operationId: getDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
