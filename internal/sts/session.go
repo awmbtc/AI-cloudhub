@@ -65,14 +65,17 @@ func New(ttl time.Duration, apiBase string) *Service {
 
 // IssueInput for a new session.
 type IssueInput struct {
-	UserID     string
-	DriveID    string
-	DeviceID   string
-	MountPoint string
-	Mode       string
-	Bucket     string
-	Prefix     string
-	Resolved   *provider.Resolved
+	UserID        string
+	DriveID       string
+	DeviceID      string
+	MountPoint    string
+	Mode          string
+	Bucket        string
+	Prefix        string
+	Resolved      *provider.Resolved
+	AgentID       string
+	ReadPrefixes  []string
+	WritePrefixes []string
 }
 
 // Issue creates a time-bounded mount session + manifest.
@@ -94,11 +97,14 @@ func (s *Service) Issue(in IssueInput) (*Session, error) {
 		return nil, err
 	}
 	man := manifest.Build(manifest.Input{
-		DriveID:    in.DriveID,
-		MountPoint: in.MountPoint,
-		Mode:       in.Mode,
-		APIBase:    s.apiBase,
-		TTL:        s.ttl,
+		DriveID:       in.DriveID,
+		MountPoint:    in.MountPoint,
+		Mode:          in.Mode,
+		APIBase:       s.apiBase,
+		TTL:           s.ttl,
+		AgentID:       in.AgentID,
+		ReadPrefixes:  in.ReadPrefixes,
+		WritePrefixes: in.WritePrefixes,
 	})
 	sess := &Session{
 		ID:         uuid.NewString(),

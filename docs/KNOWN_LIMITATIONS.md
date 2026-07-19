@@ -9,7 +9,8 @@
   - 登录返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换 refresh。
   - 单会话吊销：`POST /v1/auth/logout`（可选 body `refresh_token`）
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
-- **Agent 身份（阶段 A）：** `POST /v1/agents` + `POST /v1/agents/{id}/token` 签发带 `aid`/`scopes` 的 token；人登录 token 仍全权。Policy 引擎 / Drive 绑定限制尚未做。
+- **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
+- **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
 - **Runtime jail：** runner 默认路径 jail（`AI_CLOUDHUB_JAIL`）；非完整 seccomp/namespace。
 - **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。
 - **Provider 密钥：** 生产请设置 `AI_CLOUDHUB_MASTER_KEY`（信封加密）；未设置时明文落库（仅开发）。

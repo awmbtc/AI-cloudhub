@@ -94,7 +94,7 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 可选 HSTS：`AI_CLOUDHUB_HSTS=1`
 - [x] JSON `Content-Type` 校验（非 json 的 POST → 415）
 
-## 阶段 A · ROADMAP-2.0（当前主线）
+## 阶段 A · ROADMAP-2.0
 
 施工图：[ROADMAP-2.0.md](./ROADMAP-2.0.md) · 决策 D-002
 
@@ -105,10 +105,17 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Admin API 拒绝 agent token
 - [x] `internal/sandbox` 路径 jail + runner 默认启用（`AI_CLOUDHUB_JAIL=0` 关闭）
 
-## 仍可后续增强（阶段 B+）
+## 阶段 B · 2.0 最小企业可用（本波）
 
-- Policy v0 JSON、Manifest permissions、audit.agent_id
-- Sandbox v1（env 白名单 / 网络策略）
+- [x] B1：`allowed_drive_ids`；PUT agent；list/session 按白名单过滤
+- [x] B2：Policy Engine v0（`internal/policy` Evaluate）
+- [x] B4：Manifest 2.0 `permissions.read/write` + `agent_id` env
+- [x] B5：`audit_events.agent_id` + admin 查询 `?agent_id=`
+- [ ] B3：Sandbox v1 env 白名单
+- [ ] B6：Snapshot v0
+
+## 仍可后续
+
 - MCP 工具级权限 + 路径 jail
 - Snapshot v0、更多厂商原生 STS
 - Admin IP allowlist

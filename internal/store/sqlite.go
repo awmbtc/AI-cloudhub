@@ -155,6 +155,9 @@ CREATE TABLE IF NOT EXISTS agents (
   description TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   default_scopes TEXT NOT NULL DEFAULT '[]',
+  allowed_drive_ids TEXT NOT NULL DEFAULT '[]',
+  read_prefixes TEXT NOT NULL DEFAULT '[]',
+  write_prefixes TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
@@ -167,6 +170,10 @@ CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
 		`ALTER TABLE drives ADD COLUMN region TEXT`,
 		`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE agents ADD COLUMN allowed_drive_ids TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE agents ADD COLUMN read_prefixes TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE agents ADD COLUMN write_prefixes TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE audit_events ADD COLUMN agent_id TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -269,8 +276,8 @@ func (s *SQLite) ListUsers() ([]*User, error) {
 
 func (s *SQLite) AppendAudit(e *AuditEvent) error {
 	_, err := s.db.Exec(
-		`INSERT INTO audit_events (id, user_id, action, target, detail, created_at) VALUES (?,?,?,?,?,?)`,
-		e.ID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt.UTC().Format(time.RFC3339Nano),
+		`INSERT INTO audit_events (id, user_id, agent_id, action, target, detail, created_at) VALUES (?,?,?,?,?,?,?)`,
+		e.ID, e.UserID, e.AgentID, e.Action, e.Target, e.Detail, e.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -280,11 +287,15 @@ func (s *SQLite) ListAudit(f AuditFilter) ([]*AuditEvent, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT id, user_id, action, target, detail, created_at FROM audit_events WHERE 1=1`
+	q := `SELECT id, user_id, COALESCE(agent_id,''), action, target, detail, created_at FROM audit_events WHERE 1=1`
 	var args []any
 	if f.UserID != "" {
 		q += ` AND user_id = ?`
 		args = append(args, f.UserID)
+	}
+	if f.AgentID != "" {
+		q += ` AND agent_id = ?`
+		args = append(args, f.AgentID)
 	}
 	if f.Action != "" {
 		q += ` AND action = ?`
@@ -301,7 +312,7 @@ func (s *SQLite) ListAudit(f AuditFilter) ([]*AuditEvent, error) {
 	for rows.Next() {
 		var e AuditEvent
 		var created string
-		if err := rows.Scan(&e.ID, &e.UserID, &e.Action, &e.Target, &e.Detail, &created); err != nil {
+		if err := rows.Scan(&e.ID, &e.UserID, &e.AgentID, &e.Action, &e.Target, &e.Detail, &created); err != nil {
 			return nil, err
 		}
 		e.CreatedAt = parseTime(created)
@@ -414,17 +425,21 @@ func (s *SQLite) RevokeRefreshTokensForUser(userID string) error {
 	return err
 }
 
+func agentJSONField(v []string) string {
+	b, err := MarshalJSON(v)
+	if err != nil || b == nil {
+		return "[]"
+	}
+	return string(b)
+}
+
 func (s *SQLite) CreateAgent(a *Agent) error {
-	scopes, err := MarshalJSON(a.DefaultScopes)
-	if err != nil {
-		return err
-	}
-	if scopes == nil {
-		scopes = []byte("[]")
-	}
-	_, err = s.db.Exec(
-		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, created_at) VALUES (?,?,?,?,?,?,?)`,
-		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status, string(scopes),
+	_, err := s.db.Exec(
+		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, allowed_drive_ids, read_prefixes, write_prefixes, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status,
+		agentJSONField(a.DefaultScopes), agentJSONField(a.AllowedDriveIDs),
+		agentJSONField(a.ReadPrefixes), agentJSONField(a.WritePrefixes),
 		a.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
@@ -432,15 +447,29 @@ func (s *SQLite) CreateAgent(a *Agent) error {
 
 func (s *SQLite) GetAgent(ownerUserID, id string) (*Agent, error) {
 	row := s.db.QueryRow(
-		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE id = ? AND owner_user_id = ?`,
+		`SELECT id, owner_user_id, name, description, status, default_scopes,
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 FROM agents WHERE id = ? AND owner_user_id = ?`,
 		id, ownerUserID,
+	)
+	return scanAgent(row)
+}
+
+func (s *SQLite) GetAgentByID(id string) (*Agent, error) {
+	row := s.db.QueryRow(
+		`SELECT id, owner_user_id, name, description, status, default_scopes,
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 FROM agents WHERE id = ?`,
+		id,
 	)
 	return scanAgent(row)
 }
 
 func (s *SQLite) ListAgents(ownerUserID string) ([]*Agent, error) {
 	rows, err := s.db.Query(
-		`SELECT id, owner_user_id, name, description, status, default_scopes, created_at FROM agents WHERE owner_user_id = ? ORDER BY created_at DESC`,
+		`SELECT id, owner_user_id, name, description, status, default_scopes,
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 FROM agents WHERE owner_user_id = ? ORDER BY created_at DESC`,
 		ownerUserID,
 	)
 	if err != nil {
@@ -449,13 +478,32 @@ func (s *SQLite) ListAgents(ownerUserID string) ([]*Agent, error) {
 	defer rows.Close()
 	var out []*Agent
 	for rows.Next() {
-		a, err := scanAgentRows(rows)
+		a, err := scanAgent(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLite) UpdateAgent(a *Agent) error {
+	res, err := s.db.Exec(
+		`UPDATE agents SET name=?, description=?, status=?, default_scopes=?, allowed_drive_ids=?, read_prefixes=?, write_prefixes=?
+		 WHERE id=? AND owner_user_id=?`,
+		a.Name, a.Description, a.Status,
+		agentJSONField(a.DefaultScopes), agentJSONField(a.AllowedDriveIDs),
+		agentJSONField(a.ReadPrefixes), agentJSONField(a.WritePrefixes),
+		a.ID, a.OwnerUserID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
 }
 
 func (s *SQLite) DeleteAgent(ownerUserID, id string) error {
@@ -472,21 +520,19 @@ func (s *SQLite) DeleteAgent(ownerUserID, id string) error {
 
 func scanAgent(row interface{ Scan(dest ...any) error }) (*Agent, error) {
 	var a Agent
-	var scopes string
-	var created string
-	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &created); err != nil {
+	var scopes, drives, rpref, wpref, created string
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &drives, &rpref, &wpref, &created); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("agent not found")
 		}
 		return nil, err
 	}
 	_ = UnmarshalJSON([]byte(scopes), &a.DefaultScopes)
+	_ = UnmarshalJSON([]byte(drives), &a.AllowedDriveIDs)
+	_ = UnmarshalJSON([]byte(rpref), &a.ReadPrefixes)
+	_ = UnmarshalJSON([]byte(wpref), &a.WritePrefixes)
 	a.CreatedAt = parseTime(created)
 	return &a, nil
-}
-
-func scanAgentRows(rows *sql.Rows) (*Agent, error) {
-	return scanAgent(rows)
 }
 
 func (s *SQLite) UpdateUserPassword(userID, hash string) error {

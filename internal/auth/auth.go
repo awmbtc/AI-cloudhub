@@ -422,9 +422,15 @@ func (s *Service) ChangePassword(userID, oldPassword, newPassword string) error 
 
 // Audit writes a best-effort audit row (never fails the request path loudly).
 func (s *Service) Audit(userID, action, target, detail string) {
+	s.AuditAgent(userID, "", action, target, detail)
+}
+
+// AuditAgent records an event with optional agent_id (ROADMAP stage B).
+func (s *Service) AuditAgent(userID, agentID, action, target, detail string) {
 	_ = s.store.AppendAudit(&store.AuditEvent{
 		ID:        uuid.NewString(),
 		UserID:    userID,
+		AgentID:   agentID,
 		Action:    action,
 		Target:    target,
 		Detail:    detail,
@@ -434,7 +440,12 @@ func (s *Service) Audit(userID, action, target, detail string) {
 
 // ListAudit returns recent audit events (admin). Filters optional.
 func (s *Service) ListAudit(limit int, userID, action string) ([]*store.AuditEvent, error) {
-	return s.store.ListAudit(store.AuditFilter{Limit: limit, UserID: userID, Action: action})
+	return s.ListAuditFilter(store.AuditFilter{Limit: limit, UserID: userID, Action: action})
+}
+
+// ListAuditFilter is the full audit query.
+func (s *Service) ListAuditFilter(f store.AuditFilter) ([]*store.AuditEvent, error) {
+	return s.store.ListAudit(f)
 }
 
 func (s *Service) issue(userID, username, role string, tokenVersion int, ttl time.Duration, agentID string, scopes []string) (string, error) {

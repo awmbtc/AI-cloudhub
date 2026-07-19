@@ -74,6 +74,7 @@ type Device struct {
 type AuditEvent struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	AgentID   string    `json:"agent_id,omitempty"`
 	Action    string    `json:"action"`
 	Target    string    `json:"target"`
 	Detail    string    `json:"detail"`
@@ -82,9 +83,10 @@ type AuditEvent struct {
 
 // AuditFilter selects audit rows. Empty fields are ignored.
 type AuditFilter struct {
-	UserID string
-	Action string
-	Limit  int
+	UserID  string
+	AgentID string
+	Action  string
+	Limit   int
 }
 
 // RefreshToken is a long-lived opaque credential (hash stored only).
@@ -99,12 +101,19 @@ type RefreshToken struct {
 
 // Agent is a user-owned agent principal (not a human login).
 type Agent struct {
-	ID            string
-	OwnerUserID   string
-	Name          string
-	Description   string
-	Status        string // active | disabled
-	DefaultScopes []string
+	ID              string
+	OwnerUserID     string
+	Name            string
+	Description     string
+	Status          string // active | disabled
+	DefaultScopes   []string
+	// AllowedDriveIDs restricts which drives this agent may access.
+	// Empty = all drives owned by the user (backward-compatible default).
+	AllowedDriveIDs []string
+	// ReadPrefixes / WritePrefixes are optional path prefixes under mount (Manifest 2.0).
+	// Empty = full workspace (AllowedPaths = mount root).
+	ReadPrefixes  []string
+	WritePrefixes []string
 	CreatedAt     time.Time
 }
 
@@ -164,7 +173,10 @@ type Store interface {
 	// Agents (Agent Identity)
 	CreateAgent(a *Agent) error
 	GetAgent(ownerUserID, id string) (*Agent, error)
+	// GetAgentByID looks up agent by id only (for policy when owner already known via token).
+	GetAgentByID(id string) (*Agent, error)
 	ListAgents(ownerUserID string) ([]*Agent, error)
+	UpdateAgent(a *Agent) error
 	DeleteAgent(ownerUserID, id string) error
 
 	// Providers

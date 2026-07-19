@@ -172,8 +172,20 @@ type SessionBundle struct {
 	Note     string            `json:"note"`
 }
 
+// SessionOpts optional Agent context for Manifest 2.0.
+type SessionOpts struct {
+	AgentID       string
+	ReadPrefixes  []string
+	WritePrefixes []string
+}
+
 // IssueSession creates a short-lived mount session for a binding or drive.
 func (s *Service) IssueSession(userID, driveID, deviceID, mountPoint, mode string) (*SessionBundle, error) {
+	return s.IssueSessionOpts(userID, driveID, deviceID, mountPoint, mode, SessionOpts{})
+}
+
+// IssueSessionOpts is IssueSession with agent permissions for Manifest 2.0.
+func (s *Service) IssueSessionOpts(userID, driveID, deviceID, mountPoint, mode string, opts SessionOpts) (*SessionBundle, error) {
 	if s.sts == nil {
 		return nil, fmt.Errorf("sts not configured")
 	}
@@ -192,14 +204,17 @@ func (s *Service) IssueSession(userID, driveID, deviceID, mountPoint, mode strin
 		return nil, err
 	}
 	sess, err := s.sts.Issue(sts.IssueInput{
-		UserID:     userID,
-		DriveID:    driveID,
-		DeviceID:   deviceID,
-		MountPoint: mountPoint,
-		Mode:       mode,
-		Bucket:     m.Bucket,
-		Prefix:     m.Prefix,
-		Resolved:   resolved,
+		UserID:        userID,
+		DriveID:       driveID,
+		DeviceID:      deviceID,
+		MountPoint:    mountPoint,
+		Mode:          mode,
+		Bucket:        m.Bucket,
+		Prefix:        m.Prefix,
+		Resolved:      resolved,
+		AgentID:       opts.AgentID,
+		ReadPrefixes:  opts.ReadPrefixes,
+		WritePrefixes: opts.WritePrefixes,
 	})
 	if err != nil {
 		return nil, err

@@ -580,9 +580,54 @@ func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID,
 		if !s.requireScope(w, r, auth.ScopeDriveRead) {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.drives.List(userID)})
+		items := s.drives.List(userID)
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" && s.agents != nil {
+			if rec, err := s.agents.GetByID(pr.AgentID); err == nil && len(rec.AllowedDriveIDs) > 0 {
+				allow := map[string]bool{}
+				for _, d := range rec.AllowedDriveIDs {
+					allow[d] = true
+				}
+				filtered := make([]*drive.Map, 0, len(items))
+				for _, m := range items {
+					if allow[m.ID] {
+						filtered = append(filtered, m)
+					}
+				}
+				items = filtered
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// allowAgentDrive enforces B1 drive allowlist for agent tokens.
+func (s *Server) allowAgentDrive(w http.ResponseWriter, r *http.Request, driveID string) bool {
+	pr := principalFrom(r)
+	if pr == nil || pr.AgentID == "" || s.agents == nil {
+		return true
+	}
+	if err := s.agents.CheckDriveAccess(pr.AgentID, driveID); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return false
+	}
+	return true
+}
+
+func (s *Server) sessionOptsFrom(r *http.Request) drive.SessionOpts {
+	pr := principalFrom(r)
+	if pr == nil || pr.AgentID == "" || s.agents == nil {
+		return drive.SessionOpts{}
+	}
+	rec, err := s.agents.GetByID(pr.AgentID)
+	if err != nil {
+		return drive.SessionOpts{AgentID: pr.AgentID}
+	}
+	return drive.SessionOpts{
+		AgentID:       pr.AgentID,
+		ReadPrefixes:  rec.ReadPrefixes,
+		WritePrefixes: rec.WritePrefixes,
 	}
 }
 
@@ -599,6 +644,12 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
+			if !s.requireScope(w, r, auth.ScopeDriveRead) {
+				return
+			}
+			if !s.allowAgentDrive(w, r, id) {
+				return
+			}
 			m, err := s.drives.Get(userID, id)
 			if err != nil {
 				writeErr(w, http.StatusNotFound, err.Error())
@@ -606,6 +657,9 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 			}
 			writeJSON(w, http.StatusOK, m)
 		case http.MethodDelete:
+			if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+				return
+			}
 			var detail string
 			if m, err := s.drives.Get(userID, id); err == nil {
 				detail = m.Name
@@ -622,10 +676,18 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 		return
 	}
 
+	// All drive sub-resources require drive access for agent tokens.
+	if !s.allowAgentDrive(w, r, id) {
+		return
+	}
+
 	switch parts[1] {
 	case "mount":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
 			return
 		}
 		bundle, err := s.drives.MountConfig(userID, id)
@@ -639,18 +701,28 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
+			return
+		}
+		if !s.allowAgentDrive(w, r, id) {
+			return
+		}
 		var body struct {
 			MountPoint string `json:"mount_point"`
 			DeviceID   string `json:"device_id"`
 			Mode       string `json:"mode"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		bundle, err := s.drives.IssueSession(userID, id, body.DeviceID, body.MountPoint, body.Mode)
+		opts := s.sessionOptsFrom(r)
+		bundle, err := s.drives.IssueSessionOpts(userID, id, body.DeviceID, body.MountPoint, body.Mode, opts)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		metrics.IncSession()
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+			s.auth.AuditAgent(userID, pr.AgentID, "drive.session", id, "ok")
+		}
 		writeJSON(w, http.StatusOK, bundle)
 	case "manifest":
 		if r.Method != http.MethodGet {
@@ -1218,6 +1290,31 @@ func (s *Server) routeAgentsSub(w http.ResponseWriter, r *http.Request, userID, 
 		return
 	}
 	id := parts[0]
+	if len(parts) == 1 && (r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+		if !s.requireHuman(w, r) {
+			return
+		}
+		if !requireJSON(w, r) {
+			return
+		}
+		var in agent.UpdateInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// empty allowed_drive_ids array with set_drives clears list
+		if in.AllowedDriveIDs != nil {
+			in.SetDrives = true
+		}
+		rec, err := s.agents.Update(userID, id, in)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "agent.update", id, rec.Name)
+		writeJSON(w, http.StatusOK, rec)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "token" {
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1394,16 +1491,20 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request, userID
 	}
 	filterUser := strings.TrimSpace(r.URL.Query().Get("user_id"))
 	filterAction := strings.TrimSpace(r.URL.Query().Get("action"))
-	list, err := s.auth.ListAudit(limit, filterUser, filterAction)
+	filterAgent := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	list, err := s.auth.ListAuditFilter(store.AuditFilter{
+		Limit: limit, UserID: filterUser, Action: filterAction, AgentID: filterAgent,
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"items":   list,
-		"limit":   limit,
-		"user_id": filterUser,
-		"action":  filterAction,
+		"items":    list,
+		"limit":    limit,
+		"user_id":  filterUser,
+		"action":   filterAction,
+		"agent_id": filterAgent,
 	})
 }
 

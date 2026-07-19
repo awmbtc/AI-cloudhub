@@ -142,6 +142,9 @@ func (m *Memory) ListAudit(f AuditFilter) ([]*AuditEvent, error) {
 		if f.UserID != "" && e.UserID != f.UserID {
 			continue
 		}
+		if f.AgentID != "" && e.AgentID != f.AgentID {
+			continue
+		}
 		if f.Action != "" && e.Action != f.Action {
 			continue
 		}
@@ -250,14 +253,27 @@ func (m *Memory) RevokeRefreshTokensForUser(userID string) error {
 	return nil
 }
 
+func cloneAgent(a *Agent) *Agent {
+	cp := *a
+	if a.DefaultScopes != nil {
+		cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
+	}
+	if a.AllowedDriveIDs != nil {
+		cp.AllowedDriveIDs = append([]string(nil), a.AllowedDriveIDs...)
+	}
+	if a.ReadPrefixes != nil {
+		cp.ReadPrefixes = append([]string(nil), a.ReadPrefixes...)
+	}
+	if a.WritePrefixes != nil {
+		cp.WritePrefixes = append([]string(nil), a.WritePrefixes...)
+	}
+	return &cp
+}
+
 func (m *Memory) CreateAgent(a *Agent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := *a
-	if cp.DefaultScopes != nil {
-		cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
-	}
-	m.agents[a.ID] = &cp
+	m.agents[a.ID] = cloneAgent(a)
 	return nil
 }
 
@@ -268,11 +284,17 @@ func (m *Memory) GetAgent(ownerUserID, id string) (*Agent, error) {
 	if !ok || a.OwnerUserID != ownerUserID {
 		return nil, fmt.Errorf("agent not found")
 	}
-	cp := *a
-	if a.DefaultScopes != nil {
-		cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
+	return cloneAgent(a), nil
+}
+
+func (m *Memory) GetAgentByID(id string) (*Agent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, ok := m.agents[id]
+	if !ok {
+		return nil, fmt.Errorf("agent not found")
 	}
-	return &cp, nil
+	return cloneAgent(a), nil
 }
 
 func (m *Memory) ListAgents(ownerUserID string) ([]*Agent, error) {
@@ -283,13 +305,20 @@ func (m *Memory) ListAgents(ownerUserID string) ([]*Agent, error) {
 		if a.OwnerUserID != ownerUserID {
 			continue
 		}
-		cp := *a
-		if a.DefaultScopes != nil {
-			cp.DefaultScopes = append([]string(nil), a.DefaultScopes...)
-		}
-		out = append(out, &cp)
+		out = append(out, cloneAgent(a))
 	}
 	return out, nil
+}
+
+func (m *Memory) UpdateAgent(a *Agent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.agents[a.ID]
+	if !ok || cur.OwnerUserID != a.OwnerUserID {
+		return fmt.Errorf("agent not found")
+	}
+	m.agents[a.ID] = cloneAgent(a)
+	return nil
 }
 
 func (m *Memory) DeleteAgent(ownerUserID, id string) error {

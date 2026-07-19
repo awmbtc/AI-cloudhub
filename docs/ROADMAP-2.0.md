@@ -62,16 +62,16 @@ User
 | A4 | `internal/sandbox` 路径 jail | 拒绝 `..` 与 workspace 外路径 |
 | A5 | runner 执行命令前校验 cwd/args 路径 | 单元测试 + 文档 |
 
-### 阶段 B · 2.0 最小企业可用（下一季）
+### 阶段 B · 2.0 最小企业可用
 
-| # | 落脚点 | 说明 |
-|---|--------|------|
-| B1 | Capability 绑定 Drive 列表 | agent 只能 session 自己的 drives |
-| B2 | Policy v0（JSON allow：agent/drive/path/action） | 非 OPA |
-| B3 | Sandbox v1：env 白名单 + 可选网络 deny 文档/开关 | 完整 seccomp 可后置 |
-| B4 | Manifest 2.0：permissions.read/write 前缀 | 兼容 v1 |
-| B5 | Audit 关联 `agent_id` / `tool` | 表字段 + 查询 |
-| B6 | Snapshot v0：Manifest 或 prefix 元数据快照 | 非全量 Git FS |
+| # | 落脚点 | 状态 | 说明 |
+|---|--------|------|------|
+| B1 | Capability 绑定 Drive 列表 | **done** | `allowed_drive_ids`；session/list 过滤 |
+| B2 | Policy v0 | **done** | `internal/policy` Engine（scope+drive+path 前缀） |
+| B3 | Sandbox v1：env 白名单 | pending | 完整 seccomp 可后置；path jail 已在 A |
+| B4 | Manifest 2.0：permissions.read/write | **done** | version=2 + prefixes |
+| B5 | Audit 关联 `agent_id` | **done** | 字段 + `?agent_id=` 过滤 |
+| B6 | Snapshot v0 | pending | 非全量 Git FS |
 
 ### 阶段 C · 3.0 蓝图（有客户与规模后再做）
 
