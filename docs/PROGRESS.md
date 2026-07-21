@@ -142,8 +142,15 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 429 Retry-After
 - [x] runner-bwrap.sh + MCP list_objects
 
+## 本波（可选续）
+
+- [x] 实时对象清单：`GET /v1/drives/{id}/objects?versions=1`
+- [x] version-hint：`.../objects/version-hint`
+- [x] 429 `Retry-After`
+- [x] `scripts/runner-bwrap.sh` + MCP `list_objects`
+
 ## 仍可后续
 
-- 真对象版本回滚（需桶开启 versioning + 厂商 API）
+- 控制面代执行对象 version 回滚（当前 CLI hint）
 - 更多厂商原生 AssumeRole
-- seccomp profile
+- 内嵌 seccomp BPF

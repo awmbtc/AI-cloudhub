@@ -41,6 +41,7 @@ go build -o .bin/mcp ./cmd/mcp
 | `resolve_path` | — | Local path jail check |
 | `list_snapshots` | drive.read\|write | `GET /v1/drives/{id}/snapshots` |
 | `create_snapshot` | drive.write | `POST /v1/drives/{id}/snapshots` |
+| `list_objects` | drive.read\|write | `GET /v1/drives/{id}/objects` live inventory |
 
 ## Example
 
