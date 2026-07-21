@@ -24,6 +24,8 @@
 - Docs: formal evolution roadmap aligned with architecture
 - Stage B: agent drive allowlist, Policy Engine v0, Manifest 2.0 permissions, audit.agent_id
 - Sandbox v1 env filter in runner; Snapshot v0 metadata API under /v1/drives/{id}/snapshots
+- MCP v0.2: tool scopes via /v1/me, path jail, whoami/resolve_path/snapshots tools
+- Admin API IP allowlist: AI_CLOUDHUB_ADMIN_CIDRS
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

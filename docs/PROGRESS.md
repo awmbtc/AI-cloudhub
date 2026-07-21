@@ -114,9 +114,14 @@ curl -s localhost:8080/v1/runtime/check
 - [x] B3：Sandbox v1 env 白名单（runner 默认过滤；`AI_CLOUDHUB_PASS_TOKEN=1` 才传父 token）
 - [x] B6：Snapshot v0（元数据快照 CRUD + restore 返回 payload）
 
+## 本波（MCP + Admin IP）
+
+- [x] MCP v0.2：工具 `required_scopes_any` + whoami/resolve_path/snapshots
+- [x] MCP 路径 jail（mount_point / resolve_path）
+- [x] Admin IP allowlist：`AI_CLOUDHUB_ADMIN_CIDRS`
+
 ## 仍可后续
 
-- MCP 工具级权限 + 路径 jail
 - Snapshot 对象级版本 / 真回滚
 - 更多厂商原生 STS
-- Admin IP allowlist
+- Sandbox 网络 deny / seccomp

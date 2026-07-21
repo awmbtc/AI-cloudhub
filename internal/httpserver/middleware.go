@@ -9,6 +9,36 @@ import (
 	"github.com/google/uuid"
 )
 
+// ipAllowed reports whether client IP matches any entry (exact IP or CIDR).
+// Empty allow list = allow all.
+func ipAllowed(client string, allow []string) bool {
+	if len(allow) == 0 {
+		return true
+	}
+	client = strings.TrimSpace(client)
+	ip := net.ParseIP(client)
+	for _, a := range allow {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if a == client {
+			return true
+		}
+		if ip != nil {
+			if strings.Contains(a, "/") {
+				_, netw, err := net.ParseCIDR(a)
+				if err == nil && netw.Contains(ip) {
+					return true
+				}
+			} else if aip := net.ParseIP(a); aip != nil && aip.Equal(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 const headerRequestID = "X-Request-ID"
 
 // withRequestID ensures every request has an X-Request-ID: reuse the client

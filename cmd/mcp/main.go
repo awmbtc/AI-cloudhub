@@ -1,13 +1,12 @@
 // mcp — AI-cloudhub agent helper (MCP-compatible-ish over stdio).
 //
 // Reads AI_CLOUDHUB_API + AI_CLOUDHUB_TOKEN and speaks JSON-RPC 2.0
-// (one JSON object per line) on stdin/stdout. Tools:
+// (one JSON object per line) on stdin/stdout.
 //
-//	list_drives
-//	ensure_mounted_hint
-//	workspace_env
+// Tools enforce:
+//   - required scopes (from GET /v1/me when agent token)
+//   - path jail under AI_CLOUDHUB_WORKSPACE / mount root
 //
-// This is a skeleton for agents — not a full MCP SDK host.
 // See docs/MCP.md.
 package main
 
@@ -20,24 +19,43 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/awmbtc/AI-cloudhub/internal/auth"
+	"github.com/awmbtc/AI-cloudhub/internal/sandbox"
 )
 
 const serverName = "ai-cloudhub-mcp"
-const serverVersion = "0.1.0"
+const serverVersion = "0.2.0"
+
+type principalCache struct {
+	mu       sync.Mutex
+	loaded   bool
+	agentID  string
+	scopes   []string
+	role     string
+	username string
+	userID   string
+	err      error
+}
 
 func main() {
 	api := strings.TrimRight(env("AI_CLOUDHUB_API", "http://127.0.0.1:8080"), "/")
 	token := os.Getenv("AI_CLOUDHUB_TOKEN")
+	workspace := env("AI_CLOUDHUB_WORKSPACE", env("AI_CLOUDHUB_MOUNT", "/workspace"))
 
-	// Logs go to stderr so stdout stays clean for JSON-RPC.
 	logf := func(format string, args ...interface{}) {
 		fmt.Fprintf(os.Stderr, "ai-cloudhub-mcp: "+format+"\n", args...)
 	}
-	logf("starting api=%s token_set=%v", api, token != "")
+	logf("starting api=%s token_set=%v workspace=%s", api, token != "", workspace)
 
+	if token == "" {
+		logf("WARNING: AI_CLOUDHUB_TOKEN unset — API tools will fail until set")
+	}
+
+	pc := &principalCache{}
 	sc := bufio.NewScanner(os.Stdin)
-	// Allow large tool results (default 64K is tight for drive lists).
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	for sc.Scan() {
@@ -45,9 +63,8 @@ func main() {
 		if line == "" {
 			continue
 		}
-		resp := handleLine(api, token, line)
+		resp := handleLine(api, token, workspace, pc, line)
 		if resp == nil {
-			// notifications (no id) → no response
 			continue
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -63,7 +80,7 @@ func main() {
 	}
 }
 
-// ---- JSON-RPC types ----
+// ---- JSON-RPC ----
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -85,7 +102,7 @@ type rpcError struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-func handleLine(api, token, line string) *rpcResponse {
+func handleLine(api, token, workspace string, pc *principalCache, line string) *rpcResponse {
 	var req rpcRequest
 	if err := json.Unmarshal([]byte(line), &req); err != nil {
 		return errResp(nil, -32700, "parse error: "+err.Error(), nil)
@@ -93,16 +110,12 @@ func handleLine(api, token, line string) *rpcResponse {
 	if req.JSONRPC == "" {
 		req.JSONRPC = "2.0"
 	}
-
-	// Notifications have no id → no response.
 	if len(req.ID) == 0 || string(req.ID) == "null" {
 		if req.Method == "notifications/initialized" || req.Method == "initialized" {
 			return nil
 		}
-		// Still process fire-and-forget if useful; currently ignore.
 		return nil
 	}
-
 	var id interface{}
 	_ = json.Unmarshal(req.ID, &id)
 
@@ -110,24 +123,15 @@ func handleLine(api, token, line string) *rpcResponse {
 	case "initialize":
 		return okResp(id, map[string]interface{}{
 			"protocolVersion": "2024-11-05",
-			"capabilities": map[string]interface{}{
-				"tools": map[string]interface{}{},
-			},
-			"serverInfo": map[string]interface{}{
-				"name":    serverName,
-				"version": serverVersion,
-			},
-			"instructions": "AI-cloudhub MCP helper. Use list_drives, ensure_mounted_hint, workspace_env. Artifacts go under AI_CLOUDHUB_WORKSPACE.",
+			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
+			"serverInfo":      map[string]interface{}{"name": serverName, "version": serverVersion},
+			"instructions": "AI-cloudhub MCP helper v0.2. Tools require scopes when using agent tokens. " +
+				"Paths must stay under workspace. Prefer hubd/runner for mounts.",
 		})
-
 	case "ping":
 		return okResp(id, map[string]interface{}{})
-
 	case "tools/list":
-		return okResp(id, map[string]interface{}{
-			"tools": toolDescriptors(),
-		})
-
+		return okResp(id, map[string]interface{}{"tools": toolDescriptors()})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -138,21 +142,17 @@ func handleLine(api, token, line string) *rpcResponse {
 				return errResp(id, -32602, "invalid tools/call params: "+err.Error(), nil)
 			}
 		}
-		result, err := callTool(api, token, p.Name, p.Arguments)
-		if err != nil {
-			// MCP-style tool error as result content, not transport error.
-			return okResp(id, toolResult(true, err.Error()))
-		}
-		return okResp(id, result)
-
-	// Direct tool methods (line-protocol convenience).
-	case "list_drives", "ensure_mounted_hint", "workspace_env":
-		result, err := callTool(api, token, req.Method, req.Params)
+		result, err := callTool(api, token, workspace, pc, p.Name, p.Arguments)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-
+	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami":
+		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
+		if err != nil {
+			return okResp(id, toolResult(true, err.Error()))
+		}
+		return okResp(id, result)
 	default:
 		return errResp(id, -32601, "method not found: "+req.Method, nil)
 	}
@@ -163,61 +163,126 @@ func okResp(id interface{}, result interface{}) *rpcResponse {
 }
 
 func errResp(id interface{}, code int, msg string, data interface{}) *rpcResponse {
-	return &rpcResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &rpcError{Code: code, Message: msg, Data: data},
-	}
+	return &rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg, Data: data}}
 }
 
-// ---- Tools ----
+// ---- Tool registry with required scopes ----
 
-func toolDescriptors() []map[string]interface{} {
-	return []map[string]interface{}{
+type toolMeta struct {
+	name        string
+	description string
+	scopes      []string // any-of for agent tokens; empty = human or any authenticated
+	schema      map[string]interface{}
+}
+
+func toolRegistry() []toolMeta {
+	return []toolMeta{
 		{
-			"name":        "list_drives",
-			"description": "List logical drives for the authenticated AI-cloudhub user (GET /v1/drives).",
-			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
+			name: "whoami", description: "Return principal from control plane (GET /v1/me): human vs agent, scopes.",
+			scopes: nil,
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
-			"name": "ensure_mounted_hint",
-			"description": "Return mount / ensure-mounted instructions for agents. " +
-				"If drive_id or binding_id is provided, probes the control plane session endpoint. " +
-				"Does not mount locally — points at hubd/runner.",
-			"inputSchema": map[string]interface{}{
+			name: "list_drives", description: "List logical drives (GET /v1/drives). Requires drive.read for agent tokens.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "ensure_mounted_hint",
+			description: "Mount instructions + optional session probe. Requires drive.read. " +
+				"mount_point must be under workspace jail.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"drive_id": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional drive id; probes POST /v1/drives/{id}/session",
-					},
-					"binding_id": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional binding id; probes POST /v1/bindings/{id}/session",
-					},
-					"mount_point": map[string]interface{}{
-						"type":        "string",
-						"description": "Desired mount point (default /workspace or AI_CLOUDHUB_MOUNT)",
-					},
+					"drive_id":    map[string]interface{}{"type": "string"},
+					"binding_id":  map[string]interface{}{"type": "string"},
+					"mount_point": map[string]interface{}{"type": "string"},
 				},
 			},
 		},
 		{
-			"name":        "workspace_env",
-			"description": "Return AI_CLOUDHUB_* environment variable names and meanings from the Workspace Manifest contract.",
-			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
+			name: "workspace_env", description: "Document AI_CLOUDHUB_* env contract (local, no API).",
+			scopes: nil,
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "resolve_path", description: "Check whether a path is inside the workspace jail (local).",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{"type": "string", "description": "Path relative or absolute"},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
+			name: "list_snapshots", description: "List metadata snapshots for a drive. Requires drive.read.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"drive_id"},
+			},
+		},
+		{
+			name: "create_snapshot", description: "Create metadata snapshot. Requires drive.write.",
+			scopes: []string{auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id": map[string]interface{}{"type": "string"},
+					"label":    map[string]interface{}{"type": "string"},
+					"note":     map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"drive_id"},
 			},
 		},
 	}
 }
 
-func callTool(api, token, name string, argsJSON json.RawMessage) (interface{}, error) {
+func toolDescriptors() []map[string]interface{} {
+	var out []map[string]interface{}
+	for _, t := range toolRegistry() {
+		out = append(out, map[string]interface{}{
+			"name":        t.name,
+			"description": t.description,
+			"inputSchema": t.schema,
+			"annotations": map[string]interface{}{
+				"required_scopes_any": t.scopes,
+			},
+		})
+	}
+	return out
+}
+
+func metaFor(name string) (toolMeta, bool) {
+	for _, t := range toolRegistry() {
+		if t.name == name {
+			return t, true
+		}
+	}
+	return toolMeta{}, false
+}
+
+func callTool(api, token, workspace string, pc *principalCache, name string, argsJSON json.RawMessage) (interface{}, error) {
+	meta, ok := metaFor(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+	// Scope gate for tools that hit the API or declare scopes.
+	if len(meta.scopes) > 0 || name == "whoami" {
+		if err := ensureScopes(api, token, pc, meta.scopes); err != nil {
+			return nil, err
+		}
+	}
+
 	switch name {
+	case "whoami":
+		return toolWhoami(api, token, pc)
 	case "list_drives":
 		return toolListDrives(api, token)
 	case "ensure_mounted_hint":
@@ -226,24 +291,140 @@ func callTool(api, token, name string, argsJSON json.RawMessage) (interface{}, e
 			BindingID  string `json:"binding_id"`
 			MountPoint string `json:"mount_point"`
 		}
-		if len(argsJSON) > 0 && string(argsJSON) != "null" {
-			if err := json.Unmarshal(argsJSON, &args); err != nil {
-				return nil, fmt.Errorf("bad arguments: %w", err)
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if args.MountPoint != "" {
+			if err := jailPath(workspace, args.MountPoint); err != nil {
+				return nil, err
 			}
 		}
-		return toolEnsureMountedHint(api, token, args.DriveID, args.BindingID, args.MountPoint)
+		return toolEnsureMountedHint(api, token, workspace, args.DriveID, args.BindingID, args.MountPoint)
 	case "workspace_env":
-		return toolWorkspaceEnv(), nil
+		return toolWorkspaceEnv(workspace), nil
+	case "resolve_path":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolResolvePath(workspace, args.Path)
+	case "list_snapshots":
+		var args struct {
+			DriveID string `json:"drive_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" {
+			return nil, fmt.Errorf("drive_id required")
+		}
+		return toolListSnapshots(api, token, args.DriveID)
+	case "create_snapshot":
+		var args struct {
+			DriveID string `json:"drive_id"`
+			Label   string `json:"label"`
+			Note    string `json:"note"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" {
+			return nil, fmt.Errorf("drive_id required")
+		}
+		return toolCreateSnapshot(api, token, args.DriveID, args.Label, args.Note)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
 }
 
+func decodeArgs(raw json.RawMessage, v interface{}) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return json.Unmarshal(raw, v)
+}
+
+func jailPath(workspace, path string) error {
+	j := sandbox.NewPathJail(workspace)
+	return j.Allow(path)
+}
+
+func ensureScopes(api, token string, pc *principalCache, needAny []string) error {
+	if token == "" {
+		return fmt.Errorf("AI_CLOUDHUB_TOKEN is not set")
+	}
+	if len(needAny) == 0 {
+		return nil
+	}
+	if err := loadPrincipal(api, token, pc); err != nil {
+		return err
+	}
+	// Human (no agent_id): full access
+	if pc.agentID == "" {
+		return nil
+	}
+	for _, need := range needAny {
+		if auth.HasScope(pc.agentID, pc.scopes, need) {
+			return nil
+		}
+	}
+	return fmt.Errorf("missing scope (need any of %v); agent scopes=%v", needAny, pc.scopes)
+}
+
+func loadPrincipal(api, token string, pc *principalCache) error {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if pc.loaded {
+		return pc.err
+	}
+	pc.loaded = true
+	body, status, err := httpDo(http.MethodGet, api+"/v1/me", token, nil)
+	if err != nil {
+		pc.err = err
+		return err
+	}
+	if status >= 300 {
+		pc.err = fmt.Errorf("GET /v1/me HTTP %d: %s", status, truncate(string(body), 256))
+		return pc.err
+	}
+	var me struct {
+		ID       string   `json:"id"`
+		Username string   `json:"username"`
+		Role     string   `json:"role"`
+		AgentID  string   `json:"agent_id"`
+		Scopes   []string `json:"scopes"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		pc.err = err
+		return err
+	}
+	pc.userID = me.ID
+	pc.username = me.Username
+	pc.role = me.Role
+	pc.agentID = me.AgentID
+	pc.scopes = me.Scopes
+	return nil
+}
+
+func toolWhoami(api, token string, pc *principalCache) (interface{}, error) {
+	if err := loadPrincipal(api, token, pc); err != nil {
+		return nil, err
+	}
+	return toolResultJSON(map[string]interface{}{
+		"user_id":   pc.userID,
+		"username":  pc.username,
+		"role":      pc.role,
+		"agent_id":  pc.agentID,
+		"scopes":    pc.scopes,
+		"principal": map[bool]string{true: "agent", false: "human"}[pc.agentID != ""],
+	})
+}
+
 func toolResult(isError bool, text string) map[string]interface{} {
 	return map[string]interface{}{
-		"content": []map[string]interface{}{
-			{"type": "text", "text": text},
-		},
+		"content": []map[string]interface{}{{"type": "text", "text": text}},
 		"isError": isError,
 	}
 }
@@ -256,14 +437,10 @@ func toolResultJSON(v interface{}) (map[string]interface{}, error) {
 	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	// Encode appends a trailing newline; trim for cleaner tool text.
 	return toolResult(false, strings.TrimSpace(buf.String())), nil
 }
 
 func toolListDrives(api, token string) (interface{}, error) {
-	if token == "" {
-		return nil, fmt.Errorf("AI_CLOUDHUB_TOKEN is not set")
-	}
 	body, status, err := httpDo(http.MethodGet, api+"/v1/drives", token, nil)
 	if err != nil {
 		return nil, err
@@ -271,173 +448,157 @@ func toolListDrives(api, token string) (interface{}, error) {
 	if status >= 300 {
 		return nil, fmt.Errorf("GET /v1/drives HTTP %d: %s", status, truncate(string(body), 512))
 	}
-	// Pass through JSON (array or wrapped object).
 	var parsed interface{}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return toolResult(false, string(body)), nil
 	}
 	return toolResultJSON(map[string]interface{}{
 		"drives": parsed,
-		"hint":   "Use ensure_mounted_hint with a drive_id, then hubd (desktop) or runner (BYOC) to mount.",
+		"hint":   "Use ensure_mounted_hint with drive_id; hubd/runner for actual mount.",
 	})
 }
 
-func toolEnsureMountedHint(api, token, driveID, bindingID, mountPoint string) (interface{}, error) {
+func toolEnsureMountedHint(api, token, workspace, driveID, bindingID, mountPoint string) (interface{}, error) {
 	if mountPoint == "" {
-		mountPoint = env("AI_CLOUDHUB_MOUNT", "/workspace")
+		mountPoint = workspace
+	}
+	if err := jailPath(workspace, mountPoint); err != nil {
+		return nil, fmt.Errorf("mount_point jail: %w", err)
 	}
 	out := map[string]interface{}{
 		"action":      "ensure_mounted_hint",
 		"mount_point": mountPoint,
+		"workspace":   workspace,
 		"instructions": []string{
-			"AI-cloudhub does not auto-mount from this MCP helper.",
-			"Desktop: run hubd with AI_CLOUDHUB_API + AI_CLOUDHUB_TOKEN + AI_CLOUDHUB_DEVICE_ID (reconciles bindings desired=mounted).",
-			"Cloud BYOC: run runner with AI_CLOUDHUB_DRIVE_ID or AI_CLOUDHUB_BINDING_ID (never a platform runner pool).",
-			"After mount, write all artifacts under AI_CLOUDHUB_WORKSPACE (see workspace_env tool / manifest env).",
-			"Manifest path: $AI_CLOUDHUB_WORKSPACE/.ai-cloudhub/manifest.json",
+			"This MCP helper does not mount FUSE locally.",
+			"Desktop: hubd with AI_CLOUDHUB_API + TOKEN + DEVICE_ID.",
+			"Cloud BYOC: runner with DRIVE_ID or BINDING_ID (D-001: no platform pool).",
+			"Write artifacts only under workspace (path jail enforced by runner).",
 		},
 		"commands": map[string]string{
-			"hubd": fmt.Sprintf(
-				"AI_CLOUDHUB_API=%s AI_CLOUDHUB_TOKEN=<token> AI_CLOUDHUB_DEVICE_ID=<device> ./.bin/hubd",
-				api,
-			),
-			"runner": fmt.Sprintf(
-				"AI_CLOUDHUB_API=%s AI_CLOUDHUB_TOKEN=<token> AI_CLOUDHUB_DRIVE_ID=<drive_id> AI_CLOUDHUB_MOUNT=%s ./.bin/runner -- <agent>",
-				api, mountPoint,
-			),
+			"hubd":   fmt.Sprintf("AI_CLOUDHUB_API=%s AI_CLOUDHUB_TOKEN=<token> AI_CLOUDHUB_DEVICE_ID=<device> ./.bin/hubd", api),
+			"runner": fmt.Sprintf("AI_CLOUDHUB_API=%s AI_CLOUDHUB_TOKEN=<token> AI_CLOUDHUB_DRIVE_ID=<drive_id> AI_CLOUDHUB_MOUNT=%s ./.bin/runner -- <agent>", api, mountPoint),
 		},
 	}
-
-	// Optional live probe.
 	if bindingID != "" || driveID != "" {
-		if token == "" {
-			out["session_probe"] = map[string]interface{}{
-				"ok":    false,
-				"error": "AI_CLOUDHUB_TOKEN is not set; cannot probe session",
-			}
+		var url string
+		var payload interface{}
+		if bindingID != "" {
+			url = api + "/v1/bindings/" + bindingID + "/session"
+			out["binding_id"] = bindingID
 		} else {
-			var url string
-			var payload interface{}
-			if bindingID != "" {
-				url = api + "/v1/bindings/" + bindingID + "/session"
-				out["binding_id"] = bindingID
-			} else {
-				url = api + "/v1/drives/" + driveID + "/session"
-				out["drive_id"] = driveID
-				payload = map[string]string{
-					"mount_point": mountPoint,
-					"device_id":   env("AI_CLOUDHUB_DEVICE_ID", "mcp-helper"),
-					"mode":        env("AI_CLOUDHUB_MODE", "mount"),
-				}
+			url = api + "/v1/drives/" + driveID + "/session"
+			out["drive_id"] = driveID
+			payload = map[string]string{
+				"mount_point": mountPoint,
+				"device_id":   env("AI_CLOUDHUB_DEVICE_ID", "mcp-helper"),
+				"mode":        env("AI_CLOUDHUB_MODE", "mount"),
 			}
-			body, status, err := httpDo(http.MethodPost, url, token, payload)
-			probe := map[string]interface{}{
-				"url":    url,
-				"status": status,
-			}
-			if err != nil {
-				probe["ok"] = false
-				probe["error"] = err.Error()
-			} else if status >= 300 {
-				probe["ok"] = false
-				probe["error"] = truncate(string(body), 512)
-			} else {
-				probe["ok"] = true
-				// Summarize without dumping rclone secrets in full if huge.
-				var parsed map[string]interface{}
-				if json.Unmarshal(body, &parsed) == nil {
-					probe["summary"] = sessionSummary(parsed)
-				} else {
-					probe["body_bytes"] = len(body)
-				}
-				probe["note"] = "Session issued successfully. Prefer hubd/runner to mount; this helper only probes."
-			}
-			out["session_probe"] = probe
 		}
-	} else {
-		out["note"] = "Pass drive_id or binding_id to probe POST .../session against the control plane."
+		body, status, err := httpDo(http.MethodPost, url, token, payload)
+		probe := map[string]interface{}{"url": url, "status": status}
+		if err != nil {
+			probe["ok"] = false
+			probe["error"] = err.Error()
+		} else if status >= 300 {
+			probe["ok"] = false
+			probe["error"] = truncate(string(body), 512)
+		} else {
+			probe["ok"] = true
+			var parsed map[string]interface{}
+			if json.Unmarshal(body, &parsed) == nil {
+				probe["summary"] = sessionSummary(parsed)
+			}
+		}
+		out["session_probe"] = probe
 	}
-
 	return toolResultJSON(out)
+}
+
+func toolResolvePath(workspace, path string) (interface{}, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("path required")
+	}
+	err := jailPath(workspace, path)
+	return toolResultJSON(map[string]interface{}{
+		"workspace": workspace,
+		"path":      path,
+		"allowed":   err == nil,
+		"error":     errString(err),
+	})
+}
+
+func toolListSnapshots(api, token, driveID string) (interface{}, error) {
+	body, status, err := httpDo(http.MethodGet, api+"/v1/drives/"+driveID+"/snapshots", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("list snapshots HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolCreateSnapshot(api, token, driveID, label, note string) (interface{}, error) {
+	payload := map[string]string{"label": label, "note": note}
+	body, status, err := httpDo(http.MethodPost, api+"/v1/drives/"+driveID+"/snapshots", token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("create snapshot HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
 }
 
 func sessionSummary(parsed map[string]interface{}) map[string]interface{} {
 	sum := map[string]interface{}{}
-	// Common shapes from api/runner: top-level or nested under "session".
 	if m, ok := parsed["manifest"].(map[string]interface{}); ok {
 		sum["has_manifest"] = true
 		if env, ok := m["env"].(map[string]interface{}); ok {
 			sum["manifest_env_keys"] = mapKeys(env)
 		}
-		if mp, ok := m["mount_point"].(string); ok {
-			sum["mount_point"] = mp
+		if v, ok := m["version"]; ok {
+			sum["manifest_version"] = v
 		}
-		if did, ok := m["drive_id"].(string); ok {
-			sum["drive_id"] = did
+		if p, ok := m["permissions"]; ok {
+			sum["permissions"] = p
 		}
 	}
 	if s, ok := parsed["session"].(map[string]interface{}); ok {
 		if exp, ok := s["expires_at"]; ok {
 			sum["expires_at"] = exp
 		}
-		if m, ok := s["manifest"].(map[string]interface{}); ok {
-			if env, ok := m["env"].(map[string]interface{}); ok {
-				sum["session_manifest_env_keys"] = mapKeys(env)
-			}
-		}
-	}
-	if sp, ok := parsed["spec"].(map[string]interface{}); ok {
-		if rp, ok := sp["remote_path"].(string); ok {
-			sum["remote_path"] = rp
-		}
-		if mp, ok := sp["mount_point"].(string); ok {
-			sum["spec_mount_point"] = mp
-		}
-		if _, ok := sp["rclone_conf"].(string); ok {
-			sum["has_rclone_conf"] = true
-		}
 	}
 	return sum
 }
 
-func toolWorkspaceEnv() interface{} {
-	// From protocols/workspace-manifest.schema.json + internal/manifest + ARCHITECTURE §8.
+func toolWorkspaceEnv(workspace string) interface{} {
 	doc := map[string]interface{}{
-		"source": []string{
-			"protocols/workspace-manifest.schema.json",
-			"internal/manifest/manifest.go",
-			"docs/ARCHITECTURE.md §8",
-		},
+		"workspace_default": workspace,
 		"required_env": []map[string]string{
-			{"name": "AI_CLOUDHUB_WORKSPACE", "meaning": "Absolute workspace root; all agent artifacts MUST land here."},
-			{"name": "AI_CLOUDHUB_DRIVE_ID", "meaning": "Logical drive id bound to this workspace."},
+			{"name": "AI_CLOUDHUB_WORKSPACE", "meaning": "Absolute workspace root"},
+			{"name": "AI_CLOUDHUB_DRIVE_ID", "meaning": "Logical drive id"},
 			{"name": "AI_CLOUDHUB_MODE", "meaning": "mount | sync_workspace | direct"},
 		},
-		"common_env": []map[string]string{
-			{"name": "AI_CLOUDHUB_API", "meaning": "Control-plane base URL."},
-			{"name": "AI_CLOUDHUB_TOKEN", "meaning": "Bearer token for API / MCP helper (not always in manifest)."},
-			{"name": "AI_CLOUDHUB_MOUNT", "meaning": "Desired mount point for hubd/runner (default /workspace)."},
-			{"name": "AI_CLOUDHUB_DEVICE_ID", "meaning": "Device id for hubd binding reconcile."},
-			{"name": "AI_CLOUDHUB_BINDING_ID", "meaning": "Optional binding id for runner session."},
-			{"name": "AI_CLOUDHUB_STORAGE_REGION", "meaning": "Optional storage region hint from drive."},
-			{"name": "AI_CLOUDHUB_JOB_ID", "meaning": "Set by runner worker when executing a job."},
-			{"name": "AI_CLOUDHUB_WORKER", "meaning": "Set 1/true to run runner in job poll mode."},
+		"security": map[string]interface{}{
+			"mcp_scopes":  "Agent tokens need drive.read / drive.write for API tools",
+			"path_jail":   "resolve_path and mount_point checked against workspace",
+			"runner_env":  "runner filters secrets; set AI_CLOUDHUB_PASS_TOKEN=1 to pass API token into agent",
+			"mcp_version": serverVersion,
 		},
-		"manifest_path": "$AI_CLOUDHUB_WORKSPACE/.ai-cloudhub/manifest.json",
-		"agent_policy": map[string]interface{}{
-			"deny_upload_tools": true,
-			"instructions":      "All artifacts MUST be written under AI_CLOUDHUB_WORKSPACE. Do not use cloud upload APIs.",
-		},
+		"tools": []string{"whoami", "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot"},
 	}
-	// toolWorkspaceEnv always succeeds; ignore marshal edge cases.
 	out, err := toolResultJSON(doc)
 	if err != nil {
 		return toolResult(false, fmt.Sprintf("%v", doc))
 	}
 	return out
 }
-
-// ---- HTTP ----
 
 func httpDo(method, url, token string, payload interface{}) ([]byte, int, error) {
 	var rdr io.Reader
@@ -490,4 +651,11 @@ func mapKeys(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

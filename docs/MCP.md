@@ -1,15 +1,17 @@
 # MCP helper (agent tool server)
 
-`cmd/mcp` is a **stdio JSON-RPC** helper for agents. It is **MCP-compatible-ish** (initialize / tools/list / tools/call), not a full MCP SDK host.
+`cmd/mcp` is a **stdio JSON-RPC** helper for agents. MCP-compatible-ish (`initialize` / `tools/list` / `tools/call`), not a full MCP SDK host.
 
-## Why
+## Version 0.2 security
 
-Agents should not guess workspace paths. AI-cloudhub already injects:
+| Control | Behavior |
+|---------|----------|
+| **Token** | `AI_CLOUDHUB_TOKEN` required for API tools |
+| **Scopes** | Agent tokens: tools declare `required_scopes_any`; enforced via `GET /v1/me` |
+| **Path jail** | `mount_point` / `resolve_path` must stay under workspace root |
+| **No local mount** | Session probe only; mount via **hubd** / **runner** |
 
-- `AI_CLOUDHUB_WORKSPACE`
-- Workspace Manifest at `$AI_CLOUDHUB_WORKSPACE/.ai-cloudhub/manifest.json`
-
-This binary adds three tools so an agent runtime can **list drives**, get **mount instructions**, and read the **env contract** without embedding control-plane HTTP details.
+Human login tokens have full tool access. Agent tokens need e.g. `drive.read` for list/session tools.
 
 ## Build
 
@@ -18,63 +20,45 @@ export CGO_ENABLED=0
 go build -o .bin/mcp ./cmd/mcp
 ```
 
-Stdlib only; no extra module deps.
-
 ## Env
 
 | Variable | Required | Meaning |
 |----------|----------|---------|
 | `AI_CLOUDHUB_API` | no (default `http://127.0.0.1:8080`) | Control-plane base URL |
-| `AI_CLOUDHUB_TOKEN` | for live API tools | Bearer token |
-| `AI_CLOUDHUB_MOUNT` | no | Default mount point in hints (`/workspace`) |
-| `AI_CLOUDHUB_DEVICE_ID` | no | Used when probing drive sessions |
-| `AI_CLOUDHUB_MODE` | no | `mount` (default) when probing |
+| `AI_CLOUDHUB_TOKEN` | for live API tools | Bearer (human or agent token) |
+| `AI_CLOUDHUB_WORKSPACE` / `AI_CLOUDHUB_MOUNT` | no | Jail root (default `/workspace`) |
+| `AI_CLOUDHUB_DEVICE_ID` | no | Device id for session probes |
+| `AI_CLOUDHUB_MODE` | no | `mount` default when probing |
 
-## Protocol
+## Tools
 
-- **Transport:** newline-delimited JSON-RPC 2.0 on **stdin/stdout** (logs on **stderr**).
-- **Methods:**
-  - `initialize` — server info + capabilities
-  - `tools/list` — tool schemas
-  - `tools/call` — `{ "name": "...", "arguments": { ... } }`
-  - Direct convenience: `list_drives` / `ensure_mounted_hint` / `workspace_env` as method names
-- **Tool results** follow MCP shape: `{ "content": [{ "type": "text", "text": "..." }], "isError": bool }`.
+| Tool | Scopes (agent) | Behavior |
+|------|----------------|----------|
+| `whoami` | — | `GET /v1/me` principal + scopes |
+| `list_drives` | drive.read\|write | `GET /v1/drives` |
+| `ensure_mounted_hint` | drive.read\|write | Instructions + optional session probe; path jail on mount_point |
+| `workspace_env` | — | Env contract (local) |
+| `resolve_path` | — | Local path jail check |
+| `list_snapshots` | drive.read\|write | `GET /v1/drives/{id}/snapshots` |
+| `create_snapshot` | drive.write | `POST /v1/drives/{id}/snapshots` |
 
-### Example
+## Example
 
 ```bash
 export AI_CLOUDHUB_API=http://127.0.0.1:8080
-export AI_CLOUDHUB_TOKEN=<token>
+export AI_CLOUDHUB_TOKEN=<token>   # prefer agent token with limited scopes
 
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"workspace_env","arguments":{}}}' \
-  '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_drives","arguments":{}}}' \
-  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ensure_mounted_hint","arguments":{"drive_id":"drv_xxx"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"whoami","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"resolve_path","arguments":{"path":"/etc/passwd"}}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_drives","arguments":{}}}' \
   | ./.bin/mcp
 ```
 
-## Tools
+## Non-goals
 
-| Tool | Behavior |
-|------|----------|
-| `list_drives` | `GET /v1/drives` with bearer token |
-| `ensure_mounted_hint` | Returns hubd/runner mount instructions. Optional `drive_id` / `binding_id` probes `POST .../session` (does **not** mount locally) |
-| `workspace_env` | Documents `AI_CLOUDHUB_*` names from Manifest schema / `internal/manifest` (no network) |
-
-## Wire into an agent host
-
-Point the host’s MCP stdio server command at:
-
-```text
-AI_CLOUDHUB_API=... AI_CLOUDHUB_TOKEN=... /path/to/.bin/mcp
-```
-
-Exact client config (Claude Desktop, Cursor, etc.) varies; this binary only implements the wire protocol above.
-
-## Non-goals (skeleton)
-
-- No local FUSE/rclone mount from this process (use **hubd** / **runner**)
-- No platform multi-tenant runner pool (D-001)
-- No full MCP resources/prompts/sampling surface
+- No FUSE mount from this process  
+- No platform multi-tenant runner pool (D-001)  
+- No full MCP resources/prompts surface  

@@ -71,6 +71,11 @@ type Config struct {
 	AuthFailMax int
 	// AuthFailWindowMin lockout window minutes (default 15).
 	AuthFailWindowMin int
+
+	// AdminCIDRs when non-empty, restricts admin API routes to these IPs/CIDRs
+	// (comma-separated). Empty = no extra IP restriction.
+	// Env: AI_CLOUDHUB_ADMIN_CIDRS (e.g. "127.0.0.1,10.0.0.0/8")
+	AdminCIDRs []string
 }
 
 // Load reads configuration from the environment with safe defaults for local docker-compose.
@@ -109,7 +114,24 @@ func Load() Config {
 		AuthRatePerMin:    getenvInt("AI_CLOUDHUB_AUTH_RATE_PER_MIN", 20),
 		AuthFailMax:       getenvInt("AI_CLOUDHUB_AUTH_FAIL_MAX", 8),
 		AuthFailWindowMin: getenvInt("AI_CLOUDHUB_AUTH_FAIL_WINDOW_MIN", 15),
+		AdminCIDRs:        splitCSV(getenv("AI_CLOUDHUB_ADMIN_CIDRS", "")),
 	}
+}
+
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // ValidationResult holds hard errors and soft warnings from Validate.

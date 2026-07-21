@@ -1281,6 +1281,13 @@ func (s *Server) withAdmin(next authed) http.HandlerFunc {
 			writeErr(w, http.StatusForbidden, "admin required")
 			return
 		}
+		if len(s.cfg.AdminCIDRs) > 0 {
+			ip := clientIP(r)
+			if !ipAllowed(ip, s.cfg.AdminCIDRs) {
+				writeErr(w, http.StatusForbidden, "admin API not allowed from this IP")
+				return
+			}
+		}
 		next(w, r, userID, username, role)
 	})
 }

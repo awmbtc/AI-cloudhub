@@ -13,6 +13,8 @@
 - **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
 - **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）；非完整 seccomp/namespace。
 - **Snapshot v0：** 仅 drive/manifest **元数据**快照与 restore 提示；**不**做对象存储字节级版本/回滚。
+- **MCP：** v0.2 工具级 scope + 路径 jail；非完整 MCP SDK / resources。
+- **Admin IP：** `AI_CLOUDHUB_ADMIN_CIDRS` 可选；空=不限制。
 - **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。
 - **Provider 密钥：** 生产请设置 `AI_CLOUDHUB_MASTER_KEY`（信封加密）；未设置时明文落库（仅开发）。
 - **STS 会话：** 默认短时 conf 内嵌密钥（`source=embedded`/`refresh`）。原生 STS 为 best-effort：
