@@ -28,6 +28,8 @@
 - Admin API IP allowlist: AI_CLOUDHUB_ADMIN_CIDRS
 - Snapshot restore apply=true rehydrates drive metadata; 50 snapshots/drive cap
 - Runner AI_CLOUDHUB_NETWORK=deny strips proxy env; scripts/smoke-agent.sh
+- Snapshot object inventory (include_objects) + inventory diff API
+- STS source metrics; docs/STS.md; scripts/runner-netns.sh (Linux unshare)
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

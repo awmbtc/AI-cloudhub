@@ -127,8 +127,16 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Runner `AI_CLOUDHUB_NETWORK=deny` 剥离 proxy env
 - [x] `scripts/smoke-agent.sh`
 
+## 本波（可选增强）
+
+- [x] Snapshot 对象清单：`include_objects=true` ListObjects 元数据
+- [x] Snapshot diff：`GET .../snapshots/diff?a=&b=`
+- [x] STS metrics：`aicloudhub_sts_source_total`
+- [x] Linux netns 可选：`scripts/runner-netns.sh` + `AI_CLOUDHUB_NETWORK=deny`
+- [x] docs/STS.md
+
 ## 仍可后续
 
-- Snapshot 对象级版本 / 真回滚
-- 更多厂商原生 STS
-- Kernel netns / seccomp
+- 真对象版本回滚（需桶开启 versioning + 厂商 API）
+- 更多厂商原生 AssumeRole
+- seccomp profile

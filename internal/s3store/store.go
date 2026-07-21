@@ -118,6 +118,48 @@ func (s *Store) List(ctx context.Context, bucket, prefix string) ([]ObjectInfo, 
 	return out, nil
 }
 
+// InventoryEntry is a recursive object listing row (metadata only).
+type InventoryEntry struct {
+	Key          string    `json:"key"`
+	Size         int64     `json:"size"`
+	ETag         string    `json:"etag,omitempty"`
+	LastModified time.Time `json:"last_modified,omitempty"`
+}
+
+// ListInventory recursively lists objects under prefix up to maxKeys (default 1000, hard max 5000).
+// Does not download object bodies. Truncated=true when listing stopped at maxKeys.
+func (s *Store) ListInventory(ctx context.Context, bucket, prefix string, maxKeys int) (entries []InventoryEntry, truncated bool, err error) {
+	if maxKeys <= 0 {
+		maxKeys = 1000
+	}
+	if maxKeys > 5000 {
+		maxKeys = 5000
+	}
+	prefix = normalizePrefix(prefix)
+	opts := minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}
+	for obj := range s.client.ListObjects(ctx, bucket, opts) {
+		if obj.Err != nil {
+			return entries, false, obj.Err
+		}
+		if strings.HasSuffix(obj.Key, "/") && obj.Size == 0 {
+			continue // skip pure directory markers
+		}
+		entries = append(entries, InventoryEntry{
+			Key:          obj.Key,
+			Size:         obj.Size,
+			ETag:         strings.Trim(obj.ETag, `"`),
+			LastModified: obj.LastModified,
+		})
+		if len(entries) >= maxKeys {
+			return entries, true, nil
+		}
+	}
+	return entries, false, nil
+}
+
 // PresignPut returns a time-limited upload URL.
 func (s *Store) PresignPut(ctx context.Context, bucket, key string, ttl time.Duration) (*url.URL, error) {
 	return s.client.Presign(ctx, "PUT", bucket, key, ttl, nil)

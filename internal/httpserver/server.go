@@ -194,6 +194,9 @@ func (s *Server) handleSessionRefresh(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	metrics.IncSession()
+	if bundle.Session != nil {
+		metrics.IncSTSSource(bundle.Session.Source)
+	}
 	writeJSON(w, http.StatusOK, bundle)
 }
 
@@ -723,6 +726,9 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 			return
 		}
 		metrics.IncSession()
+		if bundle.Session != nil {
+			metrics.IncSTSSource(bundle.Session.Source)
+		}
 		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
 			s.auth.AuditAgent(userID, pr.AgentID, "drive.session", id, "ok")
 		}
@@ -770,9 +776,29 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	}
 }
 
-// routeDriveSnapshots handles /v1/drives/{id}/snapshots[/{sid}[/restore]]
+// routeDriveSnapshots handles /v1/drives/{id}/snapshots[/{sid}[/restore]] and .../snapshots/diff
 func (s *Server) routeDriveSnapshots(w http.ResponseWriter, r *http.Request, userID, driveID string, rest []string) {
 	if !s.requireScope(w, r, auth.ScopeDriveRead) {
+		return
+	}
+	// GET .../snapshots/diff?a=&b=
+	if len(rest) == 1 && rest[0] == "diff" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		a := r.URL.Query().Get("a")
+		b := r.URL.Query().Get("b")
+		if a == "" || b == "" {
+			writeErr(w, http.StatusBadRequest, "query a and b (snapshot ids) required")
+			return
+		}
+		out, err := s.drives.DiffSnapshots(userID, driveID, a, b)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	// write for create/delete/restore
@@ -805,6 +831,7 @@ func (s *Server) routeDriveSnapshots(w http.ResponseWriter, r *http.Request, use
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			metrics.IncSnapshot()
 			aid := ""
 			if pr := principalFrom(r); pr != nil {
 				aid = pr.AgentID
@@ -987,6 +1014,9 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 			return
 		}
 		metrics.IncSession()
+		if bundle.Session != nil {
+			metrics.IncSTSSource(bundle.Session.Source)
+		}
 		writeJSON(w, http.StatusOK, bundle)
 	case "report":
 		if r.Method != http.MethodPost {
