@@ -4,7 +4,7 @@ export CGO_ENABLED := 0
 BIN_DIR := .bin
 BINS    := api hubd runner mcp
 
-.PHONY: all build test smoke clean $(BINS)
+.PHONY: all build test smoke smoke-agent clean $(BINS)
 
 all: build
 
@@ -19,6 +19,11 @@ test:
 
 smoke: build
 	./scripts/smoke-p0.sh
+
+smoke-agent: build
+	./scripts/smoke-agent.sh
+
+smoke-all: smoke smoke-agent
 
 clean:
 	rm -rf $(BIN_DIR)

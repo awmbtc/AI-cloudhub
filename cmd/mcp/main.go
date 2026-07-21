@@ -147,7 +147,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami":
+	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -237,6 +237,19 @@ func toolRegistry() []toolMeta {
 					"drive_id": map[string]interface{}{"type": "string"},
 					"label":    map[string]interface{}{"type": "string"},
 					"note":     map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"drive_id"},
+			},
+		},
+		{
+			name: "list_objects", description: "Live object inventory for a drive (metadata). Requires drive.read.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id": map[string]interface{}{"type": "string"},
+					"versions": map[string]interface{}{"type": "boolean", "description": "Include version ids if bucket versioning on"},
+					"max":      map[string]interface{}{"type": "integer"},
 				},
 				"required": []string{"drive_id"},
 			},
@@ -334,6 +347,19 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			return nil, fmt.Errorf("drive_id required")
 		}
 		return toolCreateSnapshot(api, token, args.DriveID, args.Label, args.Note)
+	case "list_objects":
+		var args struct {
+			DriveID  string `json:"drive_id"`
+			Versions bool   `json:"versions"`
+			Max      int    `json:"max"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" {
+			return nil, fmt.Errorf("drive_id required")
+		}
+		return toolListObjects(api, token, args.DriveID, args.Versions, args.Max)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -549,6 +575,30 @@ func toolCreateSnapshot(api, token, driveID, label, note string) (interface{}, e
 	}
 	if status >= 300 {
 		return nil, fmt.Errorf("create snapshot HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolListObjects(api, token, driveID string, versions bool, max int) (interface{}, error) {
+	url := api + "/v1/drives/" + driveID + "/objects"
+	q := []string{}
+	if versions {
+		q = append(q, "versions=1")
+	}
+	if max > 0 {
+		q = append(q, fmt.Sprintf("max=%d", max))
+	}
+	if len(q) > 0 {
+		url += "?" + strings.Join(q, "&")
+	}
+	body, status, err := httpDo(http.MethodGet, url, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("list objects HTTP %d: %s", status, truncate(string(body), 512))
 	}
 	var parsed interface{}
 	_ = json.Unmarshal(body, &parsed)

@@ -30,6 +30,8 @@
 - Runner AI_CLOUDHUB_NETWORK=deny strips proxy env; scripts/smoke-agent.sh
 - Snapshot object inventory (include_objects) + inventory diff API
 - STS source metrics; docs/STS.md; scripts/runner-netns.sh (Linux unshare)
+- Live GET /v1/drives/{id}/objects (+ versions, version-hint); Retry-After on 429
+- scripts/runner-bwrap.sh; MCP list_objects
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

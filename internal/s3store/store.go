@@ -124,11 +124,26 @@ type InventoryEntry struct {
 	Size         int64     `json:"size"`
 	ETag         string    `json:"etag,omitempty"`
 	LastModified time.Time `json:"last_modified,omitempty"`
+	// VersionID set when listing with WithVersions (bucket versioning enabled).
+	VersionID string `json:"version_id,omitempty"`
+	IsLatest  bool   `json:"is_latest,omitempty"`
+	// DeleteMarker when version is a delete marker.
+	DeleteMarker bool `json:"delete_marker,omitempty"`
 }
 
-// ListInventory recursively lists objects under prefix up to maxKeys (default 1000, hard max 5000).
-// Does not download object bodies. Truncated=true when listing stopped at maxKeys.
+// ListInventory recursively lists current objects under prefix up to maxKeys
+// (default 1000, hard max 5000). Does not download bodies.
 func (s *Store) ListInventory(ctx context.Context, bucket, prefix string, maxKeys int) (entries []InventoryEntry, truncated bool, err error) {
+	return s.listInventory(ctx, bucket, prefix, maxKeys, false)
+}
+
+// ListInventoryVersions lists object versions when the bucket has versioning.
+// If versioning is disabled, behavior falls back to current objects (no version_id).
+func (s *Store) ListInventoryVersions(ctx context.Context, bucket, prefix string, maxKeys int) (entries []InventoryEntry, truncated bool, err error) {
+	return s.listInventory(ctx, bucket, prefix, maxKeys, true)
+}
+
+func (s *Store) listInventory(ctx context.Context, bucket, prefix string, maxKeys int, withVersions bool) (entries []InventoryEntry, truncated bool, err error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
@@ -137,27 +152,48 @@ func (s *Store) ListInventory(ctx context.Context, bucket, prefix string, maxKey
 	}
 	prefix = normalizePrefix(prefix)
 	opts := minio.ListObjectsOptions{
-		Prefix:    prefix,
-		Recursive: true,
+		Prefix:       prefix,
+		Recursive:    true,
+		WithVersions: withVersions,
 	}
 	for obj := range s.client.ListObjects(ctx, bucket, opts) {
 		if obj.Err != nil {
 			return entries, false, obj.Err
 		}
-		if strings.HasSuffix(obj.Key, "/") && obj.Size == 0 {
-			continue // skip pure directory markers
+		if strings.HasSuffix(obj.Key, "/") && obj.Size == 0 && obj.VersionID == "" {
+			continue
 		}
 		entries = append(entries, InventoryEntry{
 			Key:          obj.Key,
 			Size:         obj.Size,
 			ETag:         strings.Trim(obj.ETag, `"`),
 			LastModified: obj.LastModified,
+			VersionID:    obj.VersionID,
+			IsLatest:     obj.IsLatest,
+			DeleteMarker: obj.IsDeleteMarker,
 		})
 		if len(entries) >= maxKeys {
 			return entries, true, nil
 		}
 	}
 	return entries, false, nil
+}
+
+// RestoreHint returns a copy-paste rclone/aws CLI hint to fetch a specific version (BYOS).
+func RestoreHint(endpoint, bucket, key, versionID string, useSSL bool) string {
+	scheme := "http"
+	if useSSL {
+		scheme = "https"
+	}
+	if versionID == "" {
+		return fmt.Sprintf("# current object: %s://%s/%s/%s", scheme, endpoint, bucket, key)
+	}
+	return fmt.Sprintf(
+		"# Fetch version (BYOS; control plane does not proxy bytes):\n"+
+			"# aws s3api get-object --bucket %s --key %s --version-id %s out.bin\n"+
+			"# or rclone with version-aware remote if configured",
+		bucket, key, versionID,
+	)
 }
 
 // PresignPut returns a time-limited upload URL.

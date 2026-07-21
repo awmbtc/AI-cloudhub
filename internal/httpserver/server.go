@@ -688,6 +688,9 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	case "snapshots":
 		s.routeDriveSnapshots(w, r, userID, id, parts[2:])
 		return
+	case "objects":
+		s.routeDriveObjects(w, r, userID, id, parts[2:])
+		return
 	case "mount":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -774,6 +777,66 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	default:
 		writeErr(w, http.StatusNotFound, "not found")
 	}
+}
+
+// routeDriveObjects handles GET /v1/drives/{id}/objects and .../objects/version-hint
+func (s *Server) routeDriveObjects(w http.ResponseWriter, r *http.Request, userID, driveID string, rest []string) {
+	if !s.requireScope(w, r, auth.ScopeDriveRead) {
+		return
+	}
+	if len(rest) >= 1 && rest[0] == "version-hint" {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		key := r.URL.Query().Get("key")
+		ver := r.URL.Query().Get("version_id")
+		if r.Method == http.MethodPost {
+			var body struct {
+				Key       string `json:"key"`
+				VersionID string `json:"version_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Key != "" {
+				key = body.Key
+			}
+			if body.VersionID != "" {
+				ver = body.VersionID
+			}
+		}
+		if key == "" {
+			writeErr(w, http.StatusBadRequest, "key required")
+			return
+		}
+		out, err := s.drives.ObjectVersionHint(userID, driveID, key, ver)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if len(rest) > 0 && rest[0] != "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	maxKeys := 1000
+	if v := r.URL.Query().Get("max"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			maxKeys = n
+		}
+	}
+	withVer := r.URL.Query().Get("versions") == "1" || r.URL.Query().Get("versions") == "true"
+	inv, err := s.drives.ListObjects(userID, driveID, maxKeys, withVer)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, inv)
 }
 
 // routeDriveSnapshots handles /v1/drives/{id}/snapshots[/{sid}[/restore]] and .../snapshots/diff
@@ -1714,5 +1777,11 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
+	if code == http.StatusTooManyRequests {
+		// Soft client backoff hint (seconds).
+		if w.Header().Get("Retry-After") == "" {
+			w.Header().Set("Retry-After", "1")
+		}
+	}
 	writeJSON(w, code, map[string]string{"error": msg})
 }

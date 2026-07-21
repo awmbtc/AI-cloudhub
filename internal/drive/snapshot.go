@@ -116,23 +116,33 @@ func (s *Service) listObjectInventory(userID string, m *Map, maxKeys int) (map[s
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	entries, truncated, err := st.ListInventory(ctx, m.Bucket, prefix, maxKeys)
+	// Prefer versions when available (bucket versioning); falls back if unsupported.
+	entries, truncated, err := st.ListInventoryVersions(ctx, m.Bucket, prefix, maxKeys)
 	if err != nil {
-		return nil, err
+		// fallback without versions
+		entries, truncated, err = st.ListInventory(ctx, m.Bucket, prefix, maxKeys)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var total int64
+	hasVer := false
 	for _, e := range entries {
 		total += e.Size
+		if e.VersionID != "" {
+			hasVer = true
+		}
 	}
 	return map[string]interface{}{
-		"ok":          true,
-		"bucket":      m.Bucket,
-		"prefix":      prefix,
-		"count":       len(entries),
-		"total_bytes": total,
-		"truncated":   truncated,
-		"entries":     entries,
-		"note":        "Metadata inventory only (key/size/etag/mtime). Not object-version restore.",
+		"ok":             true,
+		"bucket":         m.Bucket,
+		"prefix":         prefix,
+		"count":          len(entries),
+		"total_bytes":    total,
+		"truncated":      truncated,
+		"has_version_ids": hasVer,
+		"entries":        entries,
+		"note":           "Metadata inventory only (key/size/etag/mtime[/version_id]). Not automatic byte restore.",
 	}, nil
 }
 

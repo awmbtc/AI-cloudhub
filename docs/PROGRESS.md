@@ -135,6 +135,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Linux netns 可选：`scripts/runner-netns.sh` + `AI_CLOUDHUB_NETWORK=deny`
 - [x] docs/STS.md
 
+## 本波（可选续）
+
+- [x] 实时对象清单：`GET /v1/drives/{id}/objects?versions=1`
+- [x] version-hint
+- [x] 429 Retry-After
+- [x] runner-bwrap.sh + MCP list_objects
+
 ## 仍可后续
 
 - 真对象版本回滚（需桶开启 versioning + 厂商 API）
