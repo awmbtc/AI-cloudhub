@@ -169,7 +169,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"p0":      []string{"sts", "manifest", "binding", "hubd", "runner"},
 		"p1":      []string{"sqlite", "secretbox", "ratelimit", "write_barrier", "devices", "binding_quota", "drive_quota", "provider_quota"},
 		"p2":      []string{"region", "sync_workspace", "session_refresh", "runtime_check", "jobs_byoc", "minio_sts"},
-		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user", "agent_identity", "path_jail"},
+		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user", "agent_identity", "path_jail", "env_filter", "snapshots_v0"},
 		"version": version.Version,
 	})
 }
@@ -682,6 +682,9 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	}
 
 	switch parts[1] {
+	case "snapshots":
+		s.routeDriveSnapshots(w, r, userID, id, parts[2:])
+		return
 	case "mount":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -764,6 +767,101 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.drives.ListBarriers(userID, id)})
 	default:
 		writeErr(w, http.StatusNotFound, "not found")
+	}
+}
+
+// routeDriveSnapshots handles /v1/drives/{id}/snapshots[/{sid}[/restore]]
+func (s *Server) routeDriveSnapshots(w http.ResponseWriter, r *http.Request, userID, driveID string, rest []string) {
+	if !s.requireScope(w, r, auth.ScopeDriveRead) {
+		return
+	}
+	// write for create/delete/restore
+	if len(rest) == 0 || rest[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			list, err := s.drives.ListSnapshots(userID, driveID, 50)
+			if err != nil {
+				writeErr(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"items": list})
+		case http.MethodPost:
+			if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+				return
+			}
+			if !requireJSON(w, r) {
+				return
+			}
+			var in drive.SnapshotCreate
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if pr := principalFrom(r); pr != nil && pr.AgentID != "" && in.AgentID == "" {
+				in.AgentID = pr.AgentID
+			}
+			sn, err := s.drives.CreateSnapshot(userID, driveID, in)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			aid := ""
+			if pr := principalFrom(r); pr != nil {
+				aid = pr.AgentID
+			}
+			s.auth.AuditAgent(userID, aid, "snapshot.create", sn.ID, driveID)
+			writeJSON(w, http.StatusCreated, sn)
+		default:
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+	sid := rest[0]
+	if len(rest) >= 2 && rest[1] == "restore" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
+		out, err := s.drives.RestoreSnapshot(userID, driveID, sid)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		aid := ""
+		if pr := principalFrom(r); pr != nil {
+			aid = pr.AgentID
+		}
+		s.auth.AuditAgent(userID, aid, "snapshot.restore", sid, driveID)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if len(rest) != 1 {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		sn, err := s.drives.GetSnapshot(userID, driveID, sid)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, sn)
+	case http.MethodDelete:
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
+		if err := s.drives.DeleteSnapshot(userID, driveID, sid); err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "snapshot.delete", sid, driveID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

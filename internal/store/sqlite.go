@@ -161,6 +161,18 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
+
+CREATE TABLE IF NOT EXISTS snapshots (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  drive_id TEXT NOT NULL,
+  agent_id TEXT,
+  label TEXT,
+  note TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, created_at);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -984,6 +996,74 @@ func (s *SQLite) UpdateJob(j *Job) error {
 		return fmt.Errorf("job not found")
 	}
 	return nil
+}
+
+func (s *SQLite) CreateSnapshot(sn *Snapshot) error {
+	_, err := s.db.Exec(
+		`INSERT INTO snapshots (id, user_id, drive_id, agent_id, label, note, payload_json, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		sn.ID, sn.UserID, sn.DriveID, sn.AgentID, sn.Label, sn.Note, string(sn.PayloadJSON),
+		sn.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) GetSnapshot(userID, driveID, id string) (*Snapshot, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, drive_id, COALESCE(agent_id,''), COALESCE(label,''), COALESCE(note,''), payload_json, created_at
+		 FROM snapshots WHERE id=? AND user_id=? AND drive_id=?`,
+		id, userID, driveID,
+	)
+	return scanSnapshot(row)
+}
+
+func (s *SQLite) ListSnapshots(userID, driveID string, limit int) ([]*Snapshot, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, drive_id, COALESCE(agent_id,''), COALESCE(label,''), COALESCE(note,''), payload_json, created_at
+		 FROM snapshots WHERE user_id=? AND drive_id=? ORDER BY created_at DESC LIMIT ?`,
+		userID, driveID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Snapshot
+	for rows.Next() {
+		sn, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sn)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteSnapshot(userID, driveID, id string) error {
+	res, err := s.db.Exec(`DELETE FROM snapshots WHERE id=? AND user_id=? AND drive_id=?`, id, userID, driveID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("snapshot not found")
+	}
+	return nil
+}
+
+func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
+	var sn Snapshot
+	var payload, created string
+	if err := row.Scan(&sn.ID, &sn.UserID, &sn.DriveID, &sn.AgentID, &sn.Label, &sn.Note, &payload, &created); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("snapshot not found")
+		}
+		return nil, err
+	}
+	sn.PayloadJSON = []byte(payload)
+	sn.CreatedAt = parseTime(created)
+	return &sn, nil
 }
 
 func scanJob(row scannable) (*Job, error) {

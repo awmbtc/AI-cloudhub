@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
+CREATE TABLE IF NOT EXISTS snapshots (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  drive_id TEXT NOT NULL,
+  agent_id TEXT,
+  label TEXT,
+  note TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, created_at);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -820,6 +831,72 @@ func (p *Postgres) UpdateJob(j *Job) error {
 		return fmt.Errorf("job not found")
 	}
 	return nil
+}
+
+func (p *Postgres) CreateSnapshot(sn *Snapshot) error {
+	_, err := p.db.Exec(
+		`INSERT INTO snapshots (id, user_id, drive_id, agent_id, label, note, payload_json, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		sn.ID, sn.UserID, sn.DriveID, sn.AgentID, sn.Label, sn.Note, string(sn.PayloadJSON), sn.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) GetSnapshot(userID, driveID, id string) (*Snapshot, error) {
+	row := p.db.QueryRow(
+		`SELECT id, user_id, drive_id, COALESCE(agent_id,''), COALESCE(label,''), COALESCE(note,''), payload_json, created_at
+		 FROM snapshots WHERE id=$1 AND user_id=$2 AND drive_id=$3`,
+		id, userID, driveID,
+	)
+	return scanSnapshotPG(row)
+}
+
+func (p *Postgres) ListSnapshots(userID, driveID string, limit int) ([]*Snapshot, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := p.db.Query(
+		`SELECT id, user_id, drive_id, COALESCE(agent_id,''), COALESCE(label,''), COALESCE(note,''), payload_json, created_at
+		 FROM snapshots WHERE user_id=$1 AND drive_id=$2 ORDER BY created_at DESC LIMIT $3`,
+		userID, driveID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Snapshot
+	for rows.Next() {
+		sn, err := scanSnapshotPG(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sn)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteSnapshot(userID, driveID, id string) error {
+	res, err := p.db.Exec(`DELETE FROM snapshots WHERE id=$1 AND user_id=$2 AND drive_id=$3`, id, userID, driveID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("snapshot not found")
+	}
+	return nil
+}
+
+func scanSnapshotPG(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
+	var sn Snapshot
+	var payload string
+	if err := row.Scan(&sn.ID, &sn.UserID, &sn.DriveID, &sn.AgentID, &sn.Label, &sn.Note, &payload, &sn.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("snapshot not found")
+		}
+		return nil, err
+	}
+	sn.PayloadJSON = []byte(payload)
+	return &sn, nil
 }
 
 func scanJobPG(row scannable) (*Job, error) {

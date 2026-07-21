@@ -19,6 +19,7 @@ type Memory struct {
 	revokedJTI map[string]time.Time // jti -> expiresAt
 	refresh    map[string]*RefreshToken // id -> token
 	agents     map[string]*Agent        // id -> agent
+	snapshots  map[string]*Snapshot     // id -> snapshot
 }
 
 // NewMemory returns an empty in-memory store.
@@ -34,6 +35,7 @@ func NewMemory() *Memory {
 		revokedJTI: make(map[string]time.Time),
 		refresh:    make(map[string]*RefreshToken),
 		agents:     make(map[string]*Agent),
+		snapshots:  make(map[string]*Snapshot),
 	}
 }
 
@@ -592,5 +594,71 @@ func (m *Memory) UpdateJob(j *Job) error {
 		return fmt.Errorf("job not found")
 	}
 	m.jobs[j.ID] = cloneJob(j)
+	return nil
+}
+
+func (m *Memory) CreateSnapshot(s *Snapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *s
+	if s.PayloadJSON != nil {
+		cp.PayloadJSON = append([]byte(nil), s.PayloadJSON...)
+	}
+	m.snapshots[s.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetSnapshot(userID, driveID, id string) (*Snapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.snapshots[id]
+	if !ok || s.UserID != userID || s.DriveID != driveID {
+		return nil, fmt.Errorf("snapshot not found")
+	}
+	cp := *s
+	if s.PayloadJSON != nil {
+		cp.PayloadJSON = append([]byte(nil), s.PayloadJSON...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) ListSnapshots(userID, driveID string, limit int) ([]*Snapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var all []*Snapshot
+	for _, s := range m.snapshots {
+		if s.UserID == userID && s.DriveID == driveID {
+			cp := *s
+			if s.PayloadJSON != nil {
+				cp.PayloadJSON = append([]byte(nil), s.PayloadJSON...)
+			}
+			all = append(all, &cp)
+		}
+	}
+	// newest first
+	for i := 0; i < len(all); i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].CreatedAt.After(all[i].CreatedAt) {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+func (m *Memory) DeleteSnapshot(userID, driveID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.snapshots[id]
+	if !ok || s.UserID != userID || s.DriveID != driveID {
+		return fmt.Errorf("snapshot not found")
+	}
+	delete(m.snapshots, id)
 	return nil
 }

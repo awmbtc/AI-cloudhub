@@ -132,6 +132,19 @@ type Job struct {
 	UpdatedAt  time.Time
 }
 
+// Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).
+type Snapshot struct {
+	ID           string
+	UserID       string
+	DriveID      string
+	AgentID      string
+	Label        string
+	Note         string
+	// PayloadJSON holds drive map + optional manifest snapshot (client/runtime rehydration).
+	PayloadJSON  []byte
+	CreatedAt    time.Time
+}
+
 // Store is the persistence interface for control-plane CRUD.
 type Store interface {
 	// Users
@@ -211,6 +224,12 @@ type Store interface {
 	// Returns the updated job, or an error if not found / not claimable.
 	ClaimPendingJob(userID, id string) (*Job, error)
 	UpdateJob(j *Job) error
+
+	// Snapshots (metadata only)
+	CreateSnapshot(s *Snapshot) error
+	GetSnapshot(userID, driveID, id string) (*Snapshot, error)
+	ListSnapshots(userID, driveID string, limit int) ([]*Snapshot, error)
+	DeleteSnapshot(userID, driveID, id string) error
 
 	Close() error
 }

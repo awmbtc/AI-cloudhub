@@ -262,13 +262,28 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		os.Exit(1)
 	}()
 
-	childEnv := os.Environ()
+	// Sandbox v1: filter parent env; inject only AI_CLOUDHUB_* + safe keys.
+	// Opt-out: AI_CLOUDHUB_JAIL=0. Pass parent API token only if AI_CLOUDHUB_PASS_TOKEN=1.
+	extra := map[string]string{}
 	for k, v := range bundle.Session.Manifest.Env {
-		childEnv = append(childEnv, k+"="+v)
+		extra[k] = v
 	}
-	childEnv = append(childEnv, "AI_CLOUDHUB_WORKSPACE="+mountPoint, "AI_CLOUDHUB_MODE="+mode)
+	extra["AI_CLOUDHUB_WORKSPACE"] = mountPoint
+	extra["AI_CLOUDHUB_MODE"] = mode
 	if jobID != "" {
-		childEnv = append(childEnv, "AI_CLOUDHUB_JOB_ID="+jobID)
+		extra["AI_CLOUDHUB_JOB_ID"] = jobID
+	}
+	jailOn := env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false"
+	var childEnv []string
+	if jailOn {
+		passTok := env("AI_CLOUDHUB_PASS_TOKEN", "") == "1" || env("AI_CLOUDHUB_PASS_TOKEN", "") == "true"
+		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok})
+		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v)", len(childEnv), passTok)
+	} else {
+		childEnv = os.Environ()
+		for k, v := range extra {
+			childEnv = append(childEnv, k+"="+v)
+		}
 	}
 
 	if len(args) == 0 {
@@ -277,9 +292,8 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		return nil
 	}
 
-	// Path jail v0: reject command args that resolve outside workspace.
-	// Opt-out: AI_CLOUDHUB_JAIL=0 (dev only).
-	if env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false" {
+	// Path jail: reject command args that resolve outside workspace.
+	if jailOn {
 		jail := sandbox.NewPathJail(mountPoint)
 		if err := jail.Allow(mountPoint); err != nil {
 			return fmt.Errorf("jail mount: %w", err)

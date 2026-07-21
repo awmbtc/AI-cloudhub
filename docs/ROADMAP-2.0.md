@@ -68,10 +68,10 @@ User
 |---|--------|------|------|
 | B1 | Capability 绑定 Drive 列表 | **done** | `allowed_drive_ids`；session/list 过滤 |
 | B2 | Policy v0 | **done** | `internal/policy` Engine（scope+drive+path 前缀） |
-| B3 | Sandbox v1：env 白名单 | pending | 完整 seccomp 可后置；path jail 已在 A |
+| B3 | Sandbox v1：env 白名单 | **done** | runner FilterEnv；path jail 在 A |
 | B4 | Manifest 2.0：permissions.read/write | **done** | version=2 + prefixes |
 | B5 | Audit 关联 `agent_id` | **done** | 字段 + `?agent_id=` 过滤 |
-| B6 | Snapshot v0 | pending | 非全量 Git FS |
+| B6 | Snapshot v0 | **done** | 元数据快照 API；非对象级 Git FS |
 
 ### 阶段 C · 3.0 蓝图（有客户与规模后再做）
 
