@@ -277,8 +277,11 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	var childEnv []string
 	if jailOn {
 		passTok := env("AI_CLOUDHUB_PASS_TOKEN", "") == "1" || env("AI_CLOUDHUB_PASS_TOKEN", "") == "true"
-		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok})
-		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v)", len(childEnv), passTok)
+		// Soft network policy: AI_CLOUDHUB_NETWORK=deny strips proxy env (not a kernel netns).
+		netDeny := strings.EqualFold(env("AI_CLOUDHUB_NETWORK", ""), "deny") ||
+			env("AI_CLOUDHUB_NETWORK", "") == "0" || env("AI_CLOUDHUB_NETWORK", "") == "off"
+		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok, DenyNetwork: netDeny})
+		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v network_deny=%v)", len(childEnv), passTok, netDeny)
 	} else {
 		childEnv = os.Environ()
 		for k, v := range extra {

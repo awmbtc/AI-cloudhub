@@ -26,6 +26,8 @@
 - Sandbox v1 env filter in runner; Snapshot v0 metadata API under /v1/drives/{id}/snapshots
 - MCP v0.2: tool scopes via /v1/me, path jail, whoami/resolve_path/snapshots tools
 - Admin API IP allowlist: AI_CLOUDHUB_ADMIN_CIDRS
+- Snapshot restore apply=true rehydrates drive metadata; 50 snapshots/drive cap
+- Runner AI_CLOUDHUB_NETWORK=deny strips proxy env; scripts/smoke-agent.sh
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

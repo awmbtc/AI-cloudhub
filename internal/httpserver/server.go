@@ -825,16 +825,33 @@ func (s *Server) routeDriveSnapshots(w http.ResponseWriter, r *http.Request, use
 		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
 			return
 		}
-		out, err := s.drives.RestoreSnapshot(userID, driveID, sid)
+		var body struct {
+			Apply bool `json:"apply"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		// also allow ?apply=1
+		if !body.Apply {
+			q := r.URL.Query().Get("apply")
+			body.Apply = q == "1" || q == "true"
+		}
+		out, err := s.drives.RestoreSnapshot(userID, driveID, sid, body.Apply)
 		if err != nil {
-			writeErr(w, http.StatusNotFound, err.Error())
+			if strings.Contains(err.Error(), "not found") {
+				writeErr(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		aid := ""
 		if pr := principalFrom(r); pr != nil {
 			aid = pr.AgentID
 		}
-		s.auth.AuditAgent(userID, aid, "snapshot.restore", sid, driveID)
+		detail := "preview"
+		if body.Apply {
+			detail = "applied"
+		}
+		s.auth.AuditAgent(userID, aid, "snapshot.restore", sid, driveID+" "+detail)
 		writeJSON(w, http.StatusOK, out)
 		return
 	}

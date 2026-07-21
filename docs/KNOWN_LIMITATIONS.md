@@ -12,7 +12,8 @@
 - **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
 - **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
 - **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）；非完整 seccomp/namespace。
-- **Snapshot v0：** 仅 drive/manifest **元数据**快照与 restore 提示；**不**做对象存储字节级版本/回滚。
+- **Snapshot v0：** 元数据快照；`restore?apply=true` 可回写 drive 的 name/prefix/mount_point/region；**不**回滚对象存储字节；每 drive 默认最多 50 个。
+- **Network deny：** `AI_CLOUDHUB_NETWORK=deny` 仅剥离子进程 proxy 相关 env，**不是** kernel 网络命名空间。
 - **MCP：** v0.2 工具级 scope + 路径 jail；非完整 MCP SDK / resources。
 - **Admin IP：** `AI_CLOUDHUB_ADMIN_CIDRS` 可选；空=不限制。
 - **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。

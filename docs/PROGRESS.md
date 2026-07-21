@@ -120,8 +120,15 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP 路径 jail（mount_point / resolve_path）
 - [x] Admin IP allowlist：`AI_CLOUDHUB_ADMIN_CIDRS`
 
+## 本波续（restore apply / network / smoke）
+
+- [x] Snapshot restore `apply=true` 回写 name/prefix/mount_point/region
+- [x] 快照配额：每 drive 最多 50
+- [x] Runner `AI_CLOUDHUB_NETWORK=deny` 剥离 proxy env
+- [x] `scripts/smoke-agent.sh`
+
 ## 仍可后续
 
 - Snapshot 对象级版本 / 真回滚
 - 更多厂商原生 STS
-- Sandbox 网络 deny / seccomp
+- Kernel netns / seccomp

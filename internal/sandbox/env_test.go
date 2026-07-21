@@ -45,6 +45,22 @@ func TestFilterEnvPassToken(t *testing.T) {
 	}
 }
 
+func TestFilterEnvDenyNetwork(t *testing.T) {
+	base := []string{"PATH=/bin", "HTTP_PROXY=http://proxy:8080", "AI_CLOUDHUB_WORKSPACE=/w"}
+	got := FilterEnv(base, nil, EnvFilter{DenyNetwork: true})
+	m := map[string]string{}
+	for _, e := range got {
+		i := indexEq(e)
+		m[e[:i]] = e[i+1:]
+	}
+	if _, ok := m["HTTP_PROXY"]; ok {
+		t.Fatal("proxy should be stripped")
+	}
+	if m["AI_CLOUDHUB_NETWORK"] != "deny" {
+		t.Fatalf("want network deny marker, got %v", m)
+	}
+}
+
 func indexEq(s string) int {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '=' {

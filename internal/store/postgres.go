@@ -615,6 +615,21 @@ func (p *Postgres) GetDrive(userID, id string) (*Drive, error) {
 	return &d, nil
 }
 
+func (p *Postgres) UpdateDrive(d *Drive) error {
+	res, err := p.db.Exec(
+		`UPDATE drives SET name=$1, prefix=$2, mount_point=$3, region=$4 WHERE id=$5 AND user_id=$6`,
+		d.Name, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("drive not found")
+	}
+	return nil
+}
+
 func (p *Postgres) ListDrives(userID string) ([]*Drive, error) {
 	rows, err := p.db.Query(
 		`SELECT id,user_id,name,provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE user_id=$1`, userID,

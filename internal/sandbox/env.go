@@ -44,6 +44,13 @@ var DefaultEnvBlockExact = []string{
 	"AI_CLOUDHUB_MASTER_KEY",
 }
 
+// Network-related keys stripped when DenyNetwork is set.
+var networkEnvKeys = []string{
+	"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+	"http_proxy", "https_proxy", "all_proxy", "no_proxy",
+	"FTP_PROXY", "ftp_proxy", "SOCKS_PROXY", "socks_proxy",
+}
+
 // EnvFilter filters process environment for Sandbox v1.
 type EnvFilter struct {
 	// AllowPrefixes: if empty, DefaultEnvAllowPrefixes is used.
@@ -52,6 +59,9 @@ type EnvFilter struct {
 	BlockExact []string
 	// PassToken when true allows AI_CLOUDHUB_TOKEN (default false).
 	PassToken bool
+	// DenyNetwork strips proxy-related env and injects AI_CLOUDHUB_NETWORK=deny.
+	// This is a soft policy for agents; it does not enforce kernel netns.
+	DenyNetwork bool
 }
 
 // FilterEnv returns KEY=VALUE entries safe for child agent processes.
@@ -72,8 +82,14 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 	if f.PassToken {
 		delete(blockSet, "AI_CLOUDHUB_TOKEN")
 	}
+	if f.DenyNetwork {
+		for _, k := range networkEnvKeys {
+			blockSet[strings.ToUpper(k)] = true
+		}
+		// also strip from allow prefixes matching PROXY
+	}
 
-	out := make([]string, 0, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra)+2)
 	seen := map[string]bool{}
 
 	add := func(kv string) {
@@ -84,6 +100,9 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 		key := kv[:i]
 		uk := strings.ToUpper(key)
 		if blockSet[uk] {
+			return
+		}
+		if f.DenyNetwork && strings.Contains(uk, "PROXY") {
 			return
 		}
 		if !keyAllowed(key, allow) {
@@ -108,6 +127,11 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 	}
 	for k, v := range extra {
 		add(k + "=" + v)
+	}
+	if f.DenyNetwork {
+		// force marker for child processes that honor it
+		add("AI_CLOUDHUB_NETWORK=deny")
+		add("NO_PROXY=*")
 	}
 	return out
 }

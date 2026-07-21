@@ -666,6 +666,21 @@ func (s *SQLite) ListDrives(userID string) ([]*Drive, error) {
 	return out, rows.Err()
 }
 
+func (s *SQLite) UpdateDrive(d *Drive) error {
+	res, err := s.db.Exec(
+		`UPDATE drives SET name=?, prefix=?, mount_point=?, region=? WHERE id=? AND user_id=?`,
+		d.Name, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("drive not found")
+	}
+	return nil
+}
+
 func (s *SQLite) DeleteDrive(userID, id string) error {
 	res, err := s.db.Exec(`DELETE FROM drives WHERE id = ? AND user_id = ?`, id, userID)
 	if err != nil {

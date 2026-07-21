@@ -29,15 +29,26 @@ type SnapshotCreate struct {
 	Manifest    json.RawMessage `json:"manifest"` // optional client-supplied manifest blob
 }
 
+// DefaultMaxSnapshotsPerDrive caps metadata snapshots per drive (B6 hardening).
+const DefaultMaxSnapshotsPerDrive = 50
+
 // CreateSnapshot stores drive map + optional manifest (metadata only — not object storage).
 func (s *Service) CreateSnapshot(userID, driveID string, in SnapshotCreate) (*SnapshotView, error) {
 	m, err := s.Get(userID, driveID)
 	if err != nil {
 		return nil, err
 	}
+	// Quota: prune oldest if at cap (or reject — reject is clearer for ops).
+	existing, err := s.store.ListSnapshots(userID, driveID, DefaultMaxSnapshotsPerDrive+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) >= DefaultMaxSnapshotsPerDrive {
+		return nil, fmt.Errorf("snapshot quota exceeded: max %d per drive", DefaultMaxSnapshotsPerDrive)
+	}
 	payload := map[string]interface{}{
-		"kind":    "ai-cloudhub.snapshot.v0",
-		"drive":   m,
+		"kind":        "ai-cloudhub.snapshot.v0",
+		"drive":       m,
 		"captured_at": time.Now().UTC(),
 	}
 	if len(in.Manifest) > 0 {
@@ -100,8 +111,10 @@ func (s *Service) DeleteSnapshot(userID, driveID, id string) error {
 	return nil
 }
 
-// RestoreSnapshot returns the payload for client/runtime rehydration (no automatic object rollback).
-func (s *Service) RestoreSnapshot(userID, driveID, id string) (map[string]interface{}, error) {
+// RestoreSnapshot returns the payload for client/runtime rehydration.
+// When apply is true, updates mutable drive fields (name, prefix, mount_point, region)
+// from the snapshot. Does not change provider/bucket or object bytes.
+func (s *Service) RestoreSnapshot(userID, driveID, id string, apply bool) (map[string]interface{}, error) {
 	sn, err := s.store.GetSnapshot(userID, driveID, id)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot not found")
@@ -110,15 +123,54 @@ func (s *Service) RestoreSnapshot(userID, driveID, id string) (map[string]interf
 	if err := json.Unmarshal(sn.PayloadJSON, &payload); err != nil {
 		return nil, fmt.Errorf("corrupt snapshot payload")
 	}
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"snapshot_id": sn.ID,
 		"drive_id":    driveID,
 		"label":       sn.Label,
 		"note":        sn.Note,
 		"created_at":  sn.CreatedAt,
 		"payload":     payload,
-		"hint":        "Metadata restore only. Re-issue session / remount using payload.drive and payload.manifest. Object bytes are not versioned in v0.",
-	}, nil
+		"applied":     false,
+		"hint":        "Metadata restore. Object bytes are not versioned in v0. Pass apply=true to write name/prefix/mount_point/region from payload.drive.",
+	}
+	if !apply {
+		return out, nil
+	}
+	driveRaw, ok := payload["drive"]
+	if !ok {
+		return nil, fmt.Errorf("snapshot has no drive payload")
+	}
+	b, err := json.Marshal(driveRaw)
+	if err != nil {
+		return nil, err
+	}
+	var snapMap Map
+	if err := json.Unmarshal(b, &snapMap); err != nil {
+		return nil, fmt.Errorf("invalid drive in snapshot: %w", err)
+	}
+	cur, err := s.Get(userID, driveID)
+	if err != nil {
+		return nil, err
+	}
+	// Only restore soft fields; keep id/provider/bucket/user.
+	if strings.TrimSpace(snapMap.Name) != "" {
+		cur.Name = snapMap.Name
+	}
+	cur.Prefix = snapMap.Prefix
+	if strings.TrimSpace(snapMap.MountPoint) != "" {
+		if err := validateMountPoint(snapMap.MountPoint); err != nil {
+			return nil, fmt.Errorf("snapshot mount_point: %w", err)
+		}
+		cur.MountPoint = snapMap.MountPoint
+	}
+	cur.Region = snapMap.Region
+	if err := s.store.UpdateDrive(mapToStore(cur)); err != nil {
+		return nil, err
+	}
+	out["applied"] = true
+	out["drive"] = cur
+	out["hint"] = "Drive metadata applied. Re-issue STS session and remount. Object storage content is unchanged."
+	return out, nil
 }
 
 func snapshotView(sn *store.Snapshot) *SnapshotView {

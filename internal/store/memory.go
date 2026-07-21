@@ -419,6 +419,22 @@ func (m *Memory) ListDrives(userID string) ([]*Drive, error) {
 	return out, nil
 }
 
+func (m *Memory) UpdateDrive(d *Drive) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.drives[d.ID]
+	if !ok || cur.UserID != d.UserID {
+		return fmt.Errorf("drive not found")
+	}
+	// preserve identity fields
+	d.ProviderID = cur.ProviderID
+	d.Bucket = cur.Bucket
+	d.CreatedAt = cur.CreatedAt
+	cp := *d
+	m.drives[d.ID] = &cp
+	return nil
+}
+
 func (m *Memory) DeleteDrive(userID, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -202,6 +202,8 @@ type Store interface {
 	CreateDrive(d *Drive) error
 	GetDrive(userID, id string) (*Drive, error)
 	ListDrives(userID string) ([]*Drive, error)
+	// UpdateDrive updates mutable drive fields (name, prefix, mount_point, region).
+	UpdateDrive(d *Drive) error
 	DeleteDrive(userID, id string) error
 
 	// Bindings
