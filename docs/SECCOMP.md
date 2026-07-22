@@ -15,6 +15,11 @@ AI_CLOUDHUB_SECCOMP=1 AI_CLOUDHUB_SECCOMP_STRICT=1 ./.bin/runner -- agent-cmd
 
 # Stricter allowlist (drops setuid/mknod/chown/capset extras)
 AI_CLOUDHUB_SECCOMP=1 AI_CLOUDHUB_SECCOMP_PROFILE=strict ./.bin/runner -- agent-cmd
+
+# Block AF_INET / AF_INET6 socket() (AF_UNIX only) — arg-level filter
+AI_CLOUDHUB_SECCOMP=1 AI_CLOUDHUB_SECCOMP_PROFILE=netdeny ./.bin/runner -- agent-cmd
+# or overlay any profile:
+AI_CLOUDHUB_SECCOMP=1 AI_CLOUDHUB_SECCOMP_NET=deny ./.bin/runner -- agent-cmd
 ```
 
 Truthy env values: `1` / `true` / `yes`.
@@ -25,12 +30,20 @@ Truthy env values: `1` / `true` / `yes`.
 |---------|------|--------|
 | `default` | unset / unknown | Base allowlist + setuid/setgid/capset/mknod/chown family (legacy agents) |
 | `strict` | `strict` | Base only — no setuid*, capset, mknod*, chown* |
+| `netdeny` | `netdeny` | **strict** syscall set + **socket/socketpair arg0 == AF_UNIX only** |
 
-Both profiles:
+### Network deny (`AI_CLOUDHUB_SECCOMP_NET`)
 
-- **Deny by default** (`EPERM`)
-- **Allow** Go runtime + FS I/O + sockets + process control (clone/exec/futex/mmap/…)
-- **Never allow** (not listed): `mount`, `umount`, `ptrace`, `kexec_*`, `reboot`, `pivot_root`, `init_module`, `delete_module`, `bpf`, …
+| Value | Effect |
+|-------|--------|
+| `deny` / `1` / `true` / `yes` | Restrict `socket`/`socketpair` domain to **AF_UNIX (1)** |
+| unset / other | Unrestricted socket domains (still no mount/ptrace/…) |
+
+Can combine with `default` or `strict` → logged as e.g. `default+netdeny`.
+
+**How it works:** unrestricted `socket`/`socketpair` are removed from the plain allowlist; a second rule allows them only when arg0 equals `AF_UNIX`. `AF_INET` / `AF_INET6` hit default `EPERM`.
+
+This is stronger than env-only `AI_CLOUDHUB_NETWORK=deny` (proxy strip) and pairs with `runner-netns.sh` / bwrap.
 
 ## Apply timing
 
@@ -50,6 +63,6 @@ Prefer in-process `AI_CLOUDHUB_SECCOMP=1` when the runner binary can load filter
 
 ## Limits
 
-- Sockets remain allowed (network isolation is env strip / netns / bwrap, not seccomp arg filtering).
+- `netdeny` blocks creating IP sockets; does not inspect `connect()` of pre-existing FDs.
 - Not a substitute for path jail + env filter + agent scopes.
 - D-001: user-host BYOC only; no platform mega runner pool.

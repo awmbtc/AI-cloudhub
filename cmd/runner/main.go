@@ -322,7 +322,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 			}
 			log.Printf("seccomp: apply failed (continuing): %v", err)
 		} else {
-			log.Printf("seccomp: filter applied profile=%s (no_new_privs+tsync)", sandbox.ProfileName())
+			log.Printf("seccomp: filter applied profile=%s (no_new_privs+tsync)", sandbox.EffectiveProfile())
 		}
 	}
 

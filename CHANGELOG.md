@@ -47,7 +47,9 @@
 - Multi-vendor S3-compatible AssumeRole: AI_CLOUDHUB_S3_STS + per-vendor flags; session source s3_sts
 - Live MinIO inventory smoke: make smoke-minio (auto-start server; hard-assert include_objects + diff)
 - Aliyun RAM STS (aliyun_sts) + Tencent CAM STS (tencent_sts); pure-Go signing, best-effort
-- Seccomp profiles: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict; docs/SECCOMP.md
+- Seccomp profiles: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict|netdeny; SECCOMP_NET=deny (AF_UNIX-only sockets)
+- Qiniu/Oracle STS source labels + per-vendor STS endpoint override; generic S3_STS_ENDPOINT
+- docs/SECCOMP.md netdeny arg-filter documentation
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

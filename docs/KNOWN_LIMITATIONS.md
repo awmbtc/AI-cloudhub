@@ -11,7 +11,7 @@
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
 - **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
 - **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
-- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free；`AI_CLOUDHUB_SECCOMP_PROFILE=strict|default`；`AI_CLOUDHUB_SECCOMP_STRICT=1` 时加载失败则中止。见 [SECCOMP.md](./SECCOMP.md)。
+- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free；`PROFILE=default|strict|netdeny`；`SECCOMP_NET=deny` 时 **socket 仅 AF_UNIX**；`SECCOMP_STRICT=1` 加载失败中止。见 [SECCOMP.md](./SECCOMP.md)。
 - **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。Live 硬断言见 `make smoke-minio`。
 - **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选外部包装）。进程内 seccomp 与外部包装可叠加使用。
 - **STS：** MinIO/AWS S3-compat 或原生；**Aliyun RAM** / **Tencent CAM** 原生 STS（`aliyun_sts` / `tencent_sts`）；其余厂商 S3 兼容 AssumeRole。见 [STS.md](./STS.md)。

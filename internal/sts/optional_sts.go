@@ -12,8 +12,8 @@ const (
 	noteB2     = "Backblaze B2: S3-compatible STS not enabled; set AI_CLOUDHUB_B2_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
 	noteOSS    = "Aliyun OSS: set AI_CLOUDHUB_OSS_NATIVE_STS=1 + RoleArn (acs:ram::…) for RAM STS, or AI_CLOUDHUB_OSS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
 	noteCOS    = "Tencent COS: set AI_CLOUDHUB_COS_NATIVE_STS=1 + RoleArn (qcs::cam::…) for CAM STS, or AI_CLOUDHUB_COS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
-	noteQiniu  = "Qiniu Kodo: S3-compatible STS not enabled; set AI_CLOUDHUB_QINIU_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
-	noteOracle = "Oracle OCI: S3-compatible STS not enabled; set AI_CLOUDHUB_ORACLE_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
+	noteQiniu  = "Qiniu Kodo: set AI_CLOUDHUB_QINIU_STS=1 (optional AI_CLOUDHUB_QINIU_STS_ENDPOINT); native Qiniu download tokens are not S3 session creds"
+	noteOracle = "Oracle OCI S3-compat: set AI_CLOUDHUB_ORACLE_STS=1 (optional AI_CLOUDHUB_ORACLE_STS_ENDPOINT); full OCI IAM private-key auth is out of scope"
 )
 
 // applyOptionalSTS is the multi-vendor best-effort STS entry used by Issue/Refresh.
@@ -49,9 +49,9 @@ func applyOptionalSTS(resolved *provider.Resolved, duration time.Duration, fallb
 	case provider.TypeCOS:
 		return applyOptionalCOSSTS(resolved, duration, fallbackSource)
 	case provider.TypeQiniu:
-		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "Qiniu", noteQiniu)
+		return applyOptionalQiniuSTS(resolved, duration, fallbackSource)
 	case provider.TypeOracle:
-		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "Oracle", noteOracle)
+		return applyOptionalOracleSTS(resolved, duration, fallbackSource)
 	default:
 		return resolved, fallbackSource, ""
 	}

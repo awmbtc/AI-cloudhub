@@ -4,19 +4,23 @@ package sandbox
 
 import (
 	"fmt"
+	"strings"
 
 	seccomp "github.com/elastic/go-seccomp-bpf"
 	"github.com/elastic/go-seccomp-bpf/arch"
 )
 
-// runnerBaseAllowlist is shared by default and strict profiles: Go runtime +
-// typical agent child processes (I/O, mmap, futex, sockets, process control).
+// Linux address families (socket domain arg0).
+const (
+	afUNIX  = 1  // AF_UNIX / AF_LOCAL
+	afINET  = 2  // AF_INET
+	afINET6 = 10 // AF_INET6
+)
+
+// runnerBaseAllowlist is shared by default/strict/netdeny: Go runtime + agent FS I/O.
 //
-// Dangerous calls such as mount, kexec_load, reboot, ptrace, pivot_root,
-// init_module, bpf (kernel), etc. are NOT listed and return EPERM.
-//
-// Names unknown on the current architecture are skipped at apply time so the
-// same list works on amd64 and arm64. This is NOT a production security audit.
+// Dangerous calls (mount, ptrace, kexec, reboot, pivot_root, modules, bpf, …)
+// are NOT listed → EPERM. NOT a production security audit.
 var runnerBaseAllowlist = []string{
 	// process / threads
 	"brk", "arch_prctl", "prctl", "clone", "clone3", "fork", "vfork",
@@ -56,14 +60,13 @@ var runnerBaseAllowlist = []string{
 	"epoll_create", "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
 	"epoll_pwait2", "poll", "ppoll", "select", "pselect6",
 	"eventfd", "eventfd2", "signalfd", "signalfd4",
-	// sockets (agent tooling; soft network deny is separate env policy)
+	// sockets (unrestricted domains unless netdeny — see apply)
 	"socket", "socketpair", "bind", "listen", "accept", "accept4",
 	"connect", "getsockname", "getpeername", "getsockopt", "setsockopt",
 	"shutdown", "sendto", "sendmsg", "sendmmsg", "recvfrom", "recvmsg", "recvmmsg",
 	// misc userspace
 	"uname", "sysinfo", "times", "getrlimit", "setrlimit", "prlimit64", "getrusage",
 	"getrandom", "capget", "futex", "getpriority", "setpriority",
-	// memfd (common in modern tooling)
 	"memfd_create",
 	"restart_syscall",
 }
@@ -76,14 +79,35 @@ var runnerDefaultExtras = []string{
 	"chown", "fchown", "fchownat", "lchown",
 }
 
-// runnerAllowlist returns the syscall names for the configured profile.
+// unrestrictedSocketNames are removed from the plain allowlist when NetDeny is on;
+// they are re-added with AF_UNIX-only argument conditions.
+var unrestrictedSocketNames = map[string]bool{
+	"socket":     true,
+	"socketpair": true,
+}
+
+// runnerAllowlist returns the unrestricted syscall names for the configured profile.
+// When NetDeny, socket/socketpair are omitted here and attached with conditions.
 func runnerAllowlist() []string {
-	if ProfileName() == "strict" {
-		return append([]string{}, runnerBaseAllowlist...)
+	var base []string
+	switch ProfileName() {
+	case "strict", "netdeny":
+		base = append([]string{}, runnerBaseAllowlist...)
+	default:
+		base = make([]string, 0, len(runnerBaseAllowlist)+len(runnerDefaultExtras))
+		base = append(base, runnerBaseAllowlist...)
+		base = append(base, runnerDefaultExtras...)
 	}
-	out := make([]string, 0, len(runnerBaseAllowlist)+len(runnerDefaultExtras))
-	out = append(out, runnerBaseAllowlist...)
-	out = append(out, runnerDefaultExtras...)
+	if !NetDeny() {
+		return base
+	}
+	out := make([]string, 0, len(base))
+	for _, n := range base {
+		if unrestrictedSocketNames[n] {
+			continue
+		}
+		out = append(out, n)
+	}
 	return out
 }
 
@@ -92,11 +116,9 @@ func runnerAllowlist() []string {
 // child processes (agent command).
 //
 // Uses pure-Go github.com/elastic/go-seccomp-bpf (no CGO / libseccomp).
-// Sets no_new_privs, which prevents later privilege gains (e.g. setuid
-// fusermount). Prefer applying immediately before the agent command so mount
-// setup is unaffected; cleanup umount may fail after apply — already best-effort.
-//
-// Profile: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict (see docs/SECCOMP.md).
+// Profile: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict|netdeny
+// Net: AI_CLOUDHUB_SECCOMP_NET=deny → socket/socketpair AF_UNIX only.
+// See docs/SECCOMP.md.
 func ApplyRunnerDefault() error {
 	if !seccomp.Supported() {
 		return fmt.Errorf("sandbox: seccomp not supported by this kernel")
@@ -112,17 +134,46 @@ func ApplyRunnerDefault() error {
 		return fmt.Errorf("sandbox: seccomp allowlist empty for arch %s", info.Name)
 	}
 
+	groups := []seccomp.SyscallGroup{
+		{
+			Action: seccomp.ActionAllow,
+			Names:  names,
+		},
+	}
+
+	if NetDeny() {
+		// Allow socket/socketpair only when domain (arg0) == AF_UNIX.
+		// AF_INET / AF_INET6 fall through to default ActionErrno.
+		unixOnly := make([]seccomp.NameWithConditions, 0, 2)
+		for _, name := range []string{"socket", "socketpair"} {
+			if _, ok := info.SyscallNames[name]; !ok {
+				continue
+			}
+			unixOnly = append(unixOnly, seccomp.NameWithConditions{
+				Name: name,
+				Conditions: seccomp.ArgumentConditions{
+					{
+						Argument:  0,
+						Operation: seccomp.Equal,
+						Value:     afUNIX,
+					},
+				},
+			})
+		}
+		if len(unixOnly) > 0 {
+			groups = append(groups, seccomp.SyscallGroup{
+				Action:             seccomp.ActionAllow,
+				NamesWithCondtions: unixOnly,
+			})
+		}
+	}
+
 	filter := seccomp.Filter{
 		NoNewPrivs: true,
 		Flag:       seccomp.FilterFlagTSync,
 		Policy: seccomp.Policy{
-			DefaultAction: seccomp.ActionErrno, // EPERM for non-allowlisted
-			Syscalls: []seccomp.SyscallGroup{
-				{
-					Action: seccomp.ActionAllow,
-					Names:  names,
-				},
-			},
+			DefaultAction: seccomp.ActionErrno,
+			Syscalls:      groups,
 		},
 	}
 	if err := seccomp.LoadFilter(filter); err != nil {
@@ -146,3 +197,20 @@ func filterKnownSyscalls(info *arch.Info, names []string) []string {
 	}
 	return out
 }
+
+// hasName reports whether name is in the list (test helper).
+func hasName(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Keep AF_INET* constants referenced (documented for netdeny filters).
+var (
+	_ = afINET
+	_ = afINET6
+	_ = strings.Builder{}
+)

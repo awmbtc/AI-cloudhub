@@ -13,6 +13,8 @@ AI-cloudhub issues **short-lived mount sessions** for rclone/FUSE. Native / S3-c
 | `s3_sts` | S3-compatible AssumeRole succeeded (non-MinIO / non-AWS) | `AI_CLOUDHUB_S3_STS=1` and/or per-vendor flags |
 | `aliyun_sts` | Aliyun RAM STS AssumeRole succeeded | `AI_CLOUDHUB_OSS_NATIVE_STS=1` (or `AI_CLOUDHUB_ALIYUN_STS=1`) + RoleArn `acs:ram::…` |
 | `tencent_sts` | Tencent CAM STS AssumeRole succeeded | `AI_CLOUDHUB_COS_NATIVE_STS=1` (or `AI_CLOUDHUB_TENCENT_STS=1`) + RoleArn `qcs::cam::…` |
+| `qiniu_sts` | Qiniu S3-compat AssumeRole (vendor flag) | `AI_CLOUDHUB_QINIU_STS=1` (+ optional `AI_CLOUDHUB_QINIU_STS_ENDPOINT`) |
+| `oracle_sts` | Oracle S3-compat AssumeRole (vendor flag) | `AI_CLOUDHUB_ORACLE_STS=1` (+ optional `AI_CLOUDHUB_ORACLE_STS_ENDPOINT`) |
 
 ## Env matrix
 
@@ -38,11 +40,20 @@ Truthy values: `1`, `true`, `yes` (case-insensitive).
 | `AI_CLOUDHUB_S3_STS_ROLE_ARN` | Generic fallback for S3-compat / native ARN fallback |
 | `AI_CLOUDHUB_B2_STS_ROLE_ARN` (and `QINIU`/`ORACLE`/`R2`) | Vendor-specific RoleArn for S3-compat |
 
-Optional endpoints (tests / regional):
+Optional endpoints (tests / regional / split STS host):
 
 - `AI_CLOUDHUB_AWS_STS_ENDPOINT`, `AI_CLOUDHUB_AWS_STS_EXTERNAL_ID`
 - `AI_CLOUDHUB_ALIYUN_STS_ENDPOINT` (default `https://sts.aliyuncs.com`)
 - `AI_CLOUDHUB_TENCENT_STS_ENDPOINT`, `AI_CLOUDHUB_TENCENT_STS_REGION`
+- **S3-compat STS host override** (when STS ≠ data endpoint):  
+  `AI_CLOUDHUB_S3_STS_ENDPOINT`, or per-vendor  
+  `AI_CLOUDHUB_{MINIO,QINIU,ORACLE,B2,R2}_STS_ENDPOINT`,  
+  `AI_CLOUDHUB_OSS_S3_STS_ENDPOINT`, `AI_CLOUDHUB_COS_S3_STS_ENDPOINT`
+
+### Qiniu / Oracle notes
+
+- **Qiniu:** S3-compatible AssumeRole only (not Qiniu private download tokens). Set `AI_CLOUDHUB_QINIU_STS_ENDPOINT` if STS is not on the Kodo S3 host.
+- **Oracle OCI:** S3 compatibility layer AssumeRole only. Full OCI IAM (user OCID + API private key) is **out of scope** for the AK/SK provider model.
 
 ## Behavior notes
 
@@ -58,7 +69,7 @@ Optional endpoints (tests / regional):
 
 ```text
 aicloudhub_sessions_issued_total
-aicloudhub_sts_source_total{source="embedded|refresh|minio_sts|aws_sts|s3_sts|aliyun_sts|tencent_sts"}
+aicloudhub_sts_source_total{source="embedded|refresh|minio_sts|aws_sts|s3_sts|aliyun_sts|tencent_sts|qiniu_sts|oracle_sts"}
 ```
 
 ## Production guidance

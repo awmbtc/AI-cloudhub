@@ -179,7 +179,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Tencent CAM STS：`source=tencent_sts`（`AI_CLOUDHUB_COS_NATIVE_STS` + RoleArn）
 - [x] seccomp `default` / `strict` 档 + `docs/SECCOMP.md`
 
+## 本波（netdeny + Qiniu/Oracle STS 端点）
+
+- [x] seccomp `netdeny` / `AI_CLOUDHUB_SECCOMP_NET=deny`：socket 仅 AF_UNIX
+- [x] Qiniu/Oracle：`qiniu_sts` / `oracle_sts` + 独立 `*_STS_ENDPOINT` 覆盖
+- [x] 通用 `AI_CLOUDHUB_S3_STS_ENDPOINT` 分离 STS 与数据端点
+
 ## 仍可后续
 
-- 其他厂商原生 STS（Qiniu/Oracle 账号体系）
-- seccomp 参数级网络过滤（AF_INET 细粒度）
+- OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
+- Policy Engine 外部 JSON / OPA

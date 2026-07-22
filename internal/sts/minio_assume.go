@@ -50,18 +50,63 @@ func TryMinioAssumeRole(r *provider.Resolved, duration time.Duration) (access, s
 	return TryS3AssumeRole(r, duration, roleARNForType(provider.TypeMinIO))
 }
 
-// stsEndpointURL builds the MinIO/S3-compatible STS base URL from resolved endpoint.
-// MinIO serves STS on the same host as the S3 API.
+// stsEndpointURL builds the S3-compatible STS base URL.
+//
+// Override order:
+//  1. AI_CLOUDHUB_<VENDOR>_STS_ENDPOINT (MINIO/QINIU/ORACLE/B2/R2/OSS/COS)
+//  2. AI_CLOUDHUB_S3_STS_ENDPOINT (generic)
+//  3. Provider data endpoint (MinIO and many gateways serve STS on the same host)
 func stsEndpointURL(r *provider.Resolved) string {
+	if ep := stsEndpointOverride(r); ep != "" {
+		return ep
+	}
 	scheme := "https"
-	if !r.UseSSL {
+	if r != nil && !r.UseSSL {
 		scheme = "http"
 	}
-	ep := strings.TrimSpace(r.Endpoint)
+	ep := ""
+	if r != nil {
+		ep = strings.TrimSpace(r.Endpoint)
+	}
 	if strings.HasPrefix(ep, "http://") || strings.HasPrefix(ep, "https://") {
 		return strings.TrimRight(ep, "/")
 	}
+	if ep == "" {
+		return ""
+	}
 	return scheme + "://" + ep
+}
+
+// stsEndpointOverride returns a configured STS base URL when set.
+func stsEndpointOverride(r *provider.Resolved) string {
+	var keys []string
+	if r != nil {
+		switch r.Type {
+		case provider.TypeMinIO:
+			keys = append(keys, "AI_CLOUDHUB_MINIO_STS_ENDPOINT")
+		case provider.TypeQiniu:
+			keys = append(keys, "AI_CLOUDHUB_QINIU_STS_ENDPOINT")
+		case provider.TypeOracle:
+			keys = append(keys, "AI_CLOUDHUB_ORACLE_STS_ENDPOINT")
+		case provider.TypeB2:
+			keys = append(keys, "AI_CLOUDHUB_B2_STS_ENDPOINT")
+		case provider.TypeR2:
+			keys = append(keys, "AI_CLOUDHUB_R2_STS_ENDPOINT")
+		case provider.TypeOSS:
+			keys = append(keys, "AI_CLOUDHUB_OSS_S3_STS_ENDPOINT")
+		case provider.TypeCOS:
+			keys = append(keys, "AI_CLOUDHUB_COS_S3_STS_ENDPOINT")
+		case provider.TypeS3:
+			keys = append(keys, "AI_CLOUDHUB_S3_STS_ENDPOINT")
+		}
+	}
+	keys = append(keys, "AI_CLOUDHUB_S3_STS_ENDPOINT")
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return ""
 }
 
 // applyOptionalMinioSTS is the MinIO branch of multi-vendor optional STS.

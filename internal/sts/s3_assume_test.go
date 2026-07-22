@@ -33,6 +33,8 @@ func clearSTSFlags(t *testing.T) {
 		"AI_CLOUDHUB_COS_STS_ROLE_ARN", "AI_CLOUDHUB_QINIU_STS_ROLE_ARN",
 		"AI_CLOUDHUB_ORACLE_STS_ROLE_ARN", "AI_CLOUDHUB_R2_STS_ROLE_ARN",
 		"AI_CLOUDHUB_AWS_STS_ROLE_ARN", "AI_CLOUDHUB_AWS_STS_ENDPOINT",
+		"AI_CLOUDHUB_S3_STS_ENDPOINT", "AI_CLOUDHUB_MINIO_STS_ENDPOINT",
+		"AI_CLOUDHUB_QINIU_STS_ENDPOINT", "AI_CLOUDHUB_ORACLE_STS_ENDPOINT",
 	} {
 		t.Setenv(k, "")
 	}
@@ -188,20 +190,24 @@ func TestApplyOptionalS3CompatSTSSuccessPerVendor(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 
 	vendors := []struct {
-		typ  provider.Type
-		flag string
+		typ    provider.Type
+		flag   string
+		source string
 	}{
-		{provider.TypeB2, "AI_CLOUDHUB_B2_STS"},
-		{provider.TypeOSS, "AI_CLOUDHUB_OSS_STS"},
-		{provider.TypeCOS, "AI_CLOUDHUB_COS_STS"},
-		{provider.TypeQiniu, "AI_CLOUDHUB_QINIU_STS"},
-		{provider.TypeOracle, "AI_CLOUDHUB_ORACLE_STS"},
-		{provider.TypeR2, "AI_CLOUDHUB_R2_STS"},
+		{provider.TypeB2, "AI_CLOUDHUB_B2_STS", SourceS3STS},
+		{provider.TypeOSS, "AI_CLOUDHUB_OSS_STS", SourceS3STS},
+		{provider.TypeCOS, "AI_CLOUDHUB_COS_STS", SourceS3STS},
+		{provider.TypeQiniu, "AI_CLOUDHUB_QINIU_STS", SourceQiniuSTS},
+		{provider.TypeOracle, "AI_CLOUDHUB_ORACLE_STS", SourceOracleSTS},
+		{provider.TypeR2, "AI_CLOUDHUB_R2_STS", SourceS3STS},
 	}
 	for _, v := range vendors {
 		t.Run(string(v.typ), func(t *testing.T) {
 			clearSTSFlags(t)
 			t.Setenv(v.flag, "1")
+			// Ensure OSS/COS do not take native RAM/CAM path without native RoleArn.
+			t.Setenv("AI_CLOUDHUB_OSS_NATIVE_STS", "0")
+			t.Setenv("AI_CLOUDHUB_COS_NATIVE_STS", "0")
 			orig := &provider.Resolved{
 				Type:      v.typ,
 				AccessKey: "ak",
@@ -210,8 +216,8 @@ func TestApplyOptionalS3CompatSTSSuccessPerVendor(t *testing.T) {
 				UseSSL:    false,
 			}
 			out, source, note := applyOptionalSTS(orig, time.Hour, SourceEmbedded)
-			if source != SourceS3STS {
-				t.Fatalf("source %s", source)
+			if source != v.source {
+				t.Fatalf("source %s want %s", source, v.source)
 			}
 			if note != "" {
 				t.Fatalf("note %q", note)
@@ -223,6 +229,23 @@ func TestApplyOptionalS3CompatSTSSuccessPerVendor(t *testing.T) {
 				t.Fatal("orig mutated")
 			}
 		})
+	}
+}
+
+func TestSTSEndpointOverride(t *testing.T) {
+	clearSTSFlags(t)
+	r := &provider.Resolved{Type: provider.TypeQiniu, Endpoint: "s3.qiniu.com", UseSSL: true}
+	if got := stsEndpointURL(r); got != "https://s3.qiniu.com" {
+		t.Fatalf("data endpoint: %s", got)
+	}
+	t.Setenv("AI_CLOUDHUB_QINIU_STS_ENDPOINT", "https://sts.qiniu.example")
+	if got := stsEndpointURL(r); got != "https://sts.qiniu.example" {
+		t.Fatalf("qiniu override: %s", got)
+	}
+	t.Setenv("AI_CLOUDHUB_QINIU_STS_ENDPOINT", "")
+	t.Setenv("AI_CLOUDHUB_S3_STS_ENDPOINT", "https://generic-sts.example")
+	if got := stsEndpointURL(r); got != "https://generic-sts.example" {
+		t.Fatalf("generic override: %s", got)
 	}
 }
 
