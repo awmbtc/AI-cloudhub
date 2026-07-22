@@ -203,8 +203,39 @@ func (s *Store) PresignPut(ctx context.Context, bucket, key string, ttl time.Dur
 
 // PresignGet returns a time-limited download URL.
 func (s *Store) PresignGet(ctx context.Context, bucket, key string, ttl time.Duration) (*url.URL, error) {
-	return s.client.Presign(ctx, "GET", bucket, key, ttl, nil)
+	return s.PresignGetVersion(ctx, bucket, key, "", ttl)
 }
+
+// PresignGetVersion returns a time-limited GET URL; versionID optional (S3 versioning).
+func (s *Store) PresignGetVersion(ctx context.Context, bucket, key, versionID string, ttl time.Duration) (*url.URL, error) {
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	if ttl > 7*24*time.Hour {
+		ttl = 7 * 24 * time.Hour
+	}
+	params := url.Values{}
+	if versionID != "" {
+		params.Set("versionId", versionID)
+	}
+	return s.client.Presign(ctx, httpMethodGet, bucket, key, ttl, params)
+}
+
+// CopyVersionToCurrent performs a server-side copy of versionID → current key
+// on the object store (no bytes through control plane). Requires versioning.
+func (s *Store) CopyVersionToCurrent(ctx context.Context, bucket, key, versionID string) error {
+	if versionID == "" {
+		return fmt.Errorf("version_id required")
+	}
+	_, err := s.client.CopyObject(ctx,
+		minio.CopyDestOptions{Bucket: bucket, Object: key},
+		minio.CopySrcOptions{Bucket: bucket, Object: key, VersionID: versionID},
+	)
+	return err
+}
+
+// httpMethodGet avoids importing net/http just for the string in some trees.
+const httpMethodGet = "GET"
 
 func normalizePrefix(p string) string {
 	p = strings.TrimLeft(p, "/")

@@ -11,9 +11,9 @@
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
 - **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
 - **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
-- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）；非完整 seccomp/namespace。
-- **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` 给 BYOS CLI；**不**代拉/代回滚对象字节。
-- **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh`（Linux，可选）；非内核 seccomp 默认。
+- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）；非完整 in-process seccomp BPF。
+- **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。
+- **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选）。seccomp 为 **JSON 骨架 + 外部包装**（firejail / 预编译 BPF + bwrap / docker profile 调试）；未内嵌 libseccomp-golang。
 - **STS：** MinIO/AWS 可选原生 STS；其余 embedded + Note。见 [STS.md](./STS.md)。
 - **429：** 带 `Retry-After: 1`（固定秒，非自适应）。
 - **MCP：** v0.2 工具级 scope + 路径 jail；非完整 MCP SDK / resources。

@@ -779,33 +779,62 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 	}
 }
 
-// routeDriveObjects handles GET /v1/drives/{id}/objects and .../objects/version-hint
+// routeDriveObjects handles:
+//
+//	GET  /v1/drives/{id}/objects[?versions=1]
+//	GET|POST .../objects/version-hint
+//	POST .../objects/presign-get      {key, version_id?, ttl_min?}  (drive.read)
+//	POST .../objects/restore-plan    {key, version_id?, ttl_min?}  (drive.read)
+//	POST .../objects/restore-version {key, version_id}             (drive.write; S3 CopyObject)
 func (s *Server) routeDriveObjects(w http.ResponseWriter, r *http.Request, userID, driveID string, rest []string) {
+	action := ""
+	if len(rest) >= 1 {
+		action = rest[0]
+	}
+
+	// Mutating restore needs write; inventory/presign/plan stay read.
+	if action == "restore-version" {
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var body struct {
+			Key       string `json:"key"`
+			VersionID string `json:"version_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		if body.Key == "" || body.VersionID == "" {
+			writeErr(w, http.StatusBadRequest, "key and version_id required")
+			return
+		}
+		out, err := s.drives.ObjectRestoreVersion(userID, driveID, body.Key, body.VersionID)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "object.restore_version", driveID, body.Key+":"+body.VersionID)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
 	if !s.requireScope(w, r, auth.ScopeDriveRead) {
 		return
 	}
-	if len(rest) >= 1 && rest[0] == "version-hint" {
+
+	switch action {
+	case "version-hint":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		key := r.URL.Query().Get("key")
-		ver := r.URL.Query().Get("version_id")
-		if r.Method == http.MethodPost {
-			var body struct {
-				Key       string `json:"key"`
-				VersionID string `json:"version_id"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Key != "" {
-				key = body.Key
-			}
-			if body.VersionID != "" {
-				ver = body.VersionID
-			}
-		}
-		if key == "" {
-			writeErr(w, http.StatusBadRequest, "key required")
+		key, ver, _, ok := parseObjectKeyBody(w, r)
+		if !ok {
 			return
 		}
 		out, err := s.drives.ObjectVersionHint(userID, driveID, key, ver)
@@ -815,11 +844,49 @@ func (s *Server) routeDriveObjects(w http.ResponseWriter, r *http.Request, userI
 		}
 		writeJSON(w, http.StatusOK, out)
 		return
-	}
-	if len(rest) > 0 && rest[0] != "" {
+
+	case "presign-get":
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		key, ver, ttl, ok := parseObjectKeyBody(w, r)
+		if !ok {
+			return
+		}
+		out, err := s.drives.ObjectPresignGet(userID, driveID, key, ver, ttl)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		s.auth.Audit(userID, "object.presign_get", driveID, key)
+		writeJSON(w, http.StatusOK, out)
+		return
+
+	case "restore-plan":
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		key, ver, ttl, ok := parseObjectKeyBody(w, r)
+		if !ok {
+			return
+		}
+		out, err := s.drives.ObjectRestorePlan(userID, driveID, key, ver, ttl)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+
+	case "":
+		// GET inventory
+	default:
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -837,6 +904,42 @@ func (s *Server) routeDriveObjects(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 	writeJSON(w, http.StatusOK, inv)
+}
+
+// parseObjectKeyBody reads key/version_id/ttl_min from query and optional JSON body.
+// key is required. On failure writes error response and returns ok=false.
+func parseObjectKeyBody(w http.ResponseWriter, r *http.Request) (key, versionID string, ttlMin int, ok bool) {
+	key = r.URL.Query().Get("key")
+	versionID = r.URL.Query().Get("version_id")
+	ttlMin = 15
+	if v := r.URL.Query().Get("ttl_min"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			ttlMin = n
+		}
+	}
+	if r.Method == http.MethodPost || r.Method == http.MethodPut {
+		var body struct {
+			Key       string `json:"key"`
+			VersionID string `json:"version_id"`
+			TTLMin    int    `json:"ttl_min"`
+		}
+		// Body optional for GET-style; ignore decode errors when empty.
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Key != "" {
+			key = body.Key
+		}
+		if body.VersionID != "" {
+			versionID = body.VersionID
+		}
+		if body.TTLMin > 0 {
+			ttlMin = body.TTLMin
+		}
+	}
+	if key == "" {
+		writeErr(w, http.StatusBadRequest, "key required")
+		return "", "", 0, false
+	}
+	return key, versionID, ttlMin, true
 }
 
 // routeDriveSnapshots handles /v1/drives/{id}/snapshots[/{sid}[/restore]] and .../snapshots/diff

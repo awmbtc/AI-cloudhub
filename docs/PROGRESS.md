@@ -149,8 +149,16 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 429 `Retry-After`
 - [x] `scripts/runner-bwrap.sh` + MCP `list_objects`
 
+## 本波（可选 · version restore + seccomp 骨架）
+
+- [x] `POST .../objects/presign-get`（可选 versionId；client↔store 直下）
+- [x] `POST .../objects/restore-plan`（CLI + presign + api_restore 路径）
+- [x] `POST .../objects/restore-version`（S3 CopyObject，drive.write；无 body 代理）
+- [x] MCP：`object_presign_get` / `object_restore_plan` / `object_restore_version`
+- [x] `scripts/seccomp/runner-default.json` + `scripts/runner-seccomp.sh`
+
 ## 仍可后续
 
-- 控制面代执行对象 version 回滚（当前 CLI hint）
+- 内嵌 libseccomp-golang / 预生成 BPF 默认产物
 - 更多厂商原生 AssumeRole
-- 内嵌 seccomp BPF
+- OpenAPI 同步新 objects 路径

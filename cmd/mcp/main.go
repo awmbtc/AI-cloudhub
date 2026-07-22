@@ -147,7 +147,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects":
+	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -252,6 +252,47 @@ func toolRegistry() []toolMeta {
 					"max":      map[string]interface{}{"type": "integer"},
 				},
 				"required": []string{"drive_id"},
+			},
+		},
+		{
+			name: "object_restore_plan", description: "BYOS restore guidance: CLI hint + optional presign GET + api_restore path. Requires drive.read.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id":   map[string]interface{}{"type": "string"},
+					"key":        map[string]interface{}{"type": "string"},
+					"version_id": map[string]interface{}{"type": "string"},
+					"ttl_min":    map[string]interface{}{"type": "integer", "description": "Presign TTL minutes (default 15)"},
+				},
+				"required": []string{"drive_id", "key"},
+			},
+		},
+		{
+			name: "object_presign_get", description: "Short-lived presigned GET (optional versionId). Bytes client↔store only. Requires drive.read.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id":   map[string]interface{}{"type": "string"},
+					"key":        map[string]interface{}{"type": "string"},
+					"version_id": map[string]interface{}{"type": "string"},
+					"ttl_min":    map[string]interface{}{"type": "integer"},
+				},
+				"required": []string{"drive_id", "key"},
+			},
+		},
+		{
+			name: "object_restore_version", description: "Server-side S3 CopyObject version→current on BYOS (no body proxy). Requires drive.write + bucket versioning.",
+			scopes: []string{auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id":   map[string]interface{}{"type": "string"},
+					"key":        map[string]interface{}{"type": "string"},
+					"version_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"drive_id", "key", "version_id"},
 			},
 		},
 	}
@@ -360,6 +401,53 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			return nil, fmt.Errorf("drive_id required")
 		}
 		return toolListObjects(api, token, args.DriveID, args.Versions, args.Max)
+	case "object_restore_plan":
+		var args struct {
+			DriveID   string `json:"drive_id"`
+			Key       string `json:"key"`
+			VersionID string `json:"version_id"`
+			TTLMin    int    `json:"ttl_min"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" || strings.TrimSpace(args.Key) == "" {
+			return nil, fmt.Errorf("drive_id and key required")
+		}
+		return toolObjectPost(api, token, args.DriveID, "restore-plan", map[string]interface{}{
+			"key": args.Key, "version_id": args.VersionID, "ttl_min": args.TTLMin,
+		})
+	case "object_presign_get":
+		var args struct {
+			DriveID   string `json:"drive_id"`
+			Key       string `json:"key"`
+			VersionID string `json:"version_id"`
+			TTLMin    int    `json:"ttl_min"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" || strings.TrimSpace(args.Key) == "" {
+			return nil, fmt.Errorf("drive_id and key required")
+		}
+		return toolObjectPost(api, token, args.DriveID, "presign-get", map[string]interface{}{
+			"key": args.Key, "version_id": args.VersionID, "ttl_min": args.TTLMin,
+		})
+	case "object_restore_version":
+		var args struct {
+			DriveID   string `json:"drive_id"`
+			Key       string `json:"key"`
+			VersionID string `json:"version_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" || strings.TrimSpace(args.Key) == "" || strings.TrimSpace(args.VersionID) == "" {
+			return nil, fmt.Errorf("drive_id, key, version_id required")
+		}
+		return toolObjectPost(api, token, args.DriveID, "restore-version", map[string]interface{}{
+			"key": args.Key, "version_id": args.VersionID,
+		})
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -599,6 +687,21 @@ func toolListObjects(api, token, driveID string, versions bool, max int) (interf
 	}
 	if status >= 300 {
 		return nil, fmt.Errorf("list objects HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+// toolObjectPost POSTs to /v1/drives/{id}/objects/{action} (presign-get, restore-plan, restore-version).
+func toolObjectPost(api, token, driveID, action string, payload map[string]interface{}) (interface{}, error) {
+	url := api + "/v1/drives/" + driveID + "/objects/" + action
+	body, status, err := httpDo(http.MethodPost, url, token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("%s HTTP %d: %s", action, status, truncate(string(body), 512))
 	}
 	var parsed interface{}
 	_ = json.Unmarshal(body, &parsed)

@@ -32,6 +32,9 @@
 - STS source metrics; docs/STS.md; scripts/runner-netns.sh (Linux unshare)
 - Live GET /v1/drives/{id}/objects (+ versions, version-hint); Retry-After on 429
 - scripts/runner-bwrap.sh; MCP list_objects
+- BYOS version assist: POST objects/presign-get, restore-plan, restore-version (CopyObject, no body proxy)
+- MCP object_presign_get / object_restore_plan / object_restore_version
+- scripts/seccomp/runner-default.json + scripts/runner-seccomp.sh (Linux skeleton)
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`
