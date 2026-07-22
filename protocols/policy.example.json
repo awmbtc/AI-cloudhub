@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "mode": "enforce",
+  "rules": [
+    {
+      "id": "block-secret-paths",
+      "effect": "deny",
+      "principals": ["agent"],
+      "actions": ["path.read", "path.write", "drive.read", "drive.write", "drive.session"],
+      "path_deny_prefixes": [".ssh", ".env", ".aws", "secrets"],
+      "reason": "secret paths blocked for agents"
+    },
+    {
+      "id": "jobs-require-scope",
+      "effect": "deny",
+      "principals": ["agent"],
+      "actions": ["job.run"],
+      "require_scopes": ["job.run"],
+      "reason": "job.run scope required"
+    }
+  ]
+}

@@ -185,7 +185,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Qiniu/Oracle：`qiniu_sts` / `oracle_sts` + 独立 `*_STS_ENDPOINT` 覆盖
 - [x] 通用 `AI_CLOUDHUB_S3_STS_ENDPOINT` 分离 STS 与数据端点
 
+## 本波（Policy 外部 JSON）
+
+- [x] `AI_CLOUDHUB_POLICY_FILE` + reload；`protocols/policy.example.json`
+- [x] 规则：deny/allow、path_deny、drive/agent、observe 模式
+- [x] 接入 `allowAgentDrive` + `GET /v1/admin/policy`；docs/POLICY.md
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
-- Policy Engine 外部 JSON / OPA
+- OPA/Rego 或远程 PDP（刻意未做）

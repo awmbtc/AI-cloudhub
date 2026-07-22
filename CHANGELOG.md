@@ -50,6 +50,7 @@
 - Seccomp profiles: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict|netdeny; SECCOMP_NET=deny (AF_UNIX-only sockets)
 - Qiniu/Oracle STS source labels + per-vendor STS endpoint override; generic S3_STS_ENDPOINT
 - docs/SECCOMP.md netdeny arg-filter documentation
+- External JSON policy file (AI_CLOUDHUB_POLICY_FILE); admin GET /v1/admin/policy; docs/POLICY.md
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

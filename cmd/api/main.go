@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/awmbtc/AI-cloudhub/internal/agent"
 	"github.com/awmbtc/AI-cloudhub/internal/auth"
 	"github.com/awmbtc/AI-cloudhub/internal/config"
 	"github.com/awmbtc/AI-cloudhub/internal/crypto/secretbox"
@@ -88,6 +89,24 @@ func main() {
 		defer closer()
 	}
 
+	var policyEng *policy.Engine
+	if strings.TrimSpace(cfg.PolicyFile) != "" {
+		var err error
+		reload := time.Duration(cfg.PolicyReloadSec) * time.Second
+		policyEng, err = policy.NewEngineWithOptions(policy.EngineOptions{
+			FilePath:    cfg.PolicyFile,
+			ReloadEvery: reload,
+		})
+		if err != nil {
+			log.Fatalf("policy file: %v", err)
+		}
+		log.Printf("policy file loaded path=%s rules=%d mode=%s reload=%s",
+			cfg.PolicyFile, policyEng.Status().RuleCount, policyEng.Status().Mode, reload)
+	} else {
+		policyEng = policy.NewEngine()
+	}
+	agentSvc := agent.NewServiceWithEngine(st, policyEng)
+
 	handler := httpserver.New(httpserver.Deps{
 		Config:    cfg,
 		Auth:      authSvc,
@@ -96,6 +115,7 @@ func main() {
 		Drives:    driveSvc,
 		Devices:   deviceSvc,
 		Jobs:      jobSvc,
+		Agents:    agentSvc,
 		Limiter:   lim,
 		Store:     st,
 	})

@@ -76,6 +76,13 @@ type Config struct {
 	// (comma-separated). Empty = no extra IP restriction.
 	// Env: AI_CLOUDHUB_ADMIN_CIDRS (e.g. "127.0.0.1,10.0.0.0/8")
 	AdminCIDRs []string
+
+	// PolicyFile is optional external JSON policy (AI_CLOUDHUB_POLICY_FILE).
+	// Empty = built-in scope/drive/path checks only. See docs/POLICY.md.
+	PolicyFile string
+	// PolicyReloadSec re-reads the policy file when mtime changes (0 = load once at start).
+	// Env: AI_CLOUDHUB_POLICY_RELOAD_SEC
+	PolicyReloadSec int
 }
 
 // Load reads configuration from the environment with safe defaults for local docker-compose.
@@ -115,6 +122,8 @@ func Load() Config {
 		AuthFailMax:       getenvInt("AI_CLOUDHUB_AUTH_FAIL_MAX", 8),
 		AuthFailWindowMin: getenvInt("AI_CLOUDHUB_AUTH_FAIL_WINDOW_MIN", 15),
 		AdminCIDRs:        splitCSV(getenv("AI_CLOUDHUB_ADMIN_CIDRS", "")),
+		PolicyFile:        getenv("AI_CLOUDHUB_POLICY_FILE", ""),
+		PolicyReloadSec:   getenvInt("AI_CLOUDHUB_POLICY_RELOAD_SEC", 0),
 	}
 }
 

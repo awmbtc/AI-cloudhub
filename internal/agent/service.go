@@ -61,12 +61,32 @@ type Service struct {
 	engine *policy.Engine
 }
 
-// NewService creates an agent service.
+// NewService creates an agent service with built-in policy only.
 func NewService(st store.Store) *Service {
 	if st == nil {
 		st = store.NewMemory()
 	}
 	return &Service{store: st, engine: policy.NewEngine()}
+}
+
+// NewServiceWithEngine creates an agent service with a shared policy engine
+// (optional external JSON file).
+func NewServiceWithEngine(st store.Store, eng *policy.Engine) *Service {
+	if st == nil {
+		st = store.NewMemory()
+	}
+	if eng == nil {
+		eng = policy.NewEngine()
+	}
+	return &Service{store: st, engine: eng}
+}
+
+// Engine returns the policy engine (for HTTP admin / drive checks).
+func (s *Service) Engine() *policy.Engine {
+	if s == nil {
+		return nil
+	}
+	return s.engine
 }
 
 // Create registers an agent for the owner.
@@ -187,6 +207,32 @@ func (s *Service) Update(ownerUserID, id string, in UpdateInput) (*Record, error
 func (s *Service) Delete(ownerUserID, id string) error {
 	if err := s.store.DeleteAgent(ownerUserID, id); err != nil {
 		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+// CheckAccess evaluates full policy (built-in + file) for an agent request.
+func (s *Service) CheckAccess(req policy.Request) error {
+	if s == nil || s.engine == nil {
+		return nil
+	}
+	// Fill agent path/drive prefixes from record when agent known.
+	if req.AgentID != "" {
+		if a, err := s.store.GetAgentByID(req.AgentID); err == nil && a != nil {
+			if len(req.AllowedDriveIDs) == 0 {
+				req.AllowedDriveIDs = a.AllowedDriveIDs
+			}
+			if len(req.ReadPrefixes) == 0 {
+				req.ReadPrefixes = a.ReadPrefixes
+			}
+			if len(req.WritePrefixes) == 0 {
+				req.WritePrefixes = a.WritePrefixes
+			}
+		}
+	}
+	d := s.engine.Evaluate(req)
+	if !d.Allow {
+		return fmt.Errorf("%s", d.Reason)
 	}
 	return nil
 }

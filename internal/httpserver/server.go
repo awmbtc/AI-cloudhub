@@ -109,6 +109,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/admin/users", s.withAdmin(s.routeAdminUsersRoot))
 	mux.HandleFunc("/v1/admin/users/", s.withAdmin(s.routeAdminUsers))
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
+	mux.HandleFunc("/v1/admin/policy", s.withAdmin(s.handleAdminPolicy))
 
 	// Agent Identity (ROADMAP-2.0 stage A)
 	if s.agents != nil {
@@ -605,13 +606,28 @@ func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID,
 	}
 }
 
-// allowAgentDrive enforces B1 drive allowlist for agent tokens.
+// allowAgentDrive enforces B1 drive allowlist + external policy for agent tokens.
 func (s *Server) allowAgentDrive(w http.ResponseWriter, r *http.Request, driveID string) bool {
 	pr := principalFrom(r)
 	if pr == nil || pr.AgentID == "" || s.agents == nil {
 		return true
 	}
-	if err := s.agents.CheckDriveAccess(pr.AgentID, driveID); err != nil {
+	action := policy.ActionDriveRead
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		action = policy.ActionDriveWrite
+	}
+	// Session issuance is a read-capability action.
+	if strings.Contains(r.URL.Path, "/session") {
+		action = policy.ActionDriveSession
+	}
+	req := policy.Request{
+		AgentID: pr.AgentID,
+		Scopes:  pr.Scopes,
+		Action:  action,
+		DriveID: driveID,
+	}
+	if err := s.agents.CheckAccess(req); err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return false
 	}
@@ -1824,6 +1840,29 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request, userID
 		"action":   filterAction,
 		"agent_id": filterAgent,
 	})
+}
+
+// handleAdminPolicy returns external policy file status (not full rule dump by default).
+func (s *Server) handleAdminPolicy(w http.ResponseWriter, r *http.Request, userID, username, role string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	eng := policy.NewEngine()
+	if s.agents != nil && s.agents.Engine() != nil {
+		eng = s.agents.Engine()
+	}
+	st := eng.Status()
+	out := map[string]interface{}{
+		"status": st,
+		"note":   "Built-in scope/drive/path checks always apply. File rules run after. See docs/POLICY.md",
+	}
+	if r.URL.Query().Get("rules") == "1" || r.URL.Query().Get("rules") == "true" {
+		if doc := eng.Document(); doc != nil {
+			out["document"] = doc
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) routeAdminUsers(w http.ResponseWriter, r *http.Request, userID, username, role string) {
