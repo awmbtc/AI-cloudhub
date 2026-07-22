@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.1.0
+  version: 0.1.1
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -743,6 +743,78 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Drive'
+
+    InventoryEntry:
+      type: object
+      properties:
+        key: { type: string }
+        size: { type: integer, format: int64 }
+        etag: { type: string }
+        last_modified: { type: string, format: date-time }
+        version_id: { type: string }
+        is_latest: { type: boolean }
+        delete_marker: { type: boolean }
+
+    ObjectsInventory:
+      type: object
+      properties:
+        drive_id: { type: string }
+        bucket: { type: string }
+        prefix: { type: string }
+        count: { type: integer }
+        total_bytes: { type: integer, format: int64 }
+        truncated: { type: boolean }
+        with_versions: { type: boolean }
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryEntry'
+        note: { type: string }
+
+    ObjectKeyBody:
+      type: object
+      required: [key]
+      properties:
+        key: { type: string }
+        version_id: { type: string }
+        ttl_min:
+          type: integer
+          description: Presign TTL in minutes (default 15, max 1440 for service clamp)
+          default: 15
+
+    ObjectVersionHint:
+      type: object
+      properties:
+        drive_id: { type: string }
+        bucket: { type: string }
+        key: { type: string }
+        version_id: { type: string }
+        hint: { type: string }
+        note: { type: string }
+
+    ObjectPresignGet:
+      type: object
+      properties:
+        drive_id: { type: string }
+        bucket: { type: string }
+        key: { type: string }
+        version_id: { type: string }
+        url: { type: string, format: uri }
+        expires_in: { type: integer, format: int64 }
+        note: { type: string }
+
+    ObjectRestorePlan:
+      type: object
+      properties:
+        drive_id: { type: string }
+        key: { type: string }
+        version_id: { type: string }
+        cli_hint: { type: string }
+        api_restore: { type: string }
+        presign:
+          $ref: '#/components/schemas/ObjectPresignGet'
+        presign_error: { type: string }
+        note: { type: string }
 
     ItemsBinding:
       type: object
@@ -1649,6 +1721,312 @@ paths:
                 $ref: '#/components/schemas/ItemsBarrier'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/objects:
+    get:
+      tags: [drives]
+      summary: Live object inventory under drive prefix (metadata only; BYOS)
+      description: |
+        Lists current objects (or versions when `versions=true`) via the user's
+        provider credentials. Control plane does **not** download object bytes.
+        Requires scope `drive.read`. Returns 502 if object store is unreachable.
+      operationId: listDriveObjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: max
+          in: query
+          schema: { type: integer, default: 1000, maximum: 5000 }
+        - name: versions
+          in: query
+          description: "1|true to list object versions (bucket versioning required)"
+          schema: { type: string, enum: ["1", "true", "0", "false"] }
+      responses:
+        '200':
+          description: Inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectsInventory'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          description: Object store unreachable or list failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/objects/version-hint:
+    get:
+      tags: [drives]
+      summary: CLI hint to fetch a versioned object (BYOS; no download)
+      operationId: driveObjectVersionHint
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          schema: { type: string }
+        - name: version_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Hint payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectVersionHint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [drives]
+      summary: CLI hint (JSON body)
+      operationId: driveObjectVersionHintPost
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectKeyBody'
+      responses:
+        '200':
+          description: Hint payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectVersionHint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/objects/presign-get:
+    post:
+      tags: [drives]
+      summary: Presigned GET URL (optional versionId); bytes client↔store only
+      description: |
+        Scope `drive.read`. Short-lived URL; control plane does not proxy the body.
+      operationId: driveObjectPresignGet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectKeyBody'
+      responses:
+        '200':
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectPresignGet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          description: Presign failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      tags: [drives]
+      summary: Presigned GET (query form)
+      operationId: driveObjectPresignGetQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          schema: { type: string }
+        - name: version_id
+          in: query
+          schema: { type: string }
+        - name: ttl_min
+          in: query
+          schema: { type: integer, default: 15 }
+      responses:
+        '200':
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectPresignGet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          description: Presign failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/objects/restore-plan:
+    post:
+      tags: [drives]
+      summary: Multi-path restore guidance (CLI + optional presign + api_restore)
+      description: Scope `drive.read`. Prefer server-side restore-version when versioning is on.
+      operationId: driveObjectRestorePlan
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectKeyBody'
+      responses:
+        '200':
+          description: Plan payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectRestorePlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      tags: [drives]
+      summary: Restore plan (query form)
+      operationId: driveObjectRestorePlanQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          schema: { type: string }
+        - name: version_id
+          in: query
+          schema: { type: string }
+        - name: ttl_min
+          in: query
+          schema: { type: integer, default: 15 }
+      responses:
+        '200':
+          description: Plan payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectRestorePlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/objects/restore-version:
+    post:
+      tags: [drives]
+      summary: Server-side copy of object version → current key (BYOS CopyObject)
+      description: |
+        Scope **drive.write**. Issues S3 `CopyObject` with user credentials only;
+        control plane never proxies object bytes. Requires bucket versioning.
+      operationId: driveObjectRestoreVersion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, version_id]
+              properties:
+                key: { type: string }
+                version_id: { type: string }
+      responses:
+        '200':
+          description: Restored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: restored }
+                  drive_id: { type: string }
+                  bucket: { type: string }
+                  key: { type: string }
+                  version_id: { type: string }
+                  note: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          description: Copy failed (versioning off / store down)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 

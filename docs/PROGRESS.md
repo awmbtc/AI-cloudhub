@@ -157,8 +157,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP：`object_presign_get` / `object_restore_plan` / `object_restore_version`
 - [x] `scripts/seccomp/runner-default.json` + `scripts/runner-seccomp.sh`
 
+## 本波（OpenAPI + smoke objects）
+
+- [x] OpenAPI：`/v1/drives/{id}/objects*`（list / version-hint / presign-get / restore-plan / restore-version）
+- [x] `scripts/smoke-objects.sh` + `make smoke-objects`（可选 `AI_CLOUDHUB_SMOKE_MINIO=1`）
+
 ## 仍可后续
 
 - 内嵌 libseccomp-golang / 预生成 BPF 默认产物
 - 更多厂商原生 AssumeRole
-- OpenAPI 同步新 objects 路径
+- Snapshot 路径补进 OpenAPI
