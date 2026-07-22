@@ -129,6 +129,7 @@ func TryAWSAssumeRole(r *provider.Resolved, duration time.Duration) (access, sec
 
 // applyOptionalAWSSTS clones resolved with temporary AWS STS creds when enabled
 // and the endpoint looks like AWS. Otherwise returns original + fallbackSource.
+// Callers should only invoke this for AWS-looking endpoints (see applyOptionalTypeS3STS).
 func applyOptionalAWSSTS(resolved *provider.Resolved, duration time.Duration, fallbackSource string) (out *provider.Resolved, source, note string) {
 	if resolved == nil {
 		return nil, fallbackSource, ""

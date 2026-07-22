@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Objects API smoke: version-hint / restore-plan / presign-get (+ optional live MinIO).
+# Objects API smoke: version-hint / restore-plan / presign-get (+ optional soft live MinIO).
 # Self-starts API. Does not require a live object store for the core path.
+# For hard-assert inventory + snapshot include_objects with auto MinIO: make smoke-minio
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -120,7 +121,9 @@ CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST \
 test "$CODE" = "200"
 
 if [[ "$LIVE" == "1" ]]; then
-  echo "== LIVE MinIO list objects =="
+  # Soft live path (expects pre-existing MinIO at MINIO_ENDPOINT; does not seed).
+  # Hard-assert inventory + include_objects + auto-start: scripts/smoke-minio-inventory.sh
+  echo "== LIVE MinIO list objects (soft; use make smoke-minio for hard-assert) =="
   INV=$("${CURL[@]}" "$API/v1/drives/$DID/objects?max=50" -H "Authorization: Bearer $TOK")
   echo "$INV" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "entries" in d, d; print("count", d.get("count"))'
   echo "== LIVE restore-version (expect 502 if no such version; must not 403) =="
@@ -132,7 +135,7 @@ if [[ "$LIVE" == "1" ]]; then
   test "$CODE" = "200" -o "$CODE" = "502"
   echo "restore-version HTTP $CODE"
 else
-  echo "== skip LIVE MinIO (set AI_CLOUDHUB_SMOKE_MINIO=1 to enable list/restore) =="
+  echo "== skip LIVE MinIO (soft: AI_CLOUDHUB_SMOKE_MINIO=1; hard-assert: make smoke-minio) =="
 fi
 
 echo "OK objects smoke drive=$DID"

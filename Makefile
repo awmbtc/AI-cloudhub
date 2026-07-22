@@ -4,7 +4,7 @@ export CGO_ENABLED := 0
 BIN_DIR := .bin
 BINS    := api hubd runner mcp
 
-.PHONY: all build test smoke smoke-agent smoke-objects clean $(BINS)
+.PHONY: all build test smoke smoke-agent smoke-objects smoke-minio clean $(BINS)
 
 all: build
 
@@ -25,6 +25,11 @@ smoke-agent: build
 
 smoke-objects: build
 	./scripts/smoke-objects.sh
+
+# Live MinIO hard-assert: inventory + snapshot include_objects (auto-starts MinIO if needed).
+# Skips with exit 0 if MinIO cannot start; set AI_CLOUDHUB_SMOKE_MINIO_REQUIRE=1 to fail hard.
+smoke-minio: build
+	./scripts/smoke-minio-inventory.sh
 
 smoke-all: smoke smoke-agent smoke-objects
 

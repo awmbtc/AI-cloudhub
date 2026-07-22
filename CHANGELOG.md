@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+### STS
+- Shared S3-compatible AssumeRole helper (`TryS3AssumeRole` / minio-go) for multi-vendor best-effort STS
+- Generic `AI_CLOUDHUB_S3_STS=1` + per-vendor flags (`B2`/`OSS`/`COS`/`QINIU`/`ORACLE`/`R2`) → `source=s3_sts`
+- Custom non-AWS `type=s3` endpoints via `AI_CLOUDHUB_S3_STS`; AWS-looking still routes to `aws_sts`
+- Metrics label `s3_sts`; docs/STS.md + KNOWN_LIMITATIONS matrix
+
 ### Hardening
 - Provider health probe: `GET|POST /v1/providers/{id}/health` (ListBuckets, 8s timeout)
 - Drive quota (default 20/user) and provider quota (default 20/user); binding remains 10
@@ -37,6 +43,9 @@
 - scripts/seccomp/runner-default.json + scripts/runner-seccomp.sh (Linux skeleton)
 - OpenAPI objects paths; scripts/smoke-objects.sh (make smoke-objects)
 - OpenAPI drive snapshots (list/create/get/delete/diff/restore); smoke-agent snapshot coverage
+- In-process Linux seccomp (CGO-free): AI_CLOUDHUB_SECCOMP=1, optional STRICT; elastic/go-seccomp-bpf
+- Multi-vendor S3-compatible AssumeRole: AI_CLOUDHUB_S3_STS + per-vendor flags; session source s3_sts
+- Live MinIO inventory smoke: make smoke-minio (auto-start server; hard-assert include_objects + diff)
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

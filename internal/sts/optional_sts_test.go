@@ -9,8 +9,7 @@ import (
 )
 
 func TestApplyOptionalSTSVendorNotes(t *testing.T) {
-	t.Setenv("AI_CLOUDHUB_MINIO_STS", "0")
-	t.Setenv("AI_CLOUDHUB_AWS_STS", "0")
+	clearSTSFlags(t)
 
 	cases := []struct {
 		typ  provider.Type
@@ -49,8 +48,7 @@ func TestApplyOptionalSTSVendorNotes(t *testing.T) {
 }
 
 func TestApplyOptionalSTSRefreshFallbackSource(t *testing.T) {
-	t.Setenv("AI_CLOUDHUB_MINIO_STS", "0")
-	t.Setenv("AI_CLOUDHUB_AWS_STS", "0")
+	clearSTSFlags(t)
 	r := &provider.Resolved{
 		Type:      provider.TypeR2,
 		AccessKey: "ak",
@@ -67,8 +65,7 @@ func TestApplyOptionalSTSRefreshFallbackSource(t *testing.T) {
 }
 
 func TestIssueVendorNotesOnSession(t *testing.T) {
-	t.Setenv("AI_CLOUDHUB_MINIO_STS", "0")
-	t.Setenv("AI_CLOUDHUB_AWS_STS", "0")
+	clearSTSFlags(t)
 	s := New(time.Minute, "")
 	sess, err := s.Issue(IssueInput{
 		UserID: "u", DriveID: "d", MountPoint: "/m",

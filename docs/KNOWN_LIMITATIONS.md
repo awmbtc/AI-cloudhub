@@ -11,25 +11,26 @@
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
 - **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
 - **Policy v0：** scope + drive 白名单 + path 前缀结构校验；尚无外部 JSON 策略文件 / OPA。
-- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）；非完整 in-process seccomp BPF。
-- **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。
-- **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选）。seccomp 为 **JSON 骨架 + 外部包装**（firejail / 预编译 BPF + bwrap / docker profile 调试）；未内嵌 libseccomp-golang。
-- **STS：** MinIO/AWS 可选原生 STS；其余 embedded + Note。见 [STS.md](./STS.md)。
+- **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free（elastic/go-seccomp-bpf）；`AI_CLOUDHUB_SECCOMP_STRICT=1` 时加载失败则中止。Allowlist 为骨架，非完整威胁模型审计。
+- **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。Live 硬断言见 `make smoke-minio`。
+- **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选外部包装）。进程内 seccomp 与外部包装可叠加使用。
+- **STS：** MinIO/AWS 可选原生 STS；R2/B2/OSS/COS/Qiniu/Oracle 与自定义 S3 可用 best-effort S3 兼容 AssumeRole（`AI_CLOUDHUB_S3_STS` 或 per-vendor 开关）。见 [STS.md](./STS.md)。
 - **429：** 带 `Retry-After: 1`（固定秒，非自适应）。
 - **MCP：** v0.2 工具级 scope + 路径 jail；非完整 MCP SDK / resources。
 - **Admin IP：** `AI_CLOUDHUB_ADMIN_CIDRS` 可选；空=不限制。
 - **用户创建：** 公开注册可关；关后用 admin `POST /v1/admin/users` 建号。
 - **Provider 密钥：** 生产请设置 `AI_CLOUDHUB_MASTER_KEY`（信封加密）；未设置时明文落库（仅开发）。
-- **STS 会话：** 默认短时 conf 内嵌密钥（`source=embedded`/`refresh`）。原生 STS 为 best-effort：
+- **STS 会话：** 默认短时 conf 内嵌密钥（`source=embedded`/`refresh`）。原生 / S3 兼容 STS 为 best-effort：
 
   | type | 原生 STS | 开关 | Source |
   |------|----------|------|--------|
-  | minio | AssumeRole | `AI_CLOUDHUB_MINIO_STS=1` | `minio_sts` |
-  | s3（AWS） | AssumeRole | `AI_CLOUDHUB_AWS_STS=1` + Role ARN | `aws_sts` |
-  | r2 | 不做经典 STS | — | embedded + Note |
-  | b2/oss/cos/qiniu/oracle | 无统一 STS | — | embedded + Note |
+  | minio | AssumeRole（provider 端点） | `AI_CLOUDHUB_MINIO_STS=1` 或 `AI_CLOUDHUB_S3_STS=1` | `minio_sts` |
+  | s3（AWS 端点） | AWS AssumeRole | `AI_CLOUDHUB_AWS_STS=1` + Role ARN | `aws_sts` |
+  | s3（自定义端点） | S3 兼容 AssumeRole | `AI_CLOUDHUB_S3_STS=1` | `s3_sts` |
+  | r2/b2/oss/cos/qiniu/oracle | S3 兼容 AssumeRole（可选） | `AI_CLOUDHUB_S3_STS=1` 或 `AI_CLOUDHUB_<VENDOR>_STS=1` | `s3_sts` |
+  | 上述厂商且开关关 | 不探测 | — | embedded + Note |
 
-  失败永不阻断 Issue，一律回退 embedded 短时会话。
+  失败永不阻断 Issue，一律回退 embedded 短时会话。可选 Role ARN：`AI_CLOUDHUB_S3_STS_ROLE_ARN` 或 `AI_CLOUDHUB_<VENDOR>_STS_ROLE_ARN`。
 
 ## Runtime
 

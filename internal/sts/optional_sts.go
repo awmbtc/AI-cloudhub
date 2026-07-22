@@ -6,22 +6,24 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
 )
 
-// Vendor notes when native STS is not attempted (honest best-effort).
+// Vendor notes when native / S3-compatible STS is not attempted (honest best-effort).
 const (
-	noteR2     = "Cloudflare R2 typically uses long-lived S3 API tokens, not classic STS AssumeRole; native STS not attempted"
-	noteB2     = "Backblaze B2: no clean control-plane STS path in this build; using embedded credentials in short-lived session"
-	noteOSS    = "Aliyun OSS: native STS (AssumeRole) not wired; using embedded credentials in short-lived session"
-	noteCOS    = "Tencent COS: native STS not wired; using embedded credentials in short-lived session"
-	noteQiniu  = "Qiniu Kodo: native STS not wired; using embedded credentials in short-lived session"
-	noteOracle = "Oracle OCI: native STS not wired; using embedded credentials in short-lived session"
+	noteR2     = "Cloudflare R2 typically uses long-lived S3 API tokens, not classic STS AssumeRole; set AI_CLOUDHUB_R2_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt S3-compatible AssumeRole"
+	noteB2     = "Backblaze B2: S3-compatible STS not enabled; set AI_CLOUDHUB_B2_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
+	noteOSS    = "Aliyun OSS: S3-compatible STS not enabled; set AI_CLOUDHUB_OSS_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
+	noteCOS    = "Tencent COS: S3-compatible STS not enabled; set AI_CLOUDHUB_COS_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
+	noteQiniu  = "Qiniu Kodo: S3-compatible STS not enabled; set AI_CLOUDHUB_QINIU_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
+	noteOracle = "Oracle OCI: S3-compatible STS not enabled; set AI_CLOUDHUB_ORACLE_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
 )
 
 // applyOptionalSTS is the multi-vendor best-effort STS entry used by Issue/Refresh.
 //
 // Behavior:
-//   - minio: if AI_CLOUDHUB_MINIO_STS=1, try MinIO AssumeRole → source=minio_sts
-//   - s3: if AI_CLOUDHUB_AWS_STS=1 and endpoint looks like AWS, try AWS AssumeRole → source=aws_sts
-//   - r2 / b2 / oss / cos / qiniu / oracle: no harmful STS probe; keep embedded/refresh + Note
+//   - minio: AI_CLOUDHUB_MINIO_STS=1 or AI_CLOUDHUB_S3_STS=1 → AssumeRole → source=minio_sts
+//   - s3 + AWS-looking endpoint: AI_CLOUDHUB_AWS_STS=1 → AWS AssumeRole → source=aws_sts
+//   - s3 + custom endpoint: AI_CLOUDHUB_S3_STS=1 → S3-compat AssumeRole → source=s3_sts
+//   - r2/b2/oss/cos/qiniu/oracle: per-vendor or AI_CLOUDHUB_S3_STS → S3-compat → source=s3_sts
+//     when flags off: embedded/refresh + Note
 //
 // Always falls back to the original resolved credentials on failure or when disabled.
 // fallbackSource is typically SourceEmbedded (Issue) or SourceRefresh (Refresh).
@@ -33,20 +35,38 @@ func applyOptionalSTS(resolved *provider.Resolved, duration time.Duration, fallb
 	case provider.TypeMinIO:
 		return applyOptionalMinioSTS(resolved, duration, fallbackSource)
 	case provider.TypeS3:
-		return applyOptionalAWSSTS(resolved, duration, fallbackSource)
+		return applyOptionalTypeS3STS(resolved, duration, fallbackSource)
 	case provider.TypeR2:
-		return resolved, fallbackSource, noteR2
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "R2", noteR2)
 	case provider.TypeB2:
-		return resolved, fallbackSource, noteB2
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "B2", noteB2)
 	case provider.TypeOSS:
-		return resolved, fallbackSource, noteOSS
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "OSS", noteOSS)
 	case provider.TypeCOS:
-		return resolved, fallbackSource, noteCOS
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "COS", noteCOS)
 	case provider.TypeQiniu:
-		return resolved, fallbackSource, noteQiniu
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "Qiniu", noteQiniu)
 	case provider.TypeOracle:
-		return resolved, fallbackSource, noteOracle
+		return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "Oracle", noteOracle)
 	default:
 		return resolved, fallbackSource, ""
 	}
+}
+
+// applyOptionalTypeS3STS handles type=s3:
+// AWS-looking endpoints use AWS STS when AI_CLOUDHUB_AWS_STS is on;
+// custom S3-compatible endpoints use shared AssumeRole when AI_CLOUDHUB_S3_STS is on.
+func applyOptionalTypeS3STS(resolved *provider.Resolved, duration time.Duration, fallbackSource string) (out *provider.Resolved, source, note string) {
+	if resolved == nil {
+		return nil, fallbackSource, ""
+	}
+	// Prefer real AWS STS for AWS endpoints when enabled.
+	if looksLikeAWS(resolved) {
+		return applyOptionalAWSSTS(resolved, duration, fallbackSource)
+	}
+	// Custom / non-AWS S3 endpoint: optional S3-compatible AssumeRole on the data endpoint.
+	if !s3STSEnabled() {
+		return resolved, fallbackSource, ""
+	}
+	return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceS3STS, "S3", "")
 }

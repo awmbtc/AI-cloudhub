@@ -18,6 +18,7 @@ var (
 	STSRefresh  atomic.Uint64
 	STSMinio    atomic.Uint64
 	STSAWS      atomic.Uint64
+	STSS3       atomic.Uint64 // s3_sts: S3-compatible AssumeRole (non-minio / non-aws)
 	Snapshots   atomic.Uint64
 )
 
@@ -34,6 +35,8 @@ func IncSTSSource(source string) {
 		STSMinio.Add(1)
 	case "aws_sts":
 		STSAWS.Add(1)
+	case "s3_sts":
+		STSS3.Add(1)
 	case "refresh":
 		STSRefresh.Add(1)
 	default:
@@ -68,6 +71,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"refresh\"} %d\n", STSRefresh.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"minio_sts\"} %d\n", STSMinio.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"aws_sts\"} %d\n", STSAWS.Load())
+	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"s3_sts\"} %d\n", STSS3.Load())
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_created_total BYOC jobs created\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_created_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_created_total %d\n", JobsCreated.Load())

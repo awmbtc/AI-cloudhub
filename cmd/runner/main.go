@@ -312,6 +312,20 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 	}
 
+	// Optional in-process seccomp (Linux pure-Go BPF; no-op elsewhere).
+	// Apply after env/path jail and mount setup, immediately before agent.
+	// AI_CLOUDHUB_SECCOMP=1|true|yes; on error continue unless AI_CLOUDHUB_SECCOMP_STRICT=1.
+	if sandbox.Enabled() {
+		if err := sandbox.ApplyRunnerDefault(); err != nil {
+			if sandbox.Strict() {
+				return fmt.Errorf("seccomp: %w", err)
+			}
+			log.Printf("seccomp: apply failed (continuing): %v", err)
+		} else {
+			log.Printf("seccomp: runner default filter applied (no_new_privs+tsync)")
+		}
+	}
+
 	agent := exec.Command(args[0], args[1:]...)
 	agent.Dir = mountPoint
 	agent.Env = childEnv

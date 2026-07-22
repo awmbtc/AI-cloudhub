@@ -1,14 +1,11 @@
 package sts
 
 import (
-	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // Credential source labels for Session.Source.
@@ -27,6 +24,7 @@ func envFlagTrue(key string) bool {
 
 // minioSTSEnabled reports whether optional MinIO native STS is requested.
 // Set AI_CLOUDHUB_MINIO_STS=1 to attempt AssumeRole when provider type is minio.
+// Generic AI_CLOUDHUB_S3_STS=1 also enables MinIO (see s3CompatSTSWanted).
 func minioSTSEnabled() bool {
 	return envFlagTrue("AI_CLOUDHUB_MINIO_STS")
 }
@@ -46,59 +44,10 @@ func clampSTSDurationSeconds(duration time.Duration) int {
 // TryMinioAssumeRole calls MinIO (S3-compatible) STS AssumeRole and returns
 // temporary access/secret/session-token credentials.
 //
-// Uses minio-go credentials.STSAssumeRole (SigV4 form POST). No extra deps.
-// Callers should fall back to embedded keys when this returns an error
-// (MinIO may lack STS/IAM policies, network may fail, etc.).
+// Delegates to TryS3AssumeRole. Role ARN from AI_CLOUDHUB_MINIO_STS_ROLE_ARN
+// or AI_CLOUDHUB_S3_STS_ROLE_ARN. Callers should fall back to embedded keys on error.
 func TryMinioAssumeRole(r *provider.Resolved, duration time.Duration) (access, secret, token string, exp time.Time, err error) {
-	if r == nil {
-		return "", "", "", time.Time{}, fmt.Errorf("resolved provider required")
-	}
-	if r.Endpoint == "" {
-		return "", "", "", time.Time{}, fmt.Errorf("endpoint required for MinIO STS")
-	}
-	if r.AccessKey == "" || r.SecretKey == "" {
-		return "", "", "", time.Time{}, fmt.Errorf("access_key and secret_key required for MinIO STS")
-	}
-
-	stsEndpoint := stsEndpointURL(r)
-	secs := clampSTSDurationSeconds(duration)
-
-	loc := r.Region
-	if loc == "" {
-		loc = "us-east-1"
-	}
-	opts := credentials.STSAssumeRoleOptions{
-		AccessKey:       r.AccessKey,
-		SecretKey:       r.SecretKey,
-		Location:        loc,
-		DurationSeconds: secs,
-		// Optional; MinIO root/admin AssumeRole often works without RoleARN.
-		// When server IAM is required, set AI_CLOUDHUB_MINIO_STS_ROLE_ARN.
-		RoleARN:         strings.TrimSpace(os.Getenv("AI_CLOUDHUB_MINIO_STS_ROLE_ARN")),
-		RoleSessionName: "ai-cloudhub",
-	}
-
-	// Construct provider directly so we can bound HTTP timeout.
-	p := &credentials.STSAssumeRole{
-		Client: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-		STSEndpoint: stsEndpoint,
-		Options:     opts,
-	}
-	creds := credentials.New(p)
-	val, err := creds.Get()
-	if err != nil {
-		return "", "", "", time.Time{}, fmt.Errorf("minio AssumeRole: %w", err)
-	}
-	if val.AccessKeyID == "" || val.SecretAccessKey == "" {
-		return "", "", "", time.Time{}, fmt.Errorf("minio AssumeRole: empty temporary credentials")
-	}
-	exp = val.Expiration
-	if exp.IsZero() {
-		exp = time.Now().UTC().Add(time.Duration(secs) * time.Second)
-	}
-	return val.AccessKeyID, val.SecretAccessKey, val.SessionToken, exp, nil
+	return TryS3AssumeRole(r, duration, roleARNForType(provider.TypeMinIO))
 }
 
 // stsEndpointURL builds the MinIO/S3-compatible STS base URL from resolved endpoint.
@@ -116,22 +65,14 @@ func stsEndpointURL(r *provider.Resolved) string {
 }
 
 // applyOptionalMinioSTS is the MinIO branch of multi-vendor optional STS.
+// Enabled by AI_CLOUDHUB_MINIO_STS=1 or AI_CLOUDHUB_S3_STS=1.
 // On any failure or when disabled, returns the original resolved and fallbackSource.
 func applyOptionalMinioSTS(resolved *provider.Resolved, duration time.Duration, fallbackSource string) (out *provider.Resolved, source, note string) {
 	if resolved == nil {
 		return nil, fallbackSource, ""
 	}
-	if !minioSTSEnabled() || resolved.Type != provider.TypeMinIO {
+	if resolved.Type != provider.TypeMinIO {
 		return resolved, fallbackSource, ""
 	}
-	ak, sk, tok, _, err := TryMinioAssumeRole(resolved, duration)
-	if err != nil {
-		// Best-effort: fall back to embedding long-lived keys in the short-lived session.
-		return resolved, fallbackSource, "MinIO STS AssumeRole failed; using embedded credentials in short-lived session"
-	}
-	cp := *resolved
-	cp.AccessKey = ak
-	cp.SecretKey = sk
-	cp.SessionToken = tok
-	return &cp, SourceMinioSTS, ""
+	return applyOptionalS3CompatSTS(resolved, duration, fallbackSource, SourceMinioSTS, "MinIO", "")
 }

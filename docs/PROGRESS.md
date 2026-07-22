@@ -167,8 +167,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] OpenAPI：`/v1/drives/{id}/snapshots` list/create、`diff`、`{sid}` get/delete、`{sid}/restore`
 - [x] smoke-agent：list/get/preview/apply/diff/delete 覆盖
 
+## 本波（seccomp 内嵌 + 多厂商 STS + live MinIO）
+
+- [x] CGO-free 进程内 seccomp：`internal/sandbox` + `AI_CLOUDHUB_SECCOMP=1`（elastic/go-seccomp-bpf；非 Linux no-op）
+- [x] 多厂商 S3 兼容 AssumeRole：`AI_CLOUDHUB_S3_STS` + per-vendor；`source=s3_sts`
+- [x] Live MinIO 硬断言 inventory：`make smoke-minio`（auto-start MinIO；include_objects + diff）
+
 ## 仍可后续
 
-- 内嵌 libseccomp-golang / 预生成 BPF 默认产物
-- 更多厂商原生 AssumeRole
-- Snapshot include_objects 在 live MinIO smoke 中硬断言 inventory
+- 厂商原生非 S3 STS（阿里云 STS REST / 腾讯 CAM 等，非 endpoint AssumeRole）
+- seccomp allowlist 持续收紧与审计

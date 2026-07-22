@@ -4,14 +4,18 @@
 # Usage:
 #   AI_CLOUDHUB_MOUNT=/workspace ./scripts/runner-seccomp.sh -- ./.bin/runner -- agent-cmd
 #
-# Prefers (in order):
+# In-process option (preferred when available — pure Go, CGO-free):
+#   AI_CLOUDHUB_SECCOMP=1 ./bin/runner -- agent-cmd
+#   AI_CLOUDHUB_SECCOMP=1 AI_CLOUDHUB_SECCOMP_STRICT=1  # fail if filter cannot load
+# Applied by runner after env/path jail, before agent exec (internal/sandbox).
+#
+# External wrappers (this script) prefer (in order):
 #   1) bwrap + --seccomp FD   (if AI_CLOUDHUB_SECCOMP_BPF is a compiled BPF filter)
 #   2) firejail --seccomp
 #   3) docker run --security-opt seccomp=scripts/seccomp/runner-default.json (if AI_CLOUDHUB_SECCOMP_DOCKER=1)
 #   4) runner-bwrap.sh → runner-netns.sh → plain
 #
 # Profile JSON: scripts/seccomp/runner-default.json
-# Full in-process BPF (libseccomp-golang) is intentionally deferred — see docs/KNOWN_LIMITATIONS.md.
 # D-001: runs only on user machines; no platform mega runner pool.
 
 set -euo pipefail

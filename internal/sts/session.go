@@ -15,10 +15,12 @@ import (
 
 // Session is a short-lived mount grant for a runtime (hubd/runner).
 // MVP: embeds resolved S3 creds with hard expiry; Runtime must refresh before ExpiresAt.
-// Optional native STS (best-effort, always falls back to embedded short session):
-//   - AI_CLOUDHUB_MINIO_STS=1 + type=minio → MinIO AssumeRole (source=minio_sts)
-//   - AI_CLOUDHUB_AWS_STS=1 + type=s3 looking like AWS → AWS AssumeRole (source=aws_sts)
-// Other vendors keep embedded/refresh credentials; see Session.Note and docs/KNOWN_LIMITATIONS.md.
+// Optional native / S3-compatible STS (best-effort, always falls back to embedded short session):
+//   - AI_CLOUDHUB_MINIO_STS=1 or AI_CLOUDHUB_S3_STS=1 + type=minio → source=minio_sts
+//   - AI_CLOUDHUB_AWS_STS=1 + type=s3 looking like AWS → source=aws_sts
+//   - AI_CLOUDHUB_S3_STS=1 or AI_CLOUDHUB_<VENDOR>_STS=1 for r2/b2/oss/cos/qiniu/oracle
+//     and non-AWS type=s3 → source=s3_sts
+// See Session.Note and docs/STS.md / docs/KNOWN_LIMITATIONS.md.
 type Session struct {
 	ID         string            `json:"id"`
 	UserID     string            `json:"user_id"`
@@ -31,7 +33,7 @@ type Session struct {
 	Manifest   manifest.Document `json:"manifest"`
 	Token      string            `json:"token"` // opaque; Runtime presents on refresh/report
 	// Source describes how Spec credentials were obtained:
-	// "embedded" | "refresh" | "minio_sts" | "aws_sts".
+	// "embedded" | "refresh" | "minio_sts" | "aws_sts" | "s3_sts".
 	Source string `json:"source,omitempty"`
 	// Note is an optional human-readable hint (e.g. why native STS was skipped/failed).
 	Note string `json:"note,omitempty"`
