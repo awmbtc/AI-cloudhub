@@ -816,6 +816,98 @@ components:
         presign_error: { type: string }
         note: { type: string }
 
+    Snapshot:
+      type: object
+      properties:
+        id: { type: string }
+        drive_id: { type: string }
+        agent_id: { type: string }
+        label: { type: string }
+        note: { type: string }
+        payload:
+          type: object
+          description: |
+            Opaque JSON: kind, drive map, captured_at, optional manifest,
+            optional objects inventory (include_objects).
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    SnapshotCreate:
+      type: object
+      properties:
+        label: { type: string }
+        note: { type: string }
+        agent_id: { type: string }
+        manifest:
+          type: object
+          additionalProperties: true
+          description: Optional client-supplied manifest blob
+        include_objects:
+          type: boolean
+          description: Capture live object inventory under drive prefix (metadata only)
+        max_objects:
+          type: integer
+          description: Inventory cap (default 1000, max 5000)
+
+    ItemsSnapshot:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Snapshot'
+
+    SnapshotDiff:
+      type: object
+      properties:
+        drive_id: { type: string }
+        snapshot_a: { type: string }
+        snapshot_b: { type: string }
+        a_has_objects: { type: boolean }
+        b_has_objects: { type: boolean }
+        error: { type: string }
+        a_error: { type: string }
+        b_error: { type: string }
+        added:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        removed:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        changed:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        summary:
+          type: object
+          additionalProperties:
+            type: integer
+
+    SnapshotRestoreResult:
+      type: object
+      properties:
+        snapshot_id: { type: string }
+        drive_id: { type: string }
+        label: { type: string }
+        note: { type: string }
+        created_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+        applied: { type: boolean }
+        drive:
+          $ref: '#/components/schemas/Drive'
+        hint: { type: string }
+
     ItemsBinding:
       type: object
       properties:
@@ -2027,6 +2119,222 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/snapshots:
+    get:
+      tags: [drives]
+      summary: List metadata snapshots for a drive (newest first, cap 50)
+      description: |
+        Scope `drive.read`. Snapshots are control-plane metadata only
+        (drive map + optional inventory); not full object versioning.
+      operationId: listDriveSnapshots
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Snapshot list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [drives]
+      summary: Create metadata snapshot
+      description: |
+        Scope `drive.write`. Optional `include_objects=true` captures live S3
+        inventory under the drive prefix (metadata only; soft-fails if store down).
+        Max 50 snapshots per drive.
+      operationId: createDriveSnapshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnapshotCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/snapshots/diff:
+    get:
+      tags: [drives]
+      summary: Diff object inventories of two snapshots
+      description: |
+        Scope `drive.read`. Both snapshots should have been created with
+        `include_objects=true`. If inventory is missing, response still 200 with `error`.
+      operationId: diffDriveSnapshots
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: a
+          in: query
+          required: true
+          description: Snapshot id A
+          schema: { type: string }
+        - name: b
+          in: query
+          required: true
+          description: Snapshot id B
+          schema: { type: string }
+      responses:
+        '200':
+          description: Diff result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotDiff'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/snapshots/{sid}:
+    get:
+      tags: [drives]
+      summary: Get one snapshot
+      operationId: getDriveSnapshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [drives]
+      summary: Delete snapshot
+      description: Scope `drive.write`.
+      operationId: deleteDriveSnapshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusDeleted'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/drives/{id}/snapshots/{sid}/restore:
+    post:
+      tags: [drives]
+      summary: Preview or apply drive metadata from a snapshot
+      description: |
+        Scope `drive.write`. Default is preview (`applied=false`).
+        Pass `apply=true` (body or query) to write name/prefix/mount_point/region
+        from `payload.drive`. Does **not** restore object bytes or change provider/bucket.
+      operationId: restoreDriveSnapshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+        - name: apply
+          in: query
+          schema: { type: string, enum: ["1", "true", "0", "false"] }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apply: { type: boolean }
+      responses:
+        '200':
+          description: Preview or applied result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotRestoreResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
 

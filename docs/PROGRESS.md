@@ -162,8 +162,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] OpenAPI：`/v1/drives/{id}/objects*`（list / version-hint / presign-get / restore-plan / restore-version）
 - [x] `scripts/smoke-objects.sh` + `make smoke-objects`（可选 `AI_CLOUDHUB_SMOKE_MINIO=1`）
 
+## 本波（Snapshot OpenAPI）
+
+- [x] OpenAPI：`/v1/drives/{id}/snapshots` list/create、`diff`、`{sid}` get/delete、`{sid}/restore`
+- [x] smoke-agent：list/get/preview/apply/diff/delete 覆盖
+
 ## 仍可后续
 
 - 内嵌 libseccomp-golang / 预生成 BPF 默认产物
 - 更多厂商原生 AssumeRole
-- Snapshot 路径补进 OpenAPI
+- Snapshot include_objects 在 live MinIO smoke 中硬断言 inventory

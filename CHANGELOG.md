@@ -36,6 +36,7 @@
 - MCP object_presign_get / object_restore_plan / object_restore_version
 - scripts/seccomp/runner-default.json + scripts/runner-seccomp.sh (Linux skeleton)
 - OpenAPI objects paths; scripts/smoke-objects.sh (make smoke-objects)
+- OpenAPI drive snapshots (list/create/get/delete/diff/restore); smoke-agent snapshot coverage
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

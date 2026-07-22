@@ -54,14 +54,38 @@ echo "== agent forbidden on d2 =="
 CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/drives/$D2" -H "Authorization: Bearer $ATOK")
 test "$CODE" = "403"
 
-echo "== snapshot + apply restore =="
-# change mount_point then restore from snapshot of original
+echo "== snapshot create / list / get / preview restore / apply / diff / delete =="
 SID=$("${CURL[@]}" -X POST "$API/v1/drives/$D1/snapshots" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
-  -d '{"label":"base"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-# mutate via put? we only have update through restore; use a second snapshot after "fake" by creating new snap after we only have restore apply
-# Apply restore should set prefix/mount back from snap
+  -d '{"label":"base","note":"smoke"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+# Second snap (no inventory) so diff reports missing objects gracefully
+SID2=$("${CURL[@]}" -X POST "$API/v1/drives/$D1/snapshots" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"label":"later"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+
+N=$("${CURL[@]}" "$API/v1/drives/$D1/snapshots" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["items"]))')
+test "$N" -ge 2
+
+"${CURL[@]}" "$API/v1/drives/$D1/snapshots/$SID" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("label")=="base", d; print("get ok")'
+
+# Preview restore (no apply)
+"${CURL[@]}" -X POST "$API/v1/drives/$D1/snapshots/$SID/restore" -H "Authorization: Bearer $TOK" \
+  -H 'Content-Type: application/json' -d '{}' \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("applied") is False, d; assert "payload" in d; print("preview ok")'
+
+# Apply restore should rehydrate soft fields from payload.drive
 OUT=$("${CURL[@]}" -X POST "$API/v1/drives/$D1/snapshots/$SID/restore?apply=true" -H "Authorization: Bearer $TOK")
 echo "$OUT" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("applied") is True, d; print("applied ok", d["drive"]["name"])'
+
+# Diff without inventory → 200 + error field
+"${CURL[@]}" "$API/v1/drives/$D1/snapshots/diff?a=$SID&b=$SID2" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("a_has_objects") is False; assert "error" in d; print("diff no-inv ok")'
+
+# Delete second snapshot
+"${CURL[@]}" -X DELETE "$API/v1/drives/$D1/snapshots/$SID2" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; assert json.load(sys.stdin).get("status")=="deleted"; print("delete ok")'
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/drives/$D1/snapshots/$SID2" -H "Authorization: Bearer $TOK")
+test "$CODE" = "404"
 
 echo "== session manifest v2 =="
 "${CURL[@]}" -X POST "$API/v1/drives/$D1/session" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
