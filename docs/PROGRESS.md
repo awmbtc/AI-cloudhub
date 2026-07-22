@@ -191,7 +191,14 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 规则：deny/allow、path_deny、drive/agent、observe 模式
 - [x] 接入 `allowAgentDrive` + `GET /v1/admin/policy`；docs/POLICY.md
 
+## 本波（Policy jobs + smoke + OpenAPI）
+
+- [x] Job create/claim/complete/cancel：scope `job.run` + `CheckAccess(ActionJobRun)`
+- [x] `scripts/smoke-policy.sh` / `make smoke-policy`
+- [x] OpenAPI `GET /v1/admin/policy`
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
 - OPA/Rego 或远程 PDP（刻意未做）
+- ClaimNext 后若 drive 被拒可自动释放 job（当前 403 后 job 可能仍为 claimed）

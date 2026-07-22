@@ -1382,6 +1382,51 @@ paths:
                   limit: { type: integer }
                   user_id: { type: string }
                   action: { type: string }
+
+  /v1/admin/policy:
+    get:
+      tags: [admin]
+      summary: External policy file status (admin)
+      description: |
+        Returns load status for `AI_CLOUDHUB_POLICY_FILE`. Built-in scope/drive/path
+        checks always apply. Pass `rules=1` to include the parsed document.
+        See docs/POLICY.md.
+      operationId: adminGetPolicy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rules
+          in: query
+          required: false
+          description: "1|true to include full policy document"
+          schema: { type: string, enum: ["1", "true", "0", "false"] }
+      responses:
+        '200':
+          description: Policy status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: object
+                    properties:
+                      file_path: { type: string }
+                      loaded: { type: boolean }
+                      version: { type: integer }
+                      mode: { type: string, enum: [enforce, observe] }
+                      rule_count: { type: integer }
+                      reload_every: { type: string }
+                      mod_time: { type: string, format: date-time }
+                  document:
+                    type: object
+                    description: Present when rules=1
+                    additionalProperties: true
+                  note: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

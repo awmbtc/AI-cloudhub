@@ -64,6 +64,8 @@ Request
 
 Drive HTTP routes call `CheckAccess` with action derived from method (`GET` → read, mutating → write, `/session` → `drive.session`).
 
+Job routes (`POST /v1/jobs`, claim/complete/cancel) call `CheckAccess` with action `job.run` (and drive id when known). Agents need token scope `job.run` **and** pass file rules.
+
 ## Admin API
 
 ```http

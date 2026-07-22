@@ -51,6 +51,7 @@
 - Qiniu/Oracle STS source labels + per-vendor STS endpoint override; generic S3_STS_ENDPOINT
 - docs/SECCOMP.md netdeny arg-filter documentation
 - External JSON policy file (AI_CLOUDHUB_POLICY_FILE); admin GET /v1/admin/policy; docs/POLICY.md
+- Job routes enforce job.run scope + policy CheckAccess; make smoke-policy; OpenAPI admin/policy
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

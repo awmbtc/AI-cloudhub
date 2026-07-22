@@ -220,6 +220,9 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			writeErr(w, http.StatusBadRequest, "drive: "+err.Error())
 			return
 		}
+		if !s.allowAgentJob(w, r, in.DriveID) {
+			return
+		}
 		j, err := s.jobs.Create(userID, in)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -228,6 +231,15 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 		metrics.IncJobCreated()
 		writeJSON(w, http.StatusCreated, j)
 	case http.MethodGet:
+		// List is human-oriented; agents need job.run for pending claim workflows.
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+			if !s.requireScope(w, r, auth.ScopeJobRun) {
+				return
+			}
+			if !s.allowAgentJob(w, r, "") {
+				return
+			}
+		}
 		if r.URL.Query().Get("status") == "pending" {
 			region := r.URL.Query().Get("region")
 			writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.jobs.ListPending(userID, region)})
@@ -262,6 +274,14 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+			if !s.requireScope(w, r, auth.ScopeJobRun) {
+				return
+			}
+			if !s.allowAgentJob(w, r, j.DriveID) {
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, j)
 		return
 	}
@@ -269,6 +289,19 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 	case "claim":
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeJobRun) {
+			return
+		}
+		// Pre-check policy without drive (claim next) or with drive when known.
+		driveID := ""
+		if id != "next" {
+			if existing, err := s.jobs.Get(userID, id); err == nil {
+				driveID = existing.DriveID
+			}
+		}
+		if !s.allowAgentJob(w, r, driveID) {
 			return
 		}
 		// id == "next" → claim oldest pending
@@ -283,11 +316,27 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// Post-claim drive allowlist (ClaimNext only knows drive after claim).
+		if j != nil && j.DriveID != "" && !s.allowAgentJob(w, r, j.DriveID) {
+			// Best-effort: leave job claimed; agent cannot use session for forbidden drive.
+			// Prefer hard fail when policy denies drive after next-claim.
+			return
+		}
 		metrics.IncJobClaimed()
 		writeJSON(w, http.StatusOK, j)
 	case "complete":
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeJobRun) {
+			return
+		}
+		driveID := ""
+		if existing, err := s.jobs.Get(userID, id); err == nil {
+			driveID = existing.DriveID
+		}
+		if !s.allowAgentJob(w, r, driveID) {
 			return
 		}
 		var body struct {
@@ -306,6 +355,16 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		if !s.requireScope(w, r, auth.ScopeJobRun) {
+			return
+		}
+		driveID := ""
+		if existing, err := s.jobs.Get(userID, id); err == nil {
+			driveID = existing.DriveID
+		}
+		if !s.allowAgentJob(w, r, driveID) {
+			return
+		}
 		j, err := s.jobs.Cancel(userID, id)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -315,6 +374,26 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 	default:
 		writeErr(w, http.StatusNotFound, "not found")
 	}
+}
+
+// allowAgentJob enforces job.run policy (+ optional drive allowlist) for agent tokens.
+// Humans always pass. driveID may be empty (list / claim next pre-check).
+func (s *Server) allowAgentJob(w http.ResponseWriter, r *http.Request, driveID string) bool {
+	pr := principalFrom(r)
+	if pr == nil || pr.AgentID == "" || s.agents == nil {
+		return true
+	}
+	req := policy.Request{
+		AgentID: pr.AgentID,
+		Scopes:  pr.Scopes,
+		Action:  policy.ActionJobRun,
+		DriveID: driveID,
+	}
+	if err := s.agents.CheckAccess(req); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
