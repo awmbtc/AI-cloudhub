@@ -63,7 +63,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			j, err := svc.ClaimNext(uid)
+			j, err := svc.ClaimNext(uid, "")
 			if err != nil {
 				return
 			}
@@ -86,7 +86,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	}
 
 	// Second ClaimNext must fail — no pending left.
-	if _, err := svc.ClaimNext(uid); err == nil {
+	if _, err := svc.ClaimNext(uid, ""); err == nil {
 		t.Fatal("expected ClaimNext to fail when nothing pending")
 	}
 
@@ -110,14 +110,14 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 		}
 		ids = append(ids, j.ID)
 	}
-	first, err := svc.ClaimNext(uid)
+	first, err := svc.ClaimNext(uid, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID != ids[0] {
 		t.Fatalf("expected oldest %s, got %s", ids[0], first.ID)
 	}
-	second, err := svc.ClaimNext(uid)
+	second, err := svc.ClaimNext(uid, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +133,12 @@ func TestReleaseToPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := svc.Claim(uid, j.ID)
+	claimed, err := svc.Claim(uid, j.ID, "agent-claim")
 	if err != nil || claimed.Status != StatusRunning {
 		t.Fatalf("claim: %v %+v", err, claimed)
+	}
+	if claimed.ClaimedByAgentID != "agent-claim" {
+		t.Fatalf("claimed_by=%q", claimed.ClaimedByAgentID)
 	}
 	rel, err := svc.ReleaseToPending(uid, j.ID, "drive not allowed for agent")
 	if err != nil {
@@ -148,9 +151,27 @@ func TestReleaseToPending(t *testing.T) {
 		t.Fatalf("note %q", rel.Note)
 	}
 	// can claim again
-	again, err := svc.Claim(uid, j.ID)
+	again, err := svc.Claim(uid, j.ID, "agent-2")
 	if err != nil || again.Status != StatusRunning {
 		t.Fatalf("reclaim: %v %+v", err, again)
+	}
+	if again.ClaimedByAgentID != "agent-2" {
+		t.Fatalf("reclaim by %q", again.ClaimedByAgentID)
+	}
+}
+
+func TestCreateRecordsAgentID(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	j, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}, AgentID: "creator-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.AgentID != "creator-a" {
+		t.Fatalf("agent_id=%q", j.AgentID)
+	}
+	got, err := svc.Get("u", j.ID)
+	if err != nil || got.AgentID != "creator-a" {
+		t.Fatalf("get %+v err=%v", got, err)
 	}
 }
 
@@ -165,7 +186,7 @@ func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.ClaimNextFiltered(uid, func(driveID string) string {
+	got, err := svc.ClaimNextFiltered(uid, "runner-bot", func(driveID string) string {
 		if driveID == "forbidden" {
 			return "drive not allowed for agent"
 		}
@@ -176,6 +197,9 @@ func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	}
 	if got.ID != j2.ID || got.DriveID != "allowed" {
 		t.Fatalf("got %+v want j2=%s", got, j2.ID)
+	}
+	if got.ClaimedByAgentID != "runner-bot" {
+		t.Fatalf("claimed_by=%q", got.ClaimedByAgentID)
 	}
 	// j1 must be pending again (released)
 	back, err := svc.Get(uid, j1.ID)
@@ -193,7 +217,7 @@ func TestClaimNextFilteredAllDenied(t *testing.T) {
 	if _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.ClaimNextFiltered(uid, func(string) string { return "blocked" })
+	_, err := svc.ClaimNextFiltered(uid, "bot", func(string) string { return "blocked" })
 	if err == nil || !strings.Contains(err.Error(), "no claimable") {
 		t.Fatalf("err=%v", err)
 	}

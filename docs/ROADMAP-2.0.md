@@ -174,9 +174,10 @@ Deny:   .. 穿越、符号链接逃逸（尽力）、空路径
 
 ### M-B（2.0）
 
-- [ ] Policy 文件或表驱动  
-- [ ] Manifest permissions  
-- [ ] Audit 带 agent_id  
+- [x] Policy 文件或表驱动（`AI_CLOUDHUB_POLICY_FILE`，docs/POLICY.md）  
+- [x] Manifest permissions（v2 read/write prefixes）  
+- [x] Audit 带 agent_id  
+- [x] Job 挂 agent_id / claimed_by_agent_id（创建与 claim 可追溯）  
 
 ---
 

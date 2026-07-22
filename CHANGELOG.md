@@ -53,6 +53,7 @@
 - External JSON policy file (AI_CLOUDHUB_POLICY_FILE); admin GET /v1/admin/policy; docs/POLICY.md
 - Job routes enforce job.run scope + policy CheckAccess; make smoke-policy; OpenAPI admin/policy
 - ClaimNextFiltered + ReleaseToPending: policy/drive deny after claim returns job to pending
+- Jobs track agent_id (creator) and claimed_by_agent_id (claimer); store migrate + audit job.create
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

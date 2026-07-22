@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   status TEXT NOT NULL,
   region_hint TEXT,
   note TEXT,
+  agent_id TEXT,
+  claimed_by_agent_id TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
@@ -172,6 +174,8 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, c
 	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS read_prefixes TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS write_prefixes TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = p.db.Exec(`ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS agent_id TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS agent_id TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_by_agent_id TEXT`)
 	return nil
 }
 
@@ -771,18 +775,22 @@ func (p *Postgres) ListDevices(userID string) ([]*Device, error) {
 	return out, rows.Err()
 }
 
+const jobSelectColsPG = `id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,
+		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), created_at, updated_at`
+
 func (p *Postgres) CreateJob(j *Job) error {
 	_, err := p.db.Exec(
-		`INSERT INTO jobs (id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note, j.CreatedAt.UTC(), j.UpdatedAt.UTC(),
+		`INSERT INTO jobs (id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,agent_id,claimed_by_agent_id,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
+		j.AgentID, j.ClaimedByAgentID, j.CreatedAt.UTC(), j.UpdatedAt.UTC(),
 	)
 	return err
 }
 
 func (p *Postgres) GetJob(userID, id string) (*Job, error) {
 	row := p.db.QueryRow(
-		`SELECT id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,created_at,updated_at FROM jobs WHERE id=$1 AND user_id=$2`,
+		`SELECT `+jobSelectColsPG+` FROM jobs WHERE id=$1 AND user_id=$2`,
 		id, userID,
 	)
 	return scanJobPG(row)
@@ -790,7 +798,7 @@ func (p *Postgres) GetJob(userID, id string) (*Job, error) {
 
 func (p *Postgres) ListJobs(userID string) ([]*Job, error) {
 	rows, err := p.db.Query(
-		`SELECT id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,created_at,updated_at FROM jobs WHERE user_id=$1 ORDER BY created_at DESC`,
+		`SELECT `+jobSelectColsPG+` FROM jobs WHERE user_id=$1 ORDER BY created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -802,7 +810,7 @@ func (p *Postgres) ListJobs(userID string) ([]*Job, error) {
 
 func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 	rows, err := p.db.Query(
-		`SELECT id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,created_at,updated_at FROM jobs
+		`SELECT `+jobSelectColsPG+` FROM jobs
 		 WHERE user_id=$1 AND status IN ('pending','dispatched') ORDER BY created_at ASC`,
 		userID,
 	)
@@ -814,13 +822,13 @@ func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 }
 
 // ClaimPendingJob atomically claims via UPDATE ... WHERE status still claimable RETURNING.
-func (p *Postgres) ClaimPendingJob(userID, id string) (*Job, error) {
+func (p *Postgres) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC()
 	row := p.db.QueryRow(
-		`UPDATE jobs SET status='running', updated_at=$1
-		 WHERE id=$2 AND user_id=$3 AND status IN ('pending','dispatched')
-		 RETURNING id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,created_at,updated_at`,
-		now, id, userID,
+		`UPDATE jobs SET status='running', claimed_by_agent_id=$1, updated_at=$2
+		 WHERE id=$3 AND user_id=$4 AND status IN ('pending','dispatched')
+		 RETURNING `+jobSelectColsPG,
+		claimedByAgentID, now, id, userID,
 	)
 	j, err := scanJobPG(row)
 	if err != nil {
@@ -835,8 +843,10 @@ func (p *Postgres) ClaimPendingJob(userID, id string) (*Job, error) {
 
 func (p *Postgres) UpdateJob(j *Job) error {
 	res, err := p.db.Exec(
-		`UPDATE jobs SET drive_id=$1,binding_id=$2,mode=$3,command_json=$4,status=$5,region_hint=$6,note=$7,updated_at=$8 WHERE id=$9 AND user_id=$10`,
-		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note, j.UpdatedAt.UTC(), j.ID, j.UserID,
+		`UPDATE jobs SET drive_id=$1,binding_id=$2,mode=$3,command_json=$4,status=$5,region_hint=$6,note=$7,
+		 agent_id=$8,claimed_by_agent_id=$9,updated_at=$10 WHERE id=$11 AND user_id=$12`,
+		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
+		j.AgentID, j.ClaimedByAgentID, j.UpdatedAt.UTC(), j.ID, j.UserID,
 	)
 	if err != nil {
 		return err
@@ -917,7 +927,10 @@ func scanSnapshotPG(row interface{ Scan(dest ...any) error }) (*Snapshot, error)
 func scanJobPG(row scannable) (*Job, error) {
 	var j Job
 	var cmd string
-	if err := row.Scan(&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note, &j.CreatedAt, &j.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
+		&j.AgentID, &j.ClaimedByAgentID, &j.CreatedAt, &j.UpdatedAt,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("job not found")
 		}

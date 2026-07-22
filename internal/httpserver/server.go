@@ -223,12 +223,20 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 		if !s.allowAgentJob(w, r, in.DriveID) {
 			return
 		}
+		if pr := principalFrom(r); pr != nil {
+			in.AgentID = pr.AgentID
+		}
 		j, err := s.jobs.Create(userID, in)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		metrics.IncJobCreated()
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "job.create", j.ID, in.DriveID)
+		} else {
+			s.auth.Audit(userID, "job.create", j.ID, in.DriveID)
+		}
 		writeJSON(w, http.StatusCreated, j)
 	case http.MethodGet:
 		// List is human-oriented; agents need job.run for pending claim workflows.
@@ -298,11 +306,15 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		if !s.allowAgentJob(w, r, "") {
 			return
 		}
+		claimedBy := ""
+		if pr := principalFrom(r); pr != nil {
+			claimedBy = pr.AgentID
+		}
 		var j *job.Job
 		var err error
 		if id == "next" {
 			// Skip + release jobs whose drive the agent cannot access.
-			j, err = s.jobs.ClaimNextFiltered(userID, s.agentJobDriveDenyReason(r))
+			j, err = s.jobs.ClaimNextFiltered(userID, claimedBy, s.agentJobDriveDenyReason(r))
 		} else {
 			// Known id: pre-check drive when possible, claim, then re-check + release on deny.
 			driveID := ""
@@ -312,7 +324,7 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			if !s.allowAgentJob(w, r, driveID) {
 				return
 			}
-			j, err = s.jobs.Claim(userID, id)
+			j, err = s.jobs.Claim(userID, id, claimedBy)
 			if err == nil && j != nil {
 				if reason := s.agentJobDriveDenyReason(r)(j.DriveID); reason != "" {
 					if _, rerr := s.jobs.ReleaseToPending(userID, j.ID, reason); rerr != nil {

@@ -128,8 +128,12 @@ type Job struct {
 	Status     string
 	RegionHint string
 	Note       string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// AgentID is the agent that created the job (empty = human/API).
+	AgentID string
+	// ClaimedByAgentID is the agent that last claimed the job (empty = human runner).
+	ClaimedByAgentID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).
@@ -223,8 +227,9 @@ type Store interface {
 	ListJobs(userID string) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.
+	// claimedByAgentID is stored on the job (empty for human runners).
 	// Returns the updated job, or an error if not found / not claimable.
-	ClaimPendingJob(userID, id string) (*Job, error)
+	ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error)
 	UpdateJob(j *Job) error
 
 	// Snapshots (metadata only)

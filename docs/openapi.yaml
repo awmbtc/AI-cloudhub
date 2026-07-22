@@ -623,6 +623,12 @@ components:
           type: string
         binding_id:
           type: string
+        agent_id:
+          type: string
+          description: Agent that created the job (empty if human)
+        claimed_by_agent_id:
+          type: string
+          description: Agent that last claimed the job (empty if human runner)
         mode:
           type: string
         command:

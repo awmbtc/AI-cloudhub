@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   status TEXT NOT NULL,
   region_hint TEXT,
   note TEXT,
+  agent_id TEXT,
+  claimed_by_agent_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -186,6 +188,8 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, c
 		`ALTER TABLE agents ADD COLUMN read_prefixes TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE agents ADD COLUMN write_prefixes TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE audit_events ADD COLUMN agent_id TEXT`,
+		`ALTER TABLE jobs ADD COLUMN agent_id TEXT`,
+		`ALTER TABLE jobs ADD COLUMN claimed_by_agent_id TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -914,11 +918,15 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
+		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), created_at, updated_at`
+
 func (s *SQLite) CreateJob(j *Job) error {
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
+		j.AgentID, j.ClaimedByAgentID,
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -929,16 +937,14 @@ func (s *SQLite) CreateJob(j *Job) error {
 
 func (s *SQLite) GetJob(userID, id string) (*Job, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, created_at, updated_at
-		 FROM jobs WHERE id = ? AND user_id = ?`, id, userID,
+		`SELECT `+jobSelectCols+` FROM jobs WHERE id = ? AND user_id = ?`, id, userID,
 	)
 	return scanJob(row)
 }
 
 func (s *SQLite) ListJobs(userID string) ([]*Job, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, created_at, updated_at
-		 FROM jobs WHERE user_id = ? ORDER BY created_at DESC`, userID,
+		`SELECT `+jobSelectCols+` FROM jobs WHERE user_id = ? ORDER BY created_at DESC`, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -957,8 +963,7 @@ func (s *SQLite) ListJobs(userID string) ([]*Job, error) {
 
 func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, created_at, updated_at
-		 FROM jobs WHERE user_id = ? AND status IN ('pending','dispatched') ORDER BY created_at ASC`, userID,
+		`SELECT `+jobSelectCols+` FROM jobs WHERE user_id = ? AND status IN ('pending','dispatched') ORDER BY created_at ASC`, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -976,13 +981,13 @@ func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 }
 
 // ClaimPendingJob atomically claims via UPDATE ... WHERE status still claimable RETURNING.
-func (s *SQLite) ClaimPendingJob(userID, id string) (*Job, error) {
+func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	row := s.db.QueryRow(
-		`UPDATE jobs SET status = 'running', updated_at = ?
+		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, updated_at = ?
 		 WHERE id = ? AND user_id = ? AND status IN ('pending','dispatched')
-		 RETURNING id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, created_at, updated_at`,
-		now, id, userID,
+		 RETURNING `+jobSelectCols,
+		claimedByAgentID, now, id, userID,
 	)
 	j, err := scanJob(row)
 	if err != nil {
@@ -998,9 +1003,11 @@ func (s *SQLite) ClaimPendingJob(userID, id string) (*Job, error) {
 
 func (s *SQLite) UpdateJob(j *Job) error {
 	res, err := s.db.Exec(
-		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?, updated_at=?
+		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
+		 agent_id=?, claimed_by_agent_id=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
+		j.AgentID, j.ClaimedByAgentID,
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1085,7 +1092,8 @@ func scanJob(row scannable) (*Job, error) {
 	var j Job
 	var cmd, created, updated string
 	if err := row.Scan(
-		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note, &created, &updated,
+		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
+		&j.AgentID, &j.ClaimedByAgentID, &created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("job not found")

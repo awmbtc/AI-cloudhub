@@ -202,6 +202,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `ReleaseToPending` + `ClaimNextFiltered`：policy/drive 拒绝后回 pending
 - [x] claim by id 拒绝时同样释放
 
+## 本波（Job agent_id）
+
+- [x] `agent_id`（创建者）+ `claimed_by_agent_id`（领取者）；sqlite/pg soft migrate
+- [x] claim 路径写入 claimer；release 清空 claimer
+- [x] OpenAPI Job schema；ROADMAP M-B 勾选同步
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）

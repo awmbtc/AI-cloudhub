@@ -587,7 +587,7 @@ func (m *Memory) ListPendingJobs(userID string) ([]*Job, error) {
 }
 
 // ClaimPendingJob claims under the write mutex so only one caller wins.
-func (m *Memory) ClaimPendingJob(userID, id string) (*Job, error) {
+func (m *Memory) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j, ok := m.jobs[id]
@@ -598,6 +598,7 @@ func (m *Memory) ClaimPendingJob(userID, id string) (*Job, error) {
 		return nil, fmt.Errorf("job not claimable: %s", j.Status)
 	}
 	j.Status = "running"
+	j.ClaimedByAgentID = claimedByAgentID
 	j.UpdatedAt = time.Now().UTC()
 	return cloneJob(j), nil
 }

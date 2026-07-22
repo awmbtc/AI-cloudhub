@@ -25,17 +25,19 @@ const (
 
 // Job describes work for a user-side runner (BYOC).
 type Job struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
-	DriveID    string    `json:"drive_id"`
-	BindingID  string    `json:"binding_id,omitempty"`
-	Mode       string    `json:"mode"`
-	Command    []string  `json:"command"`
-	Status     Status    `json:"status"`
-	RegionHint string    `json:"region_hint,omitempty"`
-	Note       string    `json:"note,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	UserID           string    `json:"user_id"`
+	DriveID          string    `json:"drive_id"`
+	BindingID        string    `json:"binding_id,omitempty"`
+	Mode             string    `json:"mode"`
+	Command          []string  `json:"command"`
+	Status           Status    `json:"status"`
+	RegionHint       string    `json:"region_hint,omitempty"`
+	Note             string    `json:"note,omitempty"`
+	AgentID          string    `json:"agent_id,omitempty"`            // creator agent
+	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"` // last claimer agent
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // CreateInput for new job.
@@ -46,6 +48,8 @@ type CreateInput struct {
 	Command    []string `json:"command"`
 	RegionHint string   `json:"region_hint"`
 	Note       string   `json:"note"`
+	// AgentID set by control plane from principal (not client spoofable).
+	AgentID string `json:"-"`
 }
 
 // Service is a durable BYOC job queue.
@@ -93,6 +97,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		Status:      string(StatusPending),
 		RegionHint:  in.RegionHint,
 		Note:        note,
+		AgentID:     strings.TrimSpace(in.AgentID),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -144,8 +149,8 @@ func (s *Service) ListPending(userID, region string) []*Job {
 
 // ClaimNext claims the oldest pending job for the user (BYOC worker).
 // Lists claimable jobs, then tries atomic claim on each until one succeeds
-// (another worker may have claimed in between).
-func (s *Service) ClaimNext(userID string) (*Job, error) {
+// (another worker may have claimed in between). claimedByAgentID may be empty (human).
+func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
 		return nil, err
@@ -161,7 +166,7 @@ func (s *Service) ClaimNext(userID string) (*Job, error) {
 		if j.Status != string(StatusPending) && j.Status != string(StatusDispatched) {
 			continue
 		}
-		claimed, err := s.store.ClaimPendingJob(userID, j.ID)
+		claimed, err := s.store.ClaimPendingJob(userID, j.ID, claimedByAgentID)
 		if err != nil {
 			// Already claimed or gone — try next.
 			continue
@@ -172,8 +177,9 @@ func (s *Service) ClaimNext(userID string) (*Job, error) {
 }
 
 // Claim marks a pending job as running (atomic: only if still claimable).
-func (s *Service) Claim(userID, id string) (*Job, error) {
-	sj, err := s.store.ClaimPendingJob(userID, id)
+// claimedByAgentID may be empty (human runner).
+func (s *Service) Claim(userID, id, claimedByAgentID string) (*Job, error) {
+	sj, err := s.store.ClaimPendingJob(userID, id, claimedByAgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +201,7 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 		return nil, fmt.Errorf("job not releaseable (status=%s)", sj.Status)
 	}
 	sj.Status = string(StatusPending)
+	sj.ClaimedByAgentID = "" // clear claimer so another runner can take ownership
 	sj.UpdatedAt = time.Now().UTC()
 	reason = strings.TrimSpace(reason)
 	if reason != "" {
@@ -221,9 +228,10 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 // Jobs are filtered **before** claim using the pending list (avoids reclaim loops).
 // After a successful atomic claim, allow is re-checked; on deny the job is
 // ReleaseToPending and the scan continues. If allow is nil, behaves like ClaimNext.
-func (s *Service) ClaimNextFiltered(userID string, allow func(driveID string) string) (*Job, error) {
+// claimedByAgentID may be empty (human).
+func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(driveID string) string) (*Job, error) {
 	if allow == nil {
-		return s.ClaimNext(userID)
+		return s.ClaimNext(userID, claimedByAgentID)
 	}
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
@@ -246,7 +254,7 @@ func (s *Service) ClaimNextFiltered(userID string, allow func(driveID string) st
 			skipped++
 			continue
 		}
-		claimed, err := s.store.ClaimPendingJob(userID, cand.ID)
+		claimed, err := s.store.ClaimPendingJob(userID, cand.ID, claimedByAgentID)
 		if err != nil {
 			// Race: another worker took it.
 			continue
@@ -309,16 +317,18 @@ func jobFromStore(sj *store.Job) *Job {
 	var cmd []string
 	_ = json.Unmarshal(sj.CommandJSON, &cmd)
 	return &Job{
-		ID:         sj.ID,
-		UserID:     sj.UserID,
-		DriveID:    sj.DriveID,
-		BindingID:  sj.BindingID,
-		Mode:       sj.Mode,
-		Command:    cmd,
-		Status:     Status(sj.Status),
-		RegionHint: sj.RegionHint,
-		Note:       sj.Note,
-		CreatedAt:  sj.CreatedAt,
-		UpdatedAt:  sj.UpdatedAt,
+		ID:               sj.ID,
+		UserID:           sj.UserID,
+		DriveID:          sj.DriveID,
+		BindingID:        sj.BindingID,
+		Mode:             sj.Mode,
+		Command:          cmd,
+		Status:           Status(sj.Status),
+		RegionHint:       sj.RegionHint,
+		Note:             sj.Note,
+		AgentID:          sj.AgentID,
+		ClaimedByAgentID: sj.ClaimedByAgentID,
+		CreatedAt:        sj.CreatedAt,
+		UpdatedAt:        sj.UpdatedAt,
 	}
 }
