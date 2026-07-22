@@ -52,6 +52,7 @@
 - docs/SECCOMP.md netdeny arg-filter documentation
 - External JSON policy file (AI_CLOUDHUB_POLICY_FILE); admin GET /v1/admin/policy; docs/POLICY.md
 - Job routes enforce job.run scope + policy CheckAccess; make smoke-policy; OpenAPI admin/policy
+- ClaimNextFiltered + ReleaseToPending: policy/drive deny after claim returns job to pending
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

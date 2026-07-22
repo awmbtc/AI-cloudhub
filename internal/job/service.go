@@ -180,6 +180,93 @@ func (s *Service) Claim(userID, id string) (*Job, error) {
 	return jobFromStore(sj), nil
 }
 
+// ReleaseToPending returns a running job to pending so another BYOC runner can claim it.
+// Used when a claim succeeded but agent policy/drive allowlist rejects the job's drive.
+// Only transitions from running (or dispatched) → pending; terminal jobs are rejected.
+func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
+	sj, err := s.store.GetJob(userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	switch Status(sj.Status) {
+	case StatusRunning, StatusDispatched:
+		// ok
+	default:
+		return nil, fmt.Errorf("job not releaseable (status=%s)", sj.Status)
+	}
+	sj.Status = string(StatusPending)
+	sj.UpdatedAt = time.Now().UTC()
+	reason = strings.TrimSpace(reason)
+	if reason != "" {
+		note := strings.TrimSpace(sj.Note)
+		if note != "" {
+			note += " | "
+		}
+		note += "released: " + reason
+		// Cap note length to avoid unbounded growth from repeated release cycles.
+		if len(note) > 2000 {
+			note = note[len(note)-2000:]
+		}
+		sj.Note = note
+	}
+	if err := s.store.UpdateJob(sj); err != nil {
+		return nil, err
+	}
+	return jobFromStore(sj), nil
+}
+
+// ClaimNextFiltered claims the oldest pending job whose driveID passes allow.
+// allow(driveID) should return "" if allowed, or a short deny reason if not.
+//
+// Jobs are filtered **before** claim using the pending list (avoids reclaim loops).
+// After a successful atomic claim, allow is re-checked; on deny the job is
+// ReleaseToPending and the scan continues. If allow is nil, behaves like ClaimNext.
+func (s *Service) ClaimNextFiltered(userID string, allow func(driveID string) string) (*Job, error) {
+	if allow == nil {
+		return s.ClaimNext(userID)
+	}
+	list, err := s.store.ListPendingJobs(userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("no pending jobs")
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].CreatedAt.Before(list[j].CreatedAt)
+	})
+	var lastDeny string
+	var skipped int
+	for _, cand := range list {
+		if cand.Status != string(StatusPending) && cand.Status != string(StatusDispatched) {
+			continue
+		}
+		if reason := allow(cand.DriveID); reason != "" {
+			lastDeny = reason
+			skipped++
+			continue
+		}
+		claimed, err := s.store.ClaimPendingJob(userID, cand.ID)
+		if err != nil {
+			// Race: another worker took it.
+			continue
+		}
+		// Re-check after claim (policy may use richer context later).
+		if reason := allow(claimed.DriveID); reason != "" {
+			lastDeny = reason
+			if _, rerr := s.ReleaseToPending(userID, claimed.ID, reason); rerr != nil {
+				return nil, fmt.Errorf("%s (also failed to release job %s: %v)", reason, claimed.ID, rerr)
+			}
+			continue
+		}
+		return jobFromStore(claimed), nil
+	}
+	if lastDeny != "" {
+		return nil, fmt.Errorf("no claimable jobs for this agent (%d skipped by policy): %s", skipped, lastDeny)
+	}
+	return nil, fmt.Errorf("no pending jobs")
+}
+
 // Complete sets terminal status.
 func (s *Service) Complete(userID, id string, ok bool, note string) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)

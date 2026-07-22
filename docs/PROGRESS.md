@@ -197,8 +197,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `scripts/smoke-policy.sh` / `make smoke-policy`
 - [x] OpenAPI `GET /v1/admin/policy`
 
+## 本波（Claim release）
+
+- [x] `ReleaseToPending` + `ClaimNextFiltered`：policy/drive 拒绝后回 pending
+- [x] claim by id 拒绝时同样释放
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
 - OPA/Rego 或远程 PDP（刻意未做）
-- ClaimNext 后若 drive 被拒可自动释放 job（当前 403 后 job 可能仍为 claimed）

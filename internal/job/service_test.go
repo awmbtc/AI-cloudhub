@@ -1,6 +1,7 @@
 package job
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,5 +123,83 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 	}
 	if second.ID != ids[1] {
 		t.Fatalf("expected second oldest %s, got %s", ids[1], second.ID)
+	}
+}
+
+func TestReleaseToPending(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-rel"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.Claim(uid, j.ID)
+	if err != nil || claimed.Status != StatusRunning {
+		t.Fatalf("claim: %v %+v", err, claimed)
+	}
+	rel, err := svc.ReleaseToPending(uid, j.ID, "drive not allowed for agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Status != StatusPending {
+		t.Fatalf("status %s", rel.Status)
+	}
+	if !strings.Contains(rel.Note, "released:") {
+		t.Fatalf("note %q", rel.Note)
+	}
+	// can claim again
+	again, err := svc.Claim(uid, j.ID)
+	if err != nil || again.Status != StatusRunning {
+		t.Fatalf("reclaim: %v %+v", err, again)
+	}
+}
+
+func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-filt"
+	j1, err := svc.Create(uid, CreateInput{DriveID: "forbidden", Command: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j2, err := svc.Create(uid, CreateInput{DriveID: "allowed", Command: []string{"b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.ClaimNextFiltered(uid, func(driveID string) string {
+		if driveID == "forbidden" {
+			return "drive not allowed for agent"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != j2.ID || got.DriveID != "allowed" {
+		t.Fatalf("got %+v want j2=%s", got, j2.ID)
+	}
+	// j1 must be pending again (released)
+	back, err := svc.Get(uid, j1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Status != StatusPending {
+		t.Fatalf("j1 status %s want pending", back.Status)
+	}
+}
+
+func TestClaimNextFilteredAllDenied(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-alldeny"
+	if _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.ClaimNextFiltered(uid, func(string) string { return "blocked" })
+	if err == nil || !strings.Contains(err.Error(), "no claimable") {
+		t.Fatalf("err=%v", err)
+	}
+	// Job must still be pending (never stuck running).
+	list := svc.ListPending(uid, "")
+	if len(list) != 1 || list[0].Status != StatusPending {
+		t.Fatalf("pending after all-deny: %+v", list)
 	}
 }

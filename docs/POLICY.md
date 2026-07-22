@@ -66,6 +66,8 @@ Drive HTTP routes call `CheckAccess` with action derived from method (`GET` → 
 
 Job routes (`POST /v1/jobs`, claim/complete/cancel) call `CheckAccess` with action `job.run` (and drive id when known). Agents need token scope `job.run` **and** pass file rules.
 
+`POST /v1/jobs/next/claim` uses **ClaimNextFiltered**: if a claimed job’s drive is denied, the job is **released back to `pending`** (note annotated) and the next pending job is tried (up to 32). Direct `POST /v1/jobs/{id}/claim` also releases on post-claim deny.
+
 ## Admin API
 
 ```http

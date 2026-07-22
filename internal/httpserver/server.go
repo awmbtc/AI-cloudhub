@@ -294,32 +294,43 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		if !s.requireScope(w, r, auth.ScopeJobRun) {
 			return
 		}
-		// Pre-check policy without drive (claim next) or with drive when known.
-		driveID := ""
-		if id != "next" {
-			if existing, err := s.jobs.Get(userID, id); err == nil {
-				driveID = existing.DriveID
-			}
-		}
-		if !s.allowAgentJob(w, r, driveID) {
+		// Pre-check job.run policy without drive (still enforces global job denies).
+		if !s.allowAgentJob(w, r, "") {
 			return
 		}
-		// id == "next" → claim oldest pending
 		var j *job.Job
 		var err error
 		if id == "next" {
-			j, err = s.jobs.ClaimNext(userID)
+			// Skip + release jobs whose drive the agent cannot access.
+			j, err = s.jobs.ClaimNextFiltered(userID, s.agentJobDriveDenyReason(r))
 		} else {
+			// Known id: pre-check drive when possible, claim, then re-check + release on deny.
+			driveID := ""
+			if existing, gerr := s.jobs.Get(userID, id); gerr == nil {
+				driveID = existing.DriveID
+			}
+			if !s.allowAgentJob(w, r, driveID) {
+				return
+			}
 			j, err = s.jobs.Claim(userID, id)
+			if err == nil && j != nil {
+				if reason := s.agentJobDriveDenyReason(r)(j.DriveID); reason != "" {
+					if _, rerr := s.jobs.ReleaseToPending(userID, j.ID, reason); rerr != nil {
+						writeErr(w, http.StatusForbidden, reason+"; release failed: "+rerr.Error())
+						return
+					}
+					writeErr(w, http.StatusForbidden, reason)
+					return
+				}
+			}
 		}
 		if err != nil {
+			// Policy-filtered claim next often returns "no claimable jobs for this agent".
+			if strings.Contains(err.Error(), "no claimable") || strings.Contains(err.Error(), "for this agent") {
+				writeErr(w, http.StatusForbidden, err.Error())
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Post-claim drive allowlist (ClaimNext only knows drive after claim).
-		if j != nil && j.DriveID != "" && !s.allowAgentJob(w, r, j.DriveID) {
-			// Best-effort: leave job claimed; agent cannot use session for forbidden drive.
-			// Prefer hard fail when policy denies drive after next-claim.
 			return
 		}
 		metrics.IncJobClaimed()
@@ -379,21 +390,33 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 // allowAgentJob enforces job.run policy (+ optional drive allowlist) for agent tokens.
 // Humans always pass. driveID may be empty (list / claim next pre-check).
 func (s *Server) allowAgentJob(w http.ResponseWriter, r *http.Request, driveID string) bool {
-	pr := principalFrom(r)
-	if pr == nil || pr.AgentID == "" || s.agents == nil {
-		return true
-	}
-	req := policy.Request{
-		AgentID: pr.AgentID,
-		Scopes:  pr.Scopes,
-		Action:  policy.ActionJobRun,
-		DriveID: driveID,
-	}
-	if err := s.agents.CheckAccess(req); err != nil {
-		writeErr(w, http.StatusForbidden, err.Error())
+	if reason := s.agentJobDriveDenyReason(r)(driveID); reason != "" {
+		writeErr(w, http.StatusForbidden, reason)
 		return false
 	}
 	return true
+}
+
+// agentJobDriveDenyReason returns a function that checks job.run + drive for the request principal.
+// Returns empty string if allowed (or human), else a deny reason.
+// When driveID is empty, only ActionJobRun without drive is evaluated.
+func (s *Server) agentJobDriveDenyReason(r *http.Request) func(driveID string) string {
+	pr := principalFrom(r)
+	if pr == nil || pr.AgentID == "" || s.agents == nil {
+		return func(string) string { return "" }
+	}
+	return func(driveID string) string {
+		req := policy.Request{
+			AgentID: pr.AgentID,
+			Scopes:  pr.Scopes,
+			Action:  policy.ActionJobRun,
+			DriveID: driveID,
+		}
+		if err := s.agents.CheckAccess(req); err != nil {
+			return err.Error()
+		}
+		return ""
+	}
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
