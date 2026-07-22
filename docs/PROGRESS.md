@@ -173,7 +173,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 多厂商 S3 兼容 AssumeRole：`AI_CLOUDHUB_S3_STS` + per-vendor；`source=s3_sts`
 - [x] Live MinIO 硬断言 inventory：`make smoke-minio`（auto-start MinIO；include_objects + diff）
 
+## 本波（原生 STS + seccomp profile）
+
+- [x] Aliyun RAM STS：`source=aliyun_sts`（`AI_CLOUDHUB_OSS_NATIVE_STS` + RoleArn）
+- [x] Tencent CAM STS：`source=tencent_sts`（`AI_CLOUDHUB_COS_NATIVE_STS` + RoleArn）
+- [x] seccomp `default` / `strict` 档 + `docs/SECCOMP.md`
+
 ## 仍可后续
 
-- 厂商原生非 S3 STS（阿里云 STS REST / 腾讯 CAM 等，非 endpoint AssumeRole）
-- seccomp allowlist 持续收紧与审计
+- 其他厂商原生 STS（Qiniu/Oracle 账号体系）
+- seccomp 参数级网络过滤（AF_INET 细粒度）

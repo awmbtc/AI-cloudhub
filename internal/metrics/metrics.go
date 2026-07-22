@@ -19,6 +19,8 @@ var (
 	STSMinio    atomic.Uint64
 	STSAWS      atomic.Uint64
 	STSS3       atomic.Uint64 // s3_sts: S3-compatible AssumeRole (non-minio / non-aws)
+	STSAliyun   atomic.Uint64 // aliyun_sts: Aliyun RAM STS
+	STSTencent  atomic.Uint64 // tencent_sts: Tencent CAM STS
 	Snapshots   atomic.Uint64
 )
 
@@ -37,6 +39,10 @@ func IncSTSSource(source string) {
 		STSAWS.Add(1)
 	case "s3_sts":
 		STSS3.Add(1)
+	case "aliyun_sts":
+		STSAliyun.Add(1)
+	case "tencent_sts":
+		STSTencent.Add(1)
 	case "refresh":
 		STSRefresh.Add(1)
 	default:
@@ -72,6 +78,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"minio_sts\"} %d\n", STSMinio.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"aws_sts\"} %d\n", STSAWS.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"s3_sts\"} %d\n", STSS3.Load())
+	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"aliyun_sts\"} %d\n", STSAliyun.Load())
+	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"tencent_sts\"} %d\n", STSTencent.Load())
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_created_total BYOC jobs created\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_created_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_created_total %d\n", JobsCreated.Load())

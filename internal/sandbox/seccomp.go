@@ -28,3 +28,15 @@ func Strict() bool {
 		return false
 	}
 }
+
+// ProfileName returns the allowlist profile: "default" or "strict".
+// AI_CLOUDHUB_SECCOMP_PROFILE=strict|default (default when unset/unknown).
+func ProfileName() string {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_SECCOMP_PROFILE")))
+	switch v {
+	case "strict":
+		return "strict"
+	default:
+		return "default"
+	}
+}

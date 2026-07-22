@@ -9,20 +9,20 @@ import (
 	"github.com/elastic/go-seccomp-bpf/arch"
 )
 
-// runnerDefaultAllowlist is a deny-by-default allowlist for Go runtime + typical
-// agent child processes (I/O, mmap, futex, sockets, process control).
+// runnerBaseAllowlist is shared by default and strict profiles: Go runtime +
+// typical agent child processes (I/O, mmap, futex, sockets, process control).
 //
 // Dangerous calls such as mount, kexec_load, reboot, ptrace, pivot_root,
 // init_module, bpf (kernel), etc. are NOT listed and return EPERM.
 //
 // Names unknown on the current architecture are skipped at apply time so the
 // same list works on amd64 and arm64. This is NOT a production security audit.
-var runnerDefaultAllowlist = []string{
+var runnerBaseAllowlist = []string{
 	// process / threads
 	"brk", "arch_prctl", "prctl", "clone", "clone3", "fork", "vfork",
 	"execve", "execveat", "exit", "exit_group", "wait4", "waitid",
 	"getpid", "getppid", "gettid", "getuid", "geteuid", "getgid", "getegid",
-	"getgroups", "setgid", "setuid", "setresgid", "setresuid", "setgroups",
+	"getgroups",
 	"setpgid", "getpgid", "setsid", "set_tid_address", "set_robust_list",
 	"rseq", "sched_getaffinity", "sched_yield", "sched_getscheduler",
 	"sched_getparam", "sched_setscheduler", "sched_setaffinity",
@@ -46,8 +46,8 @@ var runnerDefaultAllowlist = []string{
 	"access", "faccessat", "faccessat2",
 	"readlink", "readlinkat", "symlink", "symlinkat",
 	"unlink", "unlinkat", "rename", "renameat", "renameat2",
-	"mkdir", "mkdirat", "rmdir", "mknod", "mknodat",
-	"chmod", "fchmod", "fchmodat", "chown", "fchown", "fchownat", "lchown",
+	"mkdir", "mkdirat", "rmdir",
+	"chmod", "fchmod", "fchmodat",
 	"umask", "utime", "utimes", "utimensat", "futimesat",
 	"copy_file_range", "sendfile", "splice", "tee", "vmsplice",
 	"getxattr", "fgetxattr", "lgetxattr", "listxattr", "flistxattr", "llistxattr",
@@ -62,10 +62,29 @@ var runnerDefaultAllowlist = []string{
 	"shutdown", "sendto", "sendmsg", "sendmmsg", "recvfrom", "recvmsg", "recvmmsg",
 	// misc userspace
 	"uname", "sysinfo", "times", "getrlimit", "setrlimit", "prlimit64", "getrusage",
-	"getrandom", "capget", "capset", "futex", "getpriority", "setpriority",
+	"getrandom", "capget", "futex", "getpriority", "setpriority",
 	// memfd (common in modern tooling)
 	"memfd_create",
 	"restart_syscall",
+}
+
+// runnerDefaultExtras are allowed only in profile=default (looser for legacy agents).
+var runnerDefaultExtras = []string{
+	"setgid", "setuid", "setresgid", "setresuid", "setgroups",
+	"capset",
+	"mknod", "mknodat",
+	"chown", "fchown", "fchownat", "lchown",
+}
+
+// runnerAllowlist returns the syscall names for the configured profile.
+func runnerAllowlist() []string {
+	if ProfileName() == "strict" {
+		return append([]string{}, runnerBaseAllowlist...)
+	}
+	out := make([]string, 0, len(runnerBaseAllowlist)+len(runnerDefaultExtras))
+	out = append(out, runnerBaseAllowlist...)
+	out = append(out, runnerDefaultExtras...)
+	return out
 }
 
 // ApplyRunnerDefault installs a deny-by-default seccomp BPF filter on the
@@ -76,6 +95,8 @@ var runnerDefaultAllowlist = []string{
 // Sets no_new_privs, which prevents later privilege gains (e.g. setuid
 // fusermount). Prefer applying immediately before the agent command so mount
 // setup is unaffected; cleanup umount may fail after apply — already best-effort.
+//
+// Profile: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict (see docs/SECCOMP.md).
 func ApplyRunnerDefault() error {
 	if !seccomp.Supported() {
 		return fmt.Errorf("sandbox: seccomp not supported by this kernel")
@@ -86,7 +107,7 @@ func ApplyRunnerDefault() error {
 		return fmt.Errorf("sandbox: seccomp arch: %w", err)
 	}
 
-	names := filterKnownSyscalls(info, runnerDefaultAllowlist)
+	names := filterKnownSyscalls(info, runnerAllowlist())
 	if len(names) == 0 {
 		return fmt.Errorf("sandbox: seccomp allowlist empty for arch %s", info.Name)
 	}

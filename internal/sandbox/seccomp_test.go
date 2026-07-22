@@ -40,6 +40,25 @@ func TestStrictRespectsEnv(t *testing.T) {
 	}
 }
 
+func TestProfileName(t *testing.T) {
+	t.Setenv("AI_CLOUDHUB_SECCOMP_PROFILE", "")
+	if ProfileName() != "default" {
+		t.Fatal(ProfileName())
+	}
+	t.Setenv("AI_CLOUDHUB_SECCOMP_PROFILE", "strict")
+	if ProfileName() != "strict" {
+		t.Fatal(ProfileName())
+	}
+	t.Setenv("AI_CLOUDHUB_SECCOMP_PROFILE", "STRICT")
+	if ProfileName() != "strict" {
+		t.Fatal(ProfileName())
+	}
+	t.Setenv("AI_CLOUDHUB_SECCOMP_PROFILE", "weird")
+	if ProfileName() != "default" {
+		t.Fatal(ProfileName())
+	}
+}
+
 func TestApplyRunnerDefaultNonLinuxNoop(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		t.Skip("linux applies a real filter; tested separately when needed")

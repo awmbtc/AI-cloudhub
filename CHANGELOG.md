@@ -46,6 +46,8 @@
 - In-process Linux seccomp (CGO-free): AI_CLOUDHUB_SECCOMP=1, optional STRICT; elastic/go-seccomp-bpf
 - Multi-vendor S3-compatible AssumeRole: AI_CLOUDHUB_S3_STS + per-vendor flags; session source s3_sts
 - Live MinIO inventory smoke: make smoke-minio (auto-start server; hard-assert include_objects + diff)
+- Aliyun RAM STS (aliyun_sts) + Tencent CAM STS (tencent_sts); pure-Go signing, best-effort
+- Seccomp profiles: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict; docs/SECCOMP.md
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

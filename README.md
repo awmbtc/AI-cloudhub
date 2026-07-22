@@ -142,10 +142,11 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 可选原生 / S3 兼容 STS（best-effort，失败一律回退 embedded 短时会话）：
 
 - `AI_CLOUDHUB_MINIO_STS=1` 或 `AI_CLOUDHUB_S3_STS=1`：`type=minio` → AssumeRole（`source=minio_sts`）
-- `AI_CLOUDHUB_AWS_STS=1`：`type=s3` 且 endpoint 像 AWS 时 → AWS AssumeRole（需 `AI_CLOUDHUB_AWS_STS_ROLE_ARN`；`source=aws_sts`）
-- `AI_CLOUDHUB_S3_STS=1`：自定义 S3 / R2 / B2 / OSS / COS / Qiniu / Oracle → S3 兼容 AssumeRole（`source=s3_sts`）
-- 或 per-vendor：`AI_CLOUDHUB_B2_STS` / `OSS` / `COS` / `QINIU` / `ORACLE` / `R2` `_STS=1`
-- 开关关闭时：`Session.Note` 说明如何开启；详见 [docs/STS.md](docs/STS.md)
+- `AI_CLOUDHUB_AWS_STS=1`：`type=s3` 且 endpoint 像 AWS 时 → AWS AssumeRole（需 RoleArn；`source=aws_sts`）
+- `AI_CLOUDHUB_OSS_NATIVE_STS=1`：阿里云 RAM STS（`source=aliyun_sts`，RoleArn `acs:ram::…`）
+- `AI_CLOUDHUB_COS_NATIVE_STS=1`：腾讯云 CAM STS（`source=tencent_sts`，RoleArn `qcs::cam::…`）
+- `AI_CLOUDHUB_S3_STS=1` 或 per-vendor：S3 兼容 AssumeRole（`source=s3_sts`）
+- 详见 [docs/STS.md](docs/STS.md) · seccomp 见 [docs/SECCOMP.md](docs/SECCOMP.md)
 
 ## 目录
 
