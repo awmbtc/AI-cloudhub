@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.1
+
+### Fixes
+- fix: Makefile `.PHONY` line break — missing newline glued `smoke-all` and `all:` targets, causing GNU make "multiple target patterns" and breaking CI `make smoke-all`
+
 ## v0.2.0
 
 2.0 control-plane close-out: agent identity, policy (JSON + optional OPA), multi-vendor STS, BYOS objects, production ops, multi-arch releases.

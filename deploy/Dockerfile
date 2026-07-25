@@ -14,8 +14,8 @@ RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=0.2.0
-# Override: docker build --build-arg VERSION=0.2.1
+ARG VERSION=0.2.1
+# Override: docker build --build-arg VERSION=0.2.2
 RUN CGO_ENABLED=0 GOOS=linux go build \
 	-trimpath \
 	-ldflags="-s -w -X github.com/awmbtc/AI-cloudhub/internal/version.Version=${VERSION}" \
