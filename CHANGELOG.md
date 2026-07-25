@@ -5,6 +5,11 @@
 ### Fixes
 - fix: Makefile `.PHONY` line break — missing newline glued `smoke-all` and `all:` targets, causing GNU make "multiple target patterns" and breaking CI `make smoke-all`
 
+### Docs (ops pack)
+- [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) — OSS / COS / Qiniu / OCI copy-paste runbooks
+- [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) — agent token + MCP + hubd in ~30 minutes
+- [docs/METRICS.md](docs/METRICS.md) + [deploy/grafana/](deploy/grafana/) — Prometheus scrape + importable Grafana dashboard
+
 ## v0.2.0
 
 2.0 control-plane close-out: agent identity, policy (JSON + optional OPA), multi-vendor STS, BYOS objects, production ops, multi-arch releases.
