@@ -966,6 +966,14 @@ components:
         version_id: { type: string }
         url: { type: string, format: uri }
         expires_in: { type: integer, format: int64 }
+        deadline:
+          type: integer
+          format: int64
+          description: Unix expiry for qiniu_download tokens
+        method:
+          type: string
+          enum: [s3_presign, qiniu_download]
+          description: How the URL was minted
         note: { type: string }
 
     ObjectRestorePlan:
@@ -2415,6 +2423,8 @@ paths:
       summary: Presigned GET URL (optional versionId); bytes client↔store only
       description: |
         Scope `drive.read`. Short-lived URL; control plane does not proxy the body.
+        For `type=qiniu` without `version_id`, returns native private download token
+        (`method=qiniu_download`). Otherwise S3-compatible presign (`method=s3_presign`).
       operationId: driveObjectPresignGet
       security:
         - bearerAuth: []

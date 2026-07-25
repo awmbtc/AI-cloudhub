@@ -8,6 +8,7 @@ import (
 
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
 	"github.com/awmbtc/AI-cloudhub/internal/s3store"
+	"github.com/awmbtc/AI-cloudhub/internal/sts"
 )
 
 // ObjectsInventory is a live listing of objects under a drive prefix.
@@ -95,6 +96,8 @@ func (s *Service) ObjectVersionHint(userID, driveID, key, versionID string) (map
 }
 
 // ObjectPresignGet returns a short-lived GET URL (optional versionId). Bytes go client↔storage.
+// For type=qiniu without version_id, prefers native private download token (HMAC URL).
+// With version_id (or non-qiniu), uses S3-compatible presign.
 func (s *Service) ObjectPresignGet(userID, driveID, key, versionID string, ttlMin int) (map[string]interface{}, error) {
 	m, resolved, k, err := s.resolveObjectKey(userID, driveID, key)
 	if err != nil {
@@ -107,6 +110,33 @@ func (s *Service) ObjectPresignGet(userID, driveID, key, versionID string, ttlMi
 	if ttl > 24*time.Hour {
 		ttl = 24 * time.Hour
 	}
+
+	// Qiniu native private download (non-S3 session) for object-level GET.
+	// Versioned GET is S3-only — fall through when version_id is set.
+	if resolved.Type == provider.TypeQiniu && strings.TrimSpace(versionID) == "" {
+		signed, deadline, err := sts.QiniuObjectSignedGet(
+			resolved.AccessKey, resolved.SecretKey, resolved.Endpoint, resolved.UseSSL, m.Bucket, k, ttl,
+		)
+		if err != nil {
+			return nil, err
+		}
+		expIn := deadline - time.Now().UTC().Unix()
+		if expIn < 0 {
+			expIn = int64(ttl.Seconds())
+		}
+		return map[string]interface{}{
+			"drive_id":   driveID,
+			"bucket":     m.Bucket,
+			"key":        k,
+			"version_id": versionID,
+			"url":        signed,
+			"expires_in": expIn,
+			"deadline":   deadline,
+			"method":     "qiniu_download",
+			"note":       "Qiniu private download token — client fetches URL directly; control plane does not proxy bytes.",
+		}, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	st, err := s3store.New(resolved.Endpoint, resolved.AccessKey, resolved.SecretKey, resolved.Region, resolved.UseSSL)
@@ -115,6 +145,7 @@ func (s *Service) ObjectPresignGet(userID, driveID, key, versionID string, ttlMi
 	}
 	u, err := st.PresignGetVersion(ctx, m.Bucket, k, versionID, ttl)
 	if err != nil {
+		// Last-resort for Qiniu with version_id: still cannot native-sign versions.
 		return nil, err
 	}
 	return map[string]interface{}{
@@ -124,6 +155,7 @@ func (s *Service) ObjectPresignGet(userID, driveID, key, versionID string, ttlMi
 		"version_id": versionID,
 		"url":        u.String(),
 		"expires_in": int64(ttl.Seconds()),
+		"method":     "s3_presign",
 		"note":       "Presigned GET — download directly from object store, not via control plane.",
 	}, nil
 }

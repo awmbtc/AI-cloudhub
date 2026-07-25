@@ -13,11 +13,54 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
 )
+
+// OCI Identity validation cache (short TTL) so session Issue does not hit the API every time.
+var (
+	ociValMu    sync.Mutex
+	ociValCache = map[string]ociValEntry{}
+)
+
+type ociValEntry struct {
+	user map[string]interface{}
+	at   time.Time
+}
+
+func ociIAMCacheTTL() time.Duration {
+	// AI_CLOUDHUB_OCI_IAM_CACHE_SEC (default 300). 0 disables cache.
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_OCI_IAM_CACHE_SEC"))
+	if v == "" {
+		return 5 * time.Minute
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 5 * time.Minute
+	}
+	if n == 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+func ociCacheKey(key *OCIAPIKey) string {
+	if key == nil {
+		return ""
+	}
+	return key.TenancyOCID + "|" + key.UserOCID + "|" + key.Fingerprint + "|" + key.Region
+}
+
+// ClearOCIValidateCache drops cached Identity results (tests).
+func ClearOCIValidateCache() {
+	ociValMu.Lock()
+	ociValCache = map[string]ociValEntry{}
+	ociValMu.Unlock()
+}
 
 // SourceOCIIAM labels best-effort OCI API-key (private key) identity validation /
 // session assist. Does not replace S3-compatible mount credentials when AK/SK present.
@@ -127,11 +170,24 @@ func OCISignHeaders(key *OCIAPIKey, method, host, pathAndQuery, dateRFC1123 stri
 
 // TryOCIValidateUser calls GET /20160918/users/{userId} to validate API key material.
 // Best-effort identity proof; does not mint S3 session keys.
+// Successful results are cached briefly (AI_CLOUDHUB_OCI_IAM_CACHE_SEC, default 300).
 // Override base with AI_CLOUDHUB_OCI_IDENTITY_ENDPOINT (tests).
 func TryOCIValidateUser(key *OCIAPIKey) (map[string]interface{}, error) {
 	if key == nil {
 		return nil, fmt.Errorf("oci key required")
 	}
+	ck := ociCacheKey(key)
+	ttl := ociIAMCacheTTL()
+	if ttl > 0 && ck != "" {
+		ociValMu.Lock()
+		if e, ok := ociValCache[ck]; ok && time.Since(e.at) < ttl {
+			cp := cloneStringMap(e.user)
+			ociValMu.Unlock()
+			return cp, nil
+		}
+		ociValMu.Unlock()
+	}
+
 	path := "/20160918/users/" + key.UserOCID
 	base := fmt.Sprintf("https://identity.%s.oraclecloud.com", key.Region)
 	if ep := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_OCI_IDENTITY_ENDPOINT")); ep != "" {
@@ -166,7 +222,23 @@ func TryOCIValidateUser(key *OCIAPIKey) (map[string]interface{}, error) {
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("oci identity json: %w", err)
 	}
+	if ttl > 0 && ck != "" {
+		ociValMu.Lock()
+		ociValCache[ck] = ociValEntry{user: cloneStringMap(out), at: time.Now()}
+		ociValMu.Unlock()
+	}
 	return out, nil
+}
+
+func cloneStringMap(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // applyOptionalOracleSTS: S3-compat first; optional native IAM validation via private key env.

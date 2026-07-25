@@ -46,6 +46,32 @@ func TestQiniuUploadToken(t *testing.T) {
 	}
 }
 
+func TestQiniuObjectDownloadBase(t *testing.T) {
+	// S3-compat host includes bucket in path
+	u := QiniuObjectDownloadBase("s3-cn-east-1.qiniucs.com", true, "mybucket", "a/b.txt")
+	if u != "https://s3-cn-east-1.qiniucs.com/mybucket/a/b.txt" {
+		t.Fatal(u)
+	}
+	// CDN-style: key only
+	u2 := QiniuObjectDownloadBase("cdn.example.com", true, "mybucket", "a/b.txt")
+	if u2 != "https://cdn.example.com/a/b.txt" {
+		t.Fatal(u2)
+	}
+}
+
+func TestQiniuObjectSignedGet(t *testing.T) {
+	u, deadline, err := QiniuObjectSignedGet("AK", "SK", "cdn.example.com", true, "b", "k/obj", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(u, "token=") || !strings.Contains(u, "e=") {
+		t.Fatal(u)
+	}
+	if deadline <= time.Now().Unix() {
+		t.Fatal(deadline)
+	}
+}
+
 func TestApplyOptionalQiniuDownloadToken(t *testing.T) {
 	t.Setenv("AI_CLOUDHUB_QINIU_STS", "0")
 	t.Setenv("AI_CLOUDHUB_S3_STS", "0")

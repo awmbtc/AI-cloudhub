@@ -96,7 +96,47 @@ func TestTryOCIValidateUserMock(t *testing.T) {
 	}
 }
 
+func TestTryOCIValidateUserCache(t *testing.T) {
+	ClearOCIValidateCache()
+	t.Cleanup(ClearOCIValidateCache)
+	key, _ := testOCIKey(t)
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_ = json.NewEncoder(w).Encode(map[string]string{"name": "cached-user", "id": key.UserOCID})
+	}))
+	defer srv.Close()
+	t.Setenv("AI_CLOUDHUB_OCI_IDENTITY_ENDPOINT", srv.URL)
+	t.Setenv("AI_CLOUDHUB_OCI_IAM_CACHE_SEC", "60")
+
+	u1, err := TryOCIValidateUser(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := TryOCIValidateUser(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Fatalf("expected 1 HTTP hit with cache, got %d", hits)
+	}
+	if u1["name"] != "cached-user" || u2["name"] != "cached-user" {
+		t.Fatalf("%v %v", u1, u2)
+	}
+
+	// Cache disabled → second call hits network again
+	ClearOCIValidateCache()
+	t.Setenv("AI_CLOUDHUB_OCI_IAM_CACHE_SEC", "0")
+	_, _ = TryOCIValidateUser(key)
+	_, _ = TryOCIValidateUser(key)
+	if hits != 3 {
+		t.Fatalf("expected 3 hits with cache off (1 prior + 2), got %d", hits)
+	}
+}
+
 func TestApplyOptionalOracleNativeIAM(t *testing.T) {
+	ClearOCIValidateCache()
+	t.Cleanup(ClearOCIValidateCache)
 	key, pemStr := testOCIKey(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"name": "u1", "id": key.UserOCID})

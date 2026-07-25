@@ -21,14 +21,32 @@ AI-cloudhub issues **short-lived mount sessions** for rclone/FUSE. Native / S3-c
 ## Qiniu private download token
 
 ```bash
-export AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1
+export AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1   # session.note sample assist
 ```
 
-On session Issue, control plane signs a **sample** private download URL with the provider AK/SK (deadline = session TTL).  
-`session.note` includes a truncated sample URL — replace `__sample_key__` with the real object key under the drive prefix.  
+### Object-level signed GET (preferred)
+
+`POST /v1/drives/{id}/objects/presign-get` for **type=qiniu** (no `version_id`) returns a native HMAC private download URL:
+
+```json
+{
+  "method": "qiniu_download",
+  "url": "https://cdn…/key?e=…&token=AK:…",
+  "deadline": 1710000000,
+  "expires_in": 900
+}
+```
+
+- Uses provider AK/SK + endpoint (S3-compat host → `host/bucket/key`; CDN host → `host/key`).
+- With `version_id` set → S3-compatible presign (`method=s3_presign`) instead.
+- Control plane never proxies object bytes.
+
+### Session assist
+
+When `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1`, session Issue may set `source=qiniu_download` and put a truncated sample URL in `session.note`.  
 Mount/rclone still uses S3-compat credentials when available (`AI_CLOUDHUB_QINIU_STS=1`).
 
-Helpers: `QiniuDownloadToken`, `QiniuSignedDownloadURL`, `QiniuUploadToken` in `internal/sts/qiniu_token.go`.
+Helpers: `QiniuDownloadToken`, `QiniuObjectSignedGet`, `QiniuUploadToken` in `internal/sts/qiniu_token.go`.
 
 ## OCI API-key IAM (private key)
 
@@ -44,6 +62,8 @@ export AI_CLOUDHUB_OCI_REGION=us-ashburn-1
 
 Best-effort: signs `GET /20160918/users/{userId}` to **validate** API-key material (`source=oci_iam`).  
 Does **not** auto-mint S3 customer secret keys or PARs in this build. Mount still prefers provider S3 AK/SK / S3-compat STS when present.
+
+Successful Identity lookups are **cached** briefly (`AI_CLOUDHUB_OCI_IAM_CACHE_SEC`, default `300`; `0` disables) so session Issue does not call OCI on every request.
 
 ## Env matrix (summary)
 

@@ -145,6 +145,42 @@ func qiniuDownloadHint(r *provider.Resolved, duration time.Duration) string {
 	)
 }
 
+// QiniuObjectDownloadBase builds the unsigned download URL for a single object key.
+//
+// Heuristic (honest, best-effort):
+//   - S3-compat host (qiniucs / s3.) → path-style https://host/bucket/key
+//   - CDN / custom download domain → https://host/key (bucket is DNS-bound)
+func QiniuObjectDownloadBase(endpoint string, useSSL bool, bucket, key string) string {
+	host := strings.TrimSpace(endpoint)
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimRight(host, "/")
+	if host == "" {
+		host = "download.example.com"
+	}
+	scheme := "https"
+	if !useSSL {
+		scheme = "http"
+	}
+	key = strings.TrimLeft(strings.TrimSpace(key), "/")
+	bucket = strings.TrimSpace(bucket)
+	lower := strings.ToLower(host)
+	// S3-compatible Kodo endpoints usually need bucket in the path.
+	if strings.Contains(lower, "qiniucs") || strings.HasPrefix(lower, "s3.") || strings.Contains(lower, ".s3.") {
+		if bucket != "" {
+			return scheme + "://" + host + "/" + bucket + "/" + key
+		}
+	}
+	return scheme + "://" + host + "/" + key
+}
+
+// QiniuObjectSignedGet signs a private download URL for one object key (native, non-S3).
+// Returns full URL with e= and token=, plus deadline unix.
+func QiniuObjectSignedGet(accessKey, secretKey, endpoint string, useSSL bool, bucket, key string, ttl time.Duration) (signedURL string, deadline int64, err error) {
+	base := QiniuObjectDownloadBase(endpoint, useSSL, bucket, key)
+	return QiniuSignedDownloadURL(accessKey, secretKey, base, ttl)
+}
+
 // QiniuUploadToken builds a simple upload (put) token with deadline.
 // policy JSON: {"scope":"bucket:keyPrefix","deadline":unix}
 func QiniuUploadToken(accessKey, secretKey, scope string, deadline int64) (string, error) {

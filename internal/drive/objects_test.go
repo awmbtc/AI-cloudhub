@@ -115,3 +115,45 @@ func TestObjectRestorePlanStructure(t *testing.T) {
 		t.Fatalf("expected presign or error: %v", out)
 	}
 }
+
+func TestObjectPresignGetQiniuNative(t *testing.T) {
+	st := store.NewMemory()
+	ps := provider.NewService(st)
+	rec, err := ps.Create("u1", provider.CreateInput{
+		Name: "kodo",
+		Type: provider.TypeQiniu,
+		Creds: provider.Credentials{
+			AccessKey: "AKQ",
+			SecretKey: "SKQ",
+			Endpoint:  "cdn.example.com",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := NewService(ps, st)
+	m, err := ds.Create("u1", CreateInput{
+		Name:       "qdrive",
+		ProviderID: rec.ID,
+		Bucket:     "bkt",
+		Prefix:     "p",
+		MountPoint: "/workspace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ds.ObjectPresignGet("u1", m.ID, "file.bin", "", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["method"] != "qiniu_download" {
+		t.Fatalf("method=%v", out["method"])
+	}
+	url, _ := out["url"].(string)
+	if !strings.Contains(url, "token=") || !strings.Contains(url, "file.bin") {
+		t.Fatalf("url=%s", url)
+	}
+	if out["key"] != "p/file.bin" {
+		t.Fatalf("key=%v", out["key"])
+	}
+}

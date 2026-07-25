@@ -166,4 +166,78 @@ CODE=$("${CURL[@]}" -o /tmp/aihub-job2.json -w '%{http_code}' -X POST "$API/v1/j
 test "$CODE" = "201"
 echo "human job ok"
 
-echo "OK policy smoke agent=$AID d1=$D1 d2=$D2"
+echo "== OPA: deny agent provider.write (restart with OPA_POLICY_FILE) =="
+OPA_FILE="$(mktemp /tmp/aihub-opa-XXXXXX.rego)"
+cat >"$OPA_FILE" <<'REGO'
+package aicloudhub.authz
+import rego.v1
+default allow := true
+allow := false if {
+  input.principal == "agent"
+  input.action == "provider.write"
+}
+REGO
+# Extend cleanup
+cleanup() {
+  if [[ -n "${API_PID:-}" ]]; then
+    kill "$API_PID" 2>/dev/null || true
+    wait "$API_PID" 2>/dev/null || true
+  fi
+  rm -f "$DB" "${DB}-wal" "${DB}-shm" "$POLICY_FILE" "${OPA_FILE:-}"
+}
+trap cleanup EXIT
+
+# Restart API with both JSON + OPA
+if [[ -n "${API_PID}" ]] && kill -0 "$API_PID" 2>/dev/null; then
+  kill "$API_PID" 2>/dev/null || true
+  wait "$API_PID" 2>/dev/null || true
+  API_PID=""
+  sleep 0.3
+fi
+HTTP_ADDR=":${API_PORT}" \
+  AI_CLOUDHUB_DB="$DB" \
+  AI_CLOUDHUB_POLICY_FILE="$POLICY_FILE" \
+  AI_CLOUDHUB_OPA_POLICY_FILE="$OPA_FILE" \
+  JWT_SECRET="${JWT_SECRET:-policy-smoke-jwt-secretxx}" \
+  ./.bin/api >/tmp/aihub-policy-api.log 2>&1 &
+API_PID=$!
+for _ in $(seq 1 50); do
+  if "${CURL[@]}" "$API/healthz" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+
+TOK=$("${CURL[@]}" -X POST "$API/v1/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"poladmin","password":"password1"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+# Fresh agent token (scopes include provider.write)
+AID2=$("${CURL[@]}" -X POST "$API/v1/agents" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"opabot","default_scopes":["provider.read","provider.write"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+ATOK2=$("${CURL[@]}" -X POST "$API/v1/agents/$AID2/token" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+
+POL2=$("${CURL[@]}" "$API/v1/admin/policy" -H "Authorization: Bearer $TOK")
+echo "$POL2" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+st=d.get("status") or {}
+assert st.get("opa_enabled") is True, d
+print("opa enabled path=", st.get("opa_path"))
+'
+
+CODE=$("${CURL[@]}" -o /tmp/aihub-prov.json -w '%{http_code}' -X POST "$API/v1/providers" \
+  -H "Authorization: Bearer $ATOK2" -H 'Content-Type: application/json' \
+  -d '{"name":"x","type":"minio","credentials":{"access_key":"a","secret_key":"bsecret","endpoint":"http://127.0.0.1:9000"}}')
+test "$CODE" = "403"
+python3 -c 'import json; d=json.load(open("/tmp/aihub-prov.json")); e=d.get("error",""); assert "opa" in e.lower() or "deny" in e.lower() or "provider" in e.lower(), d; print("opa provider.write deny ok:", e)'
+
+# Human still can create provider
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "$API/v1/providers" \
+  -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"human-p","type":"minio","credentials":{"access_key":"a","secret_key":"bsecret","endpoint":"http://127.0.0.1:9000"}}')
+test "$CODE" = "201"
+echo "human provider create ok under OPA"
+
+echo "OK policy+opa smoke agent=$AID d1=$D1 d2=$D2 opa_agent=$AID2"

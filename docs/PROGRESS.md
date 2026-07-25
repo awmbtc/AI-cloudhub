@@ -260,5 +260,11 @@ curl -s localhost:8080/v1/runtime/check
 ### 剩余诚实边界（非“未做”）
 
 - **远程 PDP** / 每请求外部策略网络调用：刻意不做
-- **OCI PAR / S3 secret 自动铸造**：`oci_iam` 仅校验 API-key，挂盘仍靠 S3-compat AK/SK
-- **Qiniu 任意 key 下载 API**：当前为 session.note sample token，非完整对象级 presign 服务
+- **OCI PAR / S3 secret 自动铸造**：`oci_iam` 仅校验 API-key（短缓存），挂盘仍靠 S3-compat AK/SK
+- **Qiniu versioned 原生下载**：无 `version_id` 时 `presign-get` → `qiniu_download`；带 version 仍 S3 presign
+
+### 本波补强（三件套之后）
+
+- [x] Qiniu：`ObjectPresignGet` 原生按 key 签名（`method=qiniu_download`）
+- [x] OCI：Identity 校验短缓存（`AI_CLOUDHUB_OCI_IAM_CACHE_SEC`）
+- [x] smoke-policy 覆盖 OPA deny `provider.write`

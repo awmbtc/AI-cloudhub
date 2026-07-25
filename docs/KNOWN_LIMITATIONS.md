@@ -40,8 +40,8 @@
   失败永不阻断 Issue，一律回退 embedded 短时会话。
 
   **诚实边界（已落地但仍有限）：**
-  - **Qiniu `qiniu_download`：** 在 `session.note` 中附带 sample 私有下载 URL（HMAC）；**不**替代挂盘 S3 session，也**不**对任意 key 暴露完整 download API。
-  - **OCI `oci_iam`：** RSA API-key 校验 user 身份；**不**自动铸造 S3 customer secret / PAR。
+  - **Qiniu：** `POST …/objects/presign-get` 对 type=qiniu 返回原生 HMAC 私有下载 URL（`method=qiniu_download`）；session 侧可另开 note assist。**不**替代挂盘 S3 session；versioned GET 仍走 S3 presign。
+  - **OCI `oci_iam`：** RSA API-key 校验 user 身份（短缓存默认 5m）；**不**自动铸造 S3 customer secret / PAR。
   - 见 [STS.md](./STS.md)。
 
 ## Runtime
