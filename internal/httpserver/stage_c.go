@@ -187,12 +187,13 @@ func (s *Server) routeMarketplaceSub(w http.ResponseWriter, r *http.Request, use
 	}
 	id := parts[0]
 	if len(parts) == 2 && parts[1] == "install" && r.Method == http.MethodPost {
-		if !s.requireHuman(w, r) {
-			return
-		}
 		it, err := s.market.Get(id)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		// agent_template creates a new agent → human only; skill/manifest are payload+memory (agents OK).
+		if it.Kind == marketplace.KindAgentTemplate && !s.requireHuman(w, r) {
 			return
 		}
 		var res *marketplace.AgentInstallResult

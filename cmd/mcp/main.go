@@ -148,7 +148,8 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers":
+	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers",
+		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "list_lineage", "record_lineage":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -370,6 +371,132 @@ func toolRegistry() []toolMeta {
 			scopes: []string{auth.ScopeProviderRead, auth.ScopeProviderWrite},
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
+		// Stage C — memory / marketplace / graph / connectors / lineage (auth only at API today).
+		{
+			name: "list_marketplace", description: "List marketplace catalog (GET /v1/marketplace). Optional mine=true. Any authenticated principal.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"mine": map[string]interface{}{"type": "boolean", "description": "Only items published by current user"},
+				},
+			},
+		},
+		{
+			name: "install_marketplace", description: "Install catalog item (POST /v1/marketplace/{id}/install). skill/manifest OK for agents; agent_template is human-only. Paid items need status=paid purchase.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"item_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"item_id"},
+			},
+		},
+		{
+			name: "list_memory", description: "List Memory Kernel entries (GET /v1/memory). Agents only see their own agent_id rows.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"layer":    map[string]interface{}{"type": "string", "description": "working|episodic|semantic"},
+					"key":      map[string]interface{}{"type": "string"},
+					"drive_id": map[string]interface{}{"type": "string"},
+					"limit":    map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+		{
+			name: "put_memory", description: "Put a memory entry (POST /v1/memory). Agents force agent_id to self. Optional embedding for vector search.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"layer":     map[string]interface{}{"type": "string"},
+					"content":   map[string]interface{}{"type": "string"},
+					"key":       map[string]interface{}{"type": "string"},
+					"drive_id":  map[string]interface{}{"type": "string"},
+					"meta":      map[string]interface{}{"type": "object"},
+					"embedding": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "number"}},
+					"ttl_sec":   map[string]interface{}{"type": "integer"},
+				},
+				"required": []string{"content"},
+			},
+		},
+		{
+			name: "search_memory", description: "Vector search memories (POST /v1/memory/search). Client-supplied query embedding; cosine top-k.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "number"}},
+					"k":     map[string]interface{}{"type": "integer"},
+					"layer": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			name: "list_graph", description: "List identity graph edges (GET /v1/graph). Optional subject/object filters.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"subject": map[string]interface{}{"type": "string"},
+					"object":  map[string]interface{}{"type": "string"},
+					"limit":   map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+		{
+			name: "link_graph", description: "Upsert identity graph edge (POST /v1/graph): subject --relation--> object.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"subject":  map[string]interface{}{"type": "string"},
+					"relation": map[string]interface{}{"type": "string"},
+					"object":   map[string]interface{}{"type": "string"},
+					"meta":     map[string]interface{}{"type": "object"},
+				},
+				"required": []string{"subject", "relation", "object"},
+			},
+		},
+		{
+			name: "list_connectors", description: "List connector bindings (GET /v1/connectors). Non-secret config only; clone on BYOC runner.",
+			scopes: nil,
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "connectors_catalog", description: "List connector types (GET /v1/connectors/catalog).",
+			scopes: nil,
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "list_lineage", description: "List lineage events (GET /v1/lineage). Optional entity filter.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"entity": map[string]interface{}{"type": "string"},
+					"limit":  map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+		{
+			name: "record_lineage", description: "Append lineage event (POST /v1/lineage).",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"action": map[string]interface{}{"type": "string"},
+					"entity": map[string]interface{}{"type": "string"},
+					"parent": map[string]interface{}{"type": "string"},
+					"detail": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"action", "entity"},
+			},
+		},
 	}
 }
 
@@ -402,8 +529,9 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 	if !ok {
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
-	// Scope gate for tools that hit the API or declare scopes.
-	if len(meta.scopes) > 0 || name == "whoami" {
+	// Local-only tools skip token/scope gate; all API tools require token (empty scopes still OK for agents).
+	localOnly := name == "workspace_env" || name == "resolve_path"
+	if !localOnly {
 		if err := ensureScopes(api, token, pc, meta.scopes); err != nil {
 			return nil, err
 		}
@@ -591,6 +719,117 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolCancelJob(api, token, args.JobID)
 	case "list_providers":
 		return toolListProviders(api, token)
+	case "list_marketplace":
+		var args struct {
+			Mine bool `json:"mine"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolListMarketplace(api, token, args.Mine)
+	case "install_marketplace":
+		var args struct {
+			ItemID string `json:"item_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.ItemID) == "" {
+			return nil, fmt.Errorf("item_id required")
+		}
+		return toolInstallMarketplace(api, token, args.ItemID)
+	case "list_memory":
+		var args struct {
+			Layer   string `json:"layer"`
+			Key     string `json:"key"`
+			DriveID string `json:"drive_id"`
+			Limit   int    `json:"limit"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolListMemory(api, token, args.Layer, args.Key, args.DriveID, args.Limit)
+	case "put_memory":
+		var args struct {
+			Layer     string                 `json:"layer"`
+			Content   string                 `json:"content"`
+			Key       string                 `json:"key"`
+			DriveID   string                 `json:"drive_id"`
+			Meta      map[string]interface{} `json:"meta"`
+			Embedding []float64              `json:"embedding"`
+			TTLSec    int                    `json:"ttl_sec"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.Content) == "" {
+			return nil, fmt.Errorf("content required")
+		}
+		return toolPutMemory(api, token, args.Layer, args.Content, args.Key, args.DriveID, args.Meta, args.Embedding, args.TTLSec)
+	case "search_memory":
+		var args struct {
+			Query []float64 `json:"query"`
+			K     int       `json:"k"`
+			Layer string    `json:"layer"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if len(args.Query) == 0 {
+			return nil, fmt.Errorf("query embedding required")
+		}
+		return toolSearchMemory(api, token, args.Query, args.K, args.Layer)
+	case "list_graph":
+		var args struct {
+			Subject string `json:"subject"`
+			Object  string `json:"object"`
+			Limit   int    `json:"limit"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolListGraph(api, token, args.Subject, args.Object, args.Limit)
+	case "link_graph":
+		var args struct {
+			Subject  string                 `json:"subject"`
+			Relation string                 `json:"relation"`
+			Object   string                 `json:"object"`
+			Meta     map[string]interface{} `json:"meta"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.Subject) == "" || strings.TrimSpace(args.Relation) == "" || strings.TrimSpace(args.Object) == "" {
+			return nil, fmt.Errorf("subject, relation, object required")
+		}
+		return toolLinkGraph(api, token, args.Subject, args.Relation, args.Object, args.Meta)
+	case "list_connectors":
+		return toolListConnectors(api, token)
+	case "connectors_catalog":
+		return toolConnectorsCatalog(api, token)
+	case "list_lineage":
+		var args struct {
+			Entity string `json:"entity"`
+			Limit  int    `json:"limit"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolListLineage(api, token, args.Entity, args.Limit)
+	case "record_lineage":
+		var args struct {
+			Action string `json:"action"`
+			Entity string `json:"entity"`
+			Parent string `json:"parent"`
+			Detail string `json:"detail"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.Action) == "" || strings.TrimSpace(args.Entity) == "" {
+			return nil, fmt.Errorf("action and entity required")
+		}
+		return toolRecordLineage(api, token, args.Action, args.Entity, args.Parent, args.Detail)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -1019,7 +1258,7 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			{"name": "AI_CLOUDHUB_MODE", "meaning": "mount | sync_workspace | direct"},
 		},
 		"security": map[string]interface{}{
-			"mcp_scopes":  "Agent tokens need drive.read/write, job.run for jobs tools",
+			"mcp_scopes":  "Agent tokens need drive.read/write, job.run, provider.* for those tools; Stage C memory/graph/marketplace use authenticated token (skill install OK for agents)",
 			"path_jail":   "resolve_path and mount_point checked against workspace",
 			"runner_env":  "runner filters secrets; set AI_CLOUDHUB_PASS_TOKEN=1 to pass API token into agent",
 			"mcp_version": serverVersion,
@@ -1028,6 +1267,8 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			"whoami", "list_drives", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
 			"list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job",
+			"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory",
+			"list_graph", "link_graph", "list_connectors", "connectors_catalog", "list_lineage", "record_lineage",
 		},
 	}
 	out, err := toolResultJSON(doc)

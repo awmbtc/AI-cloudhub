@@ -28,9 +28,11 @@ DELETE /v1/marketplace/{id}   # human: unpublish own item
 
 | Kind | Behavior | Response highlights |
 |------|----------|---------------------|
-| `agent_template` | Creates user-owned agent via Agent Identity APIs | `agent_id`, `scopes`, `memory_id` |
-| `skill` | Payload-only (tool hints / docs); **no agent** | `kind=skill`, `payload`, `memory_id` |
-| `manifest` | Payload-only workspace skeleton; **no agent** | `kind=manifest`, `payload`, `memory_id` |
+| `agent_template` | Creates user-owned agent via Agent Identity APIs (**human session only**) | `agent_id`, `scopes`, `memory_id` |
+| `skill` | Payload-only (tool hints / docs); **no agent**; **agents may install** | `kind=skill`, `payload`, `memory_id` |
+| `manifest` | Payload-only workspace skeleton; **no agent**; **agents may install** | `kind=manifest`, `payload`, `memory_id` |
+
+MCP: `list_marketplace` / `install_marketplace` (see [MCP.md](./MCP.md)).
 
 **Paid gate:** listings with `price_cents > 0` require a purchase with `status=paid` (checkout + Stripe webhook or pay stub) before any install succeeds (`HasPaidAccess`).
 

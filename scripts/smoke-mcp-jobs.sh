@@ -66,7 +66,9 @@ for line in sys.stdin:
   d=json.loads(line)
   for t in (d.get("result") or {}).get("tools") or []:
     names.add(t["name"])
-need={"list_jobs","create_job","claim_next_job","complete_job","cancel_job","list_providers"}
+need={"list_jobs","create_job","claim_next_job","complete_job","cancel_job","list_providers",
+      "list_marketplace","install_marketplace","list_memory","put_memory","search_memory",
+      "list_graph","link_graph","list_connectors","connectors_catalog","list_lineage","record_lineage"}
 assert need <= names, names
 print("tools ok", sorted(need))
 '
@@ -174,6 +176,139 @@ for line in sys.stdin:
   body=json.loads((r.get("content") or [{}])[0].get("text") or "")
   assert len(body.get("items") or [])>=1, body
   print("providers", len(body["items"]))
+'
+
+echo "== MCP Stage C (memory / graph / marketplace skill / connectors / lineage) =="
+export AI_CLOUDHUB_TOKEN="$ATOK"
+# put_memory + list_memory
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"put_memory","arguments":{"layer":"semantic","key":"mcp.pref","content":"likes r2","embedding":[0.1,0.2,0.3]}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("id") and body.get("content")=="likes r2", body
+  open("/tmp/aihub-mcp-mem","w").write(body["id"])
+  print("put_memory ok", body["id"])
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_memory","arguments":{"query":[0.1,0.2,0.3],"k":3}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  hits=body.get("hits") or body.get("items") or []
+  assert len(hits)>=1, body
+  print("search_memory ok", len(hits))
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"link_graph","arguments":{"subject":"agent:'"$AID"'","relation":"prefers","object":"provider:r2"}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("relation")=="prefers", body
+  print("link_graph ok")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_graph","arguments":{"subject":"agent:'"$AID"'"}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert len(body.get("items") or [])>=1, body
+  print("list_graph ok")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_marketplace","arguments":{}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert any(i.get("id")=="sys.skill.qiniu_presign" for i in (body.get("items") or [])), body
+  print("list_marketplace ok")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"install_marketplace","arguments":{"item_id":"sys.skill.qiniu_presign"}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("kind")=="skill" and body.get("memory_id"), body
+  assert not body.get("agent_id"), body
+  print("install_marketplace skill ok", body["memory_id"])
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"connectors_catalog","arguments":{}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert any(i.get("type")=="git" for i in (body.get("items") or [])), body
+  print("connectors_catalog ok")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_lineage","arguments":{"action":"mcp.smoke","entity":"agent:'"$AID"'","detail":"stage-c"}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("action")=="mcp.smoke", body
+  print("record_lineage ok")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_lineage","arguments":{"entity":"agent:'"$AID"'"}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert len(body.get("items") or [])>=1, body
+  print("list_lineage ok")
 '
 
 echo "== MCP object_presign_get (Qiniu native) =="

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### MCP Stage C tools
+- Tools: `list_marketplace`, `install_marketplace`, `list_memory`, `put_memory`, `search_memory`, `list_graph`, `link_graph`, `list_connectors`, `connectors_catalog`, `list_lineage`, `record_lineage`
+- API tools always require `AI_CLOUDHUB_TOKEN` (local-only: `workspace_env`, `resolve_path`)
+- Agents may install `skill` / `manifest`; `agent_template` remains human-only
+- `make smoke-mcp` covers Stage C tools; docs MCP / MARKETPLACE / KNOWN_LIMITATIONS (remote PDP) / ROADMAP C3b
+
 ## v0.2.2
 
 Stage C deepen: marketplace skill/manifest install, install side effects, BYOC git clone notes.

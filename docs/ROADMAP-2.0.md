@@ -80,7 +80,7 @@ User
 | C1 | 远程 PDP | **done (v0.3 slice)** | `AI_CLOUDHUB_PDP_URL` HTTP POST；fail-open / observe / strict |
 | C2 | OCI PAR + Customer Secret 铸造 | **done (best-effort)** | `AI_CLOUDHUB_OCI_PAR` / `OCI_CREATE_SECRET`；非平台持有密钥 |
 | C3a | Memory Kernel v0 | **done** | `internal/memkernel` + `/v1/memory*`（working/episodic/semantic） |
-| C3b | Agent Marketplace v0 | **done** | `internal/marketplace` + `/v1/marketplace*` + install template |
+| C3b | Agent Marketplace v0 | **done** | catalog + publish + checkout/pay stub；install `agent_template`（人）/ `skill`·`manifest`（人/agent）+ memory/graph 副作用 |
 | C3c | 模块边界 / 逻辑微服务 | **done** | `GET /v1/modules` + [MODULES.md](./MODULES.md)；**默认仍 monorepo 单进程** |
 | C3d | 多进程部署形态 | **done (replicas)** | `docker-compose.modular.yml` 双 api + edge；非默认强拆领域服务 |
 | C3e | Data Lineage v0 | **done** | `/v1/lineage` |

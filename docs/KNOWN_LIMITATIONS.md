@@ -12,7 +12,7 @@
 - **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
   - **Devices：** agent token **一律 403**（`agent token cannot manage devices`；仅 hubd/人）。
   - **Bindings：** create/mutate 走 `allowAgentDrive`（scope + drive allowlist + policy）；**list 过滤**掉 agent 不可见的 drive。
-- **Policy：** 内置 scope + drive 白名单 + path 前缀；可选外部 JSON（`AI_CLOUDHUB_POLICY_FILE`）与可选 **OPA/Rego**（`AI_CLOUDHUB_OPA_POLICY_FILE`，见 [POLICY.md](./POLICY.md)）。**无** 远程 PDP / 每请求外部策略网络调用（刻意未做）。
+- **Policy：** 内置 scope + drive 白名单 + path 前缀；可选外部 JSON（`AI_CLOUDHUB_POLICY_FILE`）与可选 **OPA/Rego**（`AI_CLOUDHUB_OPA_POLICY_FILE`，见 [POLICY.md](./POLICY.md)）。可选 **远程 PDP**（`AI_CLOUDHUB_PDP_URL` HTTP allow/reason；默认 fail-open；observe/strict；**不**替客户托管 PDP）。
 - **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free；`PROFILE=default|strict|netdeny`；`SECCOMP_NET=deny` 时 **socket 仅 AF_UNIX**；`SECCOMP_STRICT=1` 加载失败中止。见 [SECCOMP.md](./SECCOMP.md)。
 - **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。Live 硬断言见 `make smoke-minio`。
 - **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选外部包装）。进程内 seccomp 与外部包装可叠加使用。

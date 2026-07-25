@@ -303,3 +303,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Runner：`clone failed: …` 始终进 complete note；`AI_CLOUDHUB_CLONE_STRICT=1` 则 job fail
 - [x] `smoke-stage-c`：free/paid skill、manifest、soft/strict clone-fail notes
 - [x] 版本钉 **0.2.2**（version.go / mcp / openapi / compose）+ tag `v0.2.2`
+
+### 本波（P0 文档 + P1 MCP Stage C）
+
+- [x] KNOWN_LIMITATIONS：远程 PDP 已落地（纠偏「无 PDP」）
+- [x] ROADMAP C3b：skill/manifest install 口径
+- [x] MCP Stage C 工具 11 个 + `cmd/mcp/stage_c.go`
+- [x] skill/manifest install 允许 agent token；agent_template 仍 human-only
+- [x] `smoke-mcp-jobs` 覆盖 Stage C；docs/MCP.md + CHANGELOG Unreleased
