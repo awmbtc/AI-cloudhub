@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.7
+  version: 0.2.8
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -694,6 +694,10 @@ components:
           type: integer
           format: int64
           description: Runner wall time in milliseconds (0 if not reported)
+        heartbeat_at:
+          type: string
+          format: date-time
+          description: Last claim or runner heartbeat while status=running (omitted when idle/terminal)
         created_at:
           type: string
           format: date-time
@@ -3447,6 +3451,36 @@ paths:
       responses:
         '200':
           description: Updated job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/{id}/heartbeat:
+    post:
+      tags: [jobs]
+      summary: Refresh BYOC job lease while running
+      description: |
+        Runner heartbeat. Jobs without a heartbeat for `AI_CLOUDHUB_JOB_LEASE_SEC`
+        (default 300) are returned to `pending` with note `released: lease expired`
+        on the next claim path (still BYOC — no platform pool).
+      operationId: heartbeatJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job with updated heartbeat_at
           content:
             application/json:
               schema:

@@ -3,7 +3,9 @@ package job
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,9 +42,11 @@ type Job struct {
 	// ExitCode process exit when reported by runner (nil = not set).
 	ExitCode *int `json:"exit_code,omitempty"`
 	// DurationMs runner wall time in milliseconds (0 = not reported).
-	DurationMs int64     `json:"duration_ms,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	// HeartbeatAt last claim/heartbeat while running (omitted when zero).
+	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // CreateInput for new job.
@@ -61,14 +65,46 @@ type CreateInput struct {
 // Service is a durable BYOC job queue.
 type Service struct {
 	store store.Store
+	// lease is how long a running job may sit without heartbeat before reclaim.
+	// Zero disables automatic lease reclaim (AI_CLOUDHUB_JOB_LEASE_SEC=0).
+	lease time.Duration
 }
 
 // NewService creates a job service backed by store.
+// Lease default 300s from AI_CLOUDHUB_JOB_LEASE_SEC (0 disables reclaim).
 func NewService(st store.Store) *Service {
 	if st == nil {
 		st = store.NewMemory()
 	}
-	return &Service{store: st}
+	return &Service{store: st, lease: leaseFromEnv()}
+}
+
+// SetLease overrides lease TTL (tests). Zero disables reclaim.
+func (s *Service) SetLease(d time.Duration) {
+	s.lease = d
+}
+
+// Lease returns the configured lease TTL (0 = disabled).
+func (s *Service) Lease() time.Duration {
+	return s.lease
+}
+
+func leaseFromEnv() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_LEASE_SEC"))
+	if v == "" {
+		return 300 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 300 * time.Second
+	}
+	if n <= 0 {
+		return 0
+	}
+	if n < 10 {
+		n = 10 // floor so short tests still work but not absurd thrash in prod misconfig
+	}
+	return time.Duration(n) * time.Second
 }
 
 // Create enqueues a job for user runners to claim.
@@ -173,7 +209,9 @@ func (s *Service) ListPending(userID, region string) []*Job {
 // ClaimNext claims the oldest pending job for the user (BYOC worker).
 // Lists claimable jobs, then tries atomic claim on each until one succeeds
 // (another worker may have claimed in between). claimedByAgentID may be empty (human).
+// Stale running jobs (no heartbeat within lease) are reclaimed first.
 func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
+	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
 		return nil, err
@@ -202,6 +240,7 @@ func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
 // Claim marks a pending job as running (atomic: only if still claimable).
 // claimedByAgentID may be empty (human runner).
 func (s *Service) Claim(userID, id, claimedByAgentID string) (*Job, error) {
+	_, _ = s.ReclaimStale(userID)
 	sj, err := s.store.ClaimPendingJob(userID, id, claimedByAgentID)
 	if err != nil {
 		return nil, err
@@ -209,8 +248,59 @@ func (s *Service) Claim(userID, id, claimedByAgentID string) (*Job, error) {
 	return jobFromStore(sj), nil
 }
 
+// Heartbeat refreshes lease on a running job. Runners should call periodically.
+func (s *Service) Heartbeat(userID, id string) (*Job, error) {
+	sj, err := s.store.GetJob(userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	if Status(sj.Status) != StatusRunning {
+		return nil, fmt.Errorf("job not running (status=%s)", sj.Status)
+	}
+	now := time.Now().UTC()
+	sj.HeartbeatAt = now
+	sj.UpdatedAt = now
+	if err := s.store.UpdateJob(sj); err != nil {
+		return nil, err
+	}
+	return jobFromStore(sj), nil
+}
+
+// ReclaimStale releases running jobs whose heartbeat is older than lease TTL.
+// Returns how many jobs were returned to pending. No-op when lease is disabled.
+func (s *Service) ReclaimStale(userID string) (int, error) {
+	if s.lease <= 0 {
+		return 0, nil
+	}
+	list, err := s.store.ListJobs(userID)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().UTC().Add(-s.lease)
+	n := 0
+	for _, sj := range list {
+		if Status(sj.Status) != StatusRunning {
+			continue
+		}
+		// Prefer HeartbeatAt; fall back to UpdatedAt for pre-lease rows.
+		ts := sj.HeartbeatAt
+		if ts.IsZero() {
+			ts = sj.UpdatedAt
+		}
+		if ts.IsZero() || !ts.Before(cutoff) {
+			continue
+		}
+		if _, err := s.ReleaseToPending(userID, sj.ID, "lease expired"); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
 // ReleaseToPending returns a running job to pending so another BYOC runner can claim it.
-// Used when a claim succeeded but agent policy/drive allowlist rejects the job's drive.
+// Used when a claim succeeded but agent policy/drive allowlist rejects the job's drive,
+// or when a lease expires (runner died without complete).
 // Only transitions from running (or dispatched) → pending; terminal jobs are rejected.
 func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
@@ -225,6 +315,7 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 	}
 	sj.Status = string(StatusPending)
 	sj.ClaimedByAgentID = "" // clear claimer so another runner can take ownership
+	sj.HeartbeatAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	reason = strings.TrimSpace(reason)
 	if reason != "" {
@@ -256,6 +347,7 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 	if allow == nil {
 		return s.ClaimNext(userID, claimedByAgentID)
 	}
+	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
 		return nil, err
@@ -329,6 +421,7 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	if in.DurationMs > 0 {
 		sj.DurationMs = in.DurationMs
 	}
+	sj.HeartbeatAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -363,6 +456,7 @@ func (s *Service) Cancel(userID, id string) (*Job, error) {
 		return nil, fmt.Errorf("job already finished")
 	}
 	sj.Status = string(StatusCancelled)
+	sj.HeartbeatAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -393,6 +487,10 @@ func jobFromStore(sj *store.Job) *Job {
 	if sj.ExitCode != nil {
 		v := *sj.ExitCode
 		j.ExitCode = &v
+	}
+	if !sj.HeartbeatAt.IsZero() {
+		t := sj.HeartbeatAt.UTC()
+		j.HeartbeatAt = &t
 	}
 	return j
 }

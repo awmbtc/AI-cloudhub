@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.7 已发布；hubd mode 优先级 + 挂载进程存活
+## 总览：v0.2.8 已发布；job lease/heartbeat + 结构化 complete
 
 | 阶段 | 状态 |
 |------|------|
@@ -361,3 +361,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Job `exit_code` / `duration_ms` store+API+runner+OpenAPI
 - [x] MCP `get_job` + complete 结构化字段；smoke-job / smoke-mcp
 - [x] smoke-sts Phase L：live MinIO STS（opt-in）
+
+### 本波（job lease + heartbeat）
+
+- [x] `heartbeat_at` soft migrate；claim 置位；complete/cancel/release 清空
+- [x] `POST /v1/jobs/{id}/heartbeat`；claim 路径 `ReclaimStale`（`AI_CLOUDHUB_JOB_LEASE_SEC`，默认 300）
+- [x] runner worker 心跳；MCP `heartbeat_job`；unit + smoke
+- [x] 版本钉 **0.2.8** + tag

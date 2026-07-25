@@ -50,7 +50,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.7` 多架构二进制；hubd mode + mount liveness | ✅ |
+| **发布** | `v0.2.8` 多架构二进制；job lease/heartbeat + structured complete | ✅ |
 
 ## 快速开始
 

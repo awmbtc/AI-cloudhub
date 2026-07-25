@@ -480,6 +480,27 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			s.auth.AuditAgent(userID, pr.AgentID, "job.complete", j.ID, detail)
 		}
 		writeJSON(w, http.StatusOK, j)
+	case "heartbeat":
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeJobRun) {
+			return
+		}
+		driveID := ""
+		if existing, err := s.jobs.Get(userID, id); err == nil {
+			driveID = existing.DriveID
+		}
+		if !s.allowAgentJob(w, r, driveID) {
+			return
+		}
+		j, err := s.jobs.Heartbeat(userID, id)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, j)
 	case "cancel":
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")

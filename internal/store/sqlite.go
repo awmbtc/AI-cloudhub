@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -273,6 +274,7 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE jobs ADD COLUMN connector_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN exit_code INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN duration_ms INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1003,14 +1005,18 @@ func parseTime(s string) time.Time {
 
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
-		 exit_code, COALESCE(duration_ms,0), created_at, updated_at`
+		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), created_at, updated_at`
 
 func (s *SQLite) CreateJob(j *Job) error {
+	hb := ""
+	if !j.HeartbeatAt.IsZero() {
+		hb = j.HeartbeatAt.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, heartbeat_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb,
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1068,10 +1074,10 @@ func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	row := s.db.QueryRow(
-		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, updated_at = ?
+		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, heartbeat_at = ?, updated_at = ?
 		 WHERE id = ? AND user_id = ? AND status IN ('pending','dispatched')
 		 RETURNING `+jobSelectCols,
-		claimedByAgentID, now, id, userID,
+		claimedByAgentID, now, now, id, userID,
 	)
 	j, err := scanJob(row)
 	if err != nil {
@@ -1086,12 +1092,16 @@ func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, err
 }
 
 func (s *SQLite) UpdateJob(j *Job) error {
+	hb := ""
+	if !j.HeartbeatAt.IsZero() {
+		hb = j.HeartbeatAt.UTC().Format(time.RFC3339Nano)
+	}
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
-		 agent_id=?, claimed_by_agent_id=?, connector_id=?, exit_code=?, duration_ms=?, updated_at=?
+		 agent_id=?, claimed_by_agent_id=?, connector_id=?, exit_code=?, duration_ms=?, heartbeat_at=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb,
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1543,12 +1553,12 @@ func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
 
 func scanJob(row scannable) (*Job, error) {
 	var j Job
-	var cmd, created, updated string
+	var cmd, created, updated, heartbeat string
 	var exitCode sql.NullInt64
 	var durationMs int64
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &created, &updated,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &heartbeat, &created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("job not found")
@@ -1561,6 +1571,9 @@ func scanJob(row scannable) (*Job, error) {
 		j.ExitCode = &v
 	}
 	j.DurationMs = durationMs
+	if strings.TrimSpace(heartbeat) != "" {
+		j.HeartbeatAt = parseTime(heartbeat)
+	}
 	j.CreatedAt = parseTime(created)
 	j.UpdatedAt = parseTime(updated)
 	return &j, nil

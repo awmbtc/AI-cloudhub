@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -158,9 +159,11 @@ func runWorker(api, token, mountPoint string) {
 			if j.ConnectorID != "" {
 				_ = os.Setenv("AI_CLOUDHUB_CONNECTOR_ID", j.ConnectorID)
 			}
+			stopHB := startJobHeartbeat(api, token, j.ID)
 			start := time.Now()
 			cloneNote, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
 			durMs := time.Since(start).Milliseconds()
+			stopHB()
 			ok := err == nil
 			note := cloneNote
 			exitCode := 0
@@ -231,6 +234,57 @@ func completeJob(api, token, id string, ok bool, note string, exitCode *int, dur
 		return err
 	}
 	defer res.Body.Close()
+	return nil
+}
+
+// startJobHeartbeat posts POST /v1/jobs/{id}/heartbeat until stop is called.
+// Interval from AI_CLOUDHUB_HEARTBEAT (duration, default 30s). No-op if id empty.
+func startJobHeartbeat(api, token, id string) (stop func()) {
+	if strings.TrimSpace(id) == "" {
+		return func() {}
+	}
+	interval := 30 * time.Second
+	if v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_HEARTBEAT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			interval = d
+		}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		// Immediate refresh so lease clock is current after claim latency.
+		_ = heartbeatJob(api, token, id)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if err := heartbeatJob(api, token, id); err != nil {
+					log.Printf("job %s heartbeat: %v", id, err)
+				}
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+func heartbeatJob(api, token, id string) error {
+	req, err := http.NewRequest(http.MethodPost, api+"/v1/jobs/"+id+"/heartbeat", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		b, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("HTTP %d: %s", res.StatusCode, b)
+	}
 	return nil
 }
 

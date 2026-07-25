@@ -65,6 +65,7 @@
 - 生产请设 `AI_CLOUDHUB_STRICT=1` + 强 `JWT_SECRET` + `AI_CLOUDHUB_MASTER_KEY` + `AI_CLOUDHUB_ALLOW_REGISTER=0`。
 - `/metrics` 默认可匿名；生产设 `AI_CLOUDHUB_METRICS_TOKEN`。
 - Job 为 BYOC 队列，**禁止**平台大规模 Runner 池（D-001）。
+- Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
 
 ## 产品
 

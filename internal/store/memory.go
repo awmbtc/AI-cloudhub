@@ -613,9 +613,11 @@ func (m *Memory) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, err
 	if j.Status != "pending" && j.Status != "dispatched" {
 		return nil, fmt.Errorf("job not claimable: %s", j.Status)
 	}
+	now := time.Now().UTC()
 	j.Status = "running"
 	j.ClaimedByAgentID = claimedByAgentID
-	j.UpdatedAt = time.Now().UTC()
+	j.HeartbeatAt = now
+	j.UpdatedAt = now
 	return cloneJob(j), nil
 }
 

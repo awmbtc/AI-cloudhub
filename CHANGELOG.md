@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+## v0.2.8
+
+Job structured complete + lease/heartbeat for BYOC runners; STS live smoke opt-in.
+
 ### Jobs
 - Structured complete: `exit_code` (nullable), `duration_ms` on Job + complete body
-- Soft migrate sqlite/postgres; runner reports exit + wall duration; MCP `complete_job` args
+- Soft migrate sqlite/postgres; runner reports exit + wall duration
+- Lease: `heartbeat_at`, `POST /v1/jobs/{id}/heartbeat`, reclaim stale running → pending
+- `AI_CLOUDHUB_JOB_LEASE_SEC` (default 300; `0` disables); runner `AI_CLOUDHUB_HEARTBEAT` interval
 
 ### MCP
 - `get_job` tool (`GET /v1/jobs/{id}`)
+- `heartbeat_job` tool
 
 ### STS
 - Phase L live MinIO STS path when `AI_CLOUDHUB_SMOKE_STS_LIVE=1` (docker auto-start or MINIO_ENDPOINT)

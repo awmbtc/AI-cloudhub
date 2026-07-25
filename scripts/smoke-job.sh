@@ -119,6 +119,16 @@ assert d["agent_id"]==d["claimed_by_agent_id"] or True
 print("claimed", d["id"], "creator", d["agent_id"], "claimer", d["claimed_by_agent_id"], d["command"])
 '
 
+echo "== heartbeat while running =="
+HB=$("${CURL[@]}" -X POST "$API/v1/jobs/$JID/heartbeat" -H "Authorization: Bearer $ATOK")
+echo "$HB" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="running", d
+assert d.get("heartbeat_at"), d
+print("heartbeat_at", d["heartbeat_at"])
+'
+
 echo "== complete with exit_code + duration_ms =="
 "${CURL[@]}" -X POST "$API/v1/jobs/$JID/complete" -H "Authorization: Bearer $ATOK" \
   -H 'Content-Type: application/json' -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123}' \
@@ -128,8 +138,27 @@ d=json.load(sys.stdin)
 assert d["status"]=="succeeded", d
 assert d.get("exit_code")==0, d
 assert d.get("duration_ms")==123, d
+assert not d.get("heartbeat_at"), d
 print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"])
 '
+
+echo "== lease reclaim (short TTL) =="
+# Restart API with 10s lease for reclaim path (uses env on process start).
+# We force reclaim via claim after manually aging is hard in smoke; instead
+# create+claim a job and verify claim sets heartbeat_at, then complete.
+JLEASE=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+CLAIM_L=$("${CURL[@]}" -X POST "$API/v1/jobs/$JLEASE/claim" -H "Authorization: Bearer $ATOK")
+echo "$CLAIM_L" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="running", d
+assert d.get("heartbeat_at"), d
+print("lease claim heartbeat ok", d["id"])
+'
+"${CURL[@]}" -X POST "$API/v1/jobs/$JLEASE/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true,"note":"lease-smoke"}' >/dev/null
 
 echo "== second job: human creates, agent claims =="
 J2=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \

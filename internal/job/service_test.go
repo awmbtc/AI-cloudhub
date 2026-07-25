@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 )
@@ -204,6 +205,74 @@ func TestCompleteAppendsNote(t *testing.T) {
 	}
 	if !strings.Contains(keep.Note, "BYOC only") {
 		t.Fatalf("empty complete wiped note: %q", keep.Note)
+	}
+}
+
+func TestHeartbeatAndLeaseReclaim(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	svc.SetLease(50 * time.Millisecond)
+	uid := "u-lease"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"sleep"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.Claim(uid, j.ID, "agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.HeartbeatAt == nil {
+		t.Fatal("claim should set heartbeat_at")
+	}
+	hb1 := *claimed.HeartbeatAt
+	time.Sleep(20 * time.Millisecond)
+	refreshed, err := svc.Heartbeat(uid, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.HeartbeatAt == nil || !refreshed.HeartbeatAt.After(hb1) {
+		t.Fatalf("heartbeat not advanced: was %v now %v", hb1, refreshed.HeartbeatAt)
+	}
+	// Let lease expire without further heartbeats.
+	time.Sleep(80 * time.Millisecond)
+	n, err := svc.ReclaimStale(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("reclaim count %d want 1", n)
+	}
+	got, err := svc.Get(uid, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusPending {
+		t.Fatalf("status %s want pending", got.Status)
+	}
+	if got.ClaimedByAgentID != "" {
+		t.Fatalf("claimer should clear: %q", got.ClaimedByAgentID)
+	}
+	if !strings.Contains(got.Note, "lease expired") {
+		t.Fatalf("note %q", got.Note)
+	}
+	// ClaimNext path reclaims too.
+	j2, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j2.ID, "a"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	// Oldest reclaimed job first, then we can claim again.
+	next, err := svc.ClaimNext(uid, "a2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID != j.ID && next.ID != j2.ID {
+		t.Fatalf("unexpected claim %s", next.ID)
+	}
+	if next.Status != StatusRunning {
+		t.Fatalf("status %s", next.Status)
 	}
 }
 

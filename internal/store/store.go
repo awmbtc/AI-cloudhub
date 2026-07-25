@@ -138,8 +138,10 @@ type Job struct {
 	ExitCode *int
 	// DurationMs wall time of runner execution in milliseconds (0 = not reported).
 	DurationMs int64
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// HeartbeatAt last claim or heartbeat while running (zero if not running / never claimed).
+	HeartbeatAt time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).
