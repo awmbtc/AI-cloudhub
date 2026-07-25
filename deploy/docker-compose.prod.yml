@@ -1,5 +1,14 @@
-# Optional production-ish stack for control plane only (no platform runner pool).
+# Production-ish control plane only (no platform runner pool — D-001).
 # Object storage remains BYOS on the user side.
+#
+# Required secrets (do not commit real values):
+#   export JWT_SECRET="$(openssl rand -hex 32)"
+#   export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"
+# Optional:
+#   export AI_CLOUDHUB_METRICS_TOKEN="$(openssl rand -hex 16)"
+#   export AI_CLOUDHUB_ALLOW_REGISTER=0   # after first admin bootstrap
+#
+# See docs/PRODUCTION.md
 services:
   api:
     build:
@@ -13,11 +22,21 @@ services:
       AI_CLOUDHUB_REDIS: redis://redis:6379/0
       AI_CLOUDHUB_REDIS_LIMIT: "120"
       AI_CLOUDHUB_REDIS_WINDOW_SEC: "60"
-      AI_CLOUDHUB_MASTER_KEY: ${AI_CLOUDHUB_MASTER_KEY:-change-me-use-openssl-rand}
-      JWT_SECRET: ${JWT_SECRET:-change-me}
+      AI_CLOUDHUB_STRICT: "1"
+      # After bootstrap, set AI_CLOUDHUB_ALLOW_REGISTER=0 in the host env / override.
+      AI_CLOUDHUB_ALLOW_REGISTER: ${AI_CLOUDHUB_ALLOW_REGISTER:-1}
+      AI_CLOUDHUB_MASTER_KEY: ${AI_CLOUDHUB_MASTER_KEY:?set AI_CLOUDHUB_MASTER_KEY}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      AI_CLOUDHUB_METRICS_TOKEN: ${AI_CLOUDHUB_METRICS_TOKEN:-}
+      # Optional policy / OPA (mount files and set paths):
+      # AI_CLOUDHUB_POLICY_FILE: /etc/aihub/policy.json
+      # AI_CLOUDHUB_OPA_POLICY_FILE: /etc/aihub/authz.rego
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -27,13 +46,16 @@ services:
       POSTGRES_DB: aihub
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Do not publish 5432 on a public host without a firewall.
+    expose:
+      - "5432"
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
+    restart: unless-stopped
 
 volumes:
   pgdata:

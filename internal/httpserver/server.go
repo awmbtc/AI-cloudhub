@@ -825,8 +825,20 @@ func (s *Server) allowAgentDrive(w http.ResponseWriter, r *http.Request, driveID
 		action = policy.ActionDriveWrite
 	}
 	// Session issuance is a read-capability action.
-	if strings.Contains(r.URL.Path, "/session") {
+	path := r.URL.Path
+	if strings.Contains(path, "/session") {
 		action = policy.ActionDriveSession
+	}
+	// Object helpers: most POSTs are read-side (presign/plan/hint); only restore-version mutates BYOS.
+	if strings.Contains(path, "/objects/") {
+		switch {
+		case strings.HasSuffix(path, "/restore-version") || strings.Contains(path, "/objects/restore-version"):
+			action = policy.ActionDriveWrite
+		case strings.Contains(path, "/presign-get"),
+			strings.Contains(path, "/restore-plan"),
+			strings.Contains(path, "/version-hint"):
+			action = policy.ActionDriveRead
+		}
 	}
 	req := policy.Request{
 		AgentID: pr.AgentID,

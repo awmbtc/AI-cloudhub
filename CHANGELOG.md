@@ -14,6 +14,9 @@
 - Qiniu object-level signed GET via `POST …/objects/presign-get` (`method=qiniu_download`)
 - OCI API-key IAM validation (`AI_CLOUDHUB_ORACLE_NATIVE_IAM` + private key env, source `oci_iam`) with short Identity cache
 - Optional OPA/Rego (`AI_CLOUDHUB_OPA_POLICY_FILE`, query `data.aicloudhub.authz.allow`); smoke-policy covers OPA
+- Production checklist (`docs/PRODUCTION.md`); prod compose requires `JWT_SECRET` / `MASTER_KEY`, enables STRICT
+- smoke-objects + smoke-mcp cover Qiniu offline `qiniu_download` presign
+- Fix: agent `drive.read` may POST object helpers (`presign-get` / `restore-plan` / `version-hint`); only `restore-version` needs write
 
 ### Close-out
 - 1.x→2.0 mainline closed: P0–P3, hardening waves 1–4, Stage A (Agent Identity + scopes + path jail), Stage B (drive allowlist, Policy Engine + `AI_CLOUDHUB_POLICY_FILE`, Manifest 2.0, audit.agent_id, Snapshot v0, sandbox env filter)

@@ -23,6 +23,9 @@
 | [docs/BUDGET-WOOL.md](docs/BUDGET-WOOL.md) | 穷部署 |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | **实现进度对照表** |
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
+| [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
+| [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
+| [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose） |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows 安装 WinFsp/rclone 与 hubd |
 | [protocols/workspace-manifest.schema.json](protocols/workspace-manifest.schema.json) | Agent Manifest schema |
 
@@ -59,7 +62,8 @@ export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"
 
 ./.bin/api
 ./scripts/smoke-p0.sh
-# 可选生产栈：docker compose -f deploy/docker-compose.prod.yml up -d
+# 可选生产栈（需先 export JWT_SECRET / AI_CLOUDHUB_MASTER_KEY，见 docs/PRODUCTION.md）：
+# docker compose -f deploy/docker-compose.prod.yml up -d --build
 ```
 
 ### Runtime
@@ -110,7 +114,7 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 | Tool | Scope | 作用 |
 |------|--------|------|
 | `whoami` / `list_drives` / `list_providers` | me / drive / provider | 身份与资源列表 |
-| `list_objects` / snapshot tools | drive.* | 对象清单与元数据快照 |
+| `list_objects` / `object_presign_get` / snapshot | drive.* | 清单；Qiniu 原生 / S3 预签名 GET |
 | `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` | job.run | BYOC 任务（用户 runner，D-001） |
 | `ensure_mounted_hint` / `workspace_env` / `resolve_path` | drive / local | 挂载提示与路径 jail |
 
@@ -170,7 +174,10 @@ make smoke-minio   # 真 MinIO inventory + include_objects
 - `AI_CLOUDHUB_OSS_NATIVE_STS=1`：阿里云 RAM STS（`source=aliyun_sts`，RoleArn `acs:ram::…`）
 - `AI_CLOUDHUB_COS_NATIVE_STS=1`：腾讯云 CAM STS（`source=tencent_sts`，RoleArn `qcs::cam::…`）
 - `AI_CLOUDHUB_S3_STS=1` 或 per-vendor：S3 兼容 AssumeRole（`source=s3_sts`）
-- 详见 [docs/STS.md](docs/STS.md) · seccomp 见 [docs/SECCOMP.md](docs/SECCOMP.md)
+- `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1`：session note assist；对象级：`presign-get` 对 type=qiniu → `qiniu_download`
+- `AI_CLOUDHUB_ORACLE_NATIVE_IAM=1` + OCI 私钥 env：API-key 校验（`oci_iam`）
+- `AI_CLOUDHUB_OPA_POLICY_FILE`：可选 Rego（[POLICY.md](docs/POLICY.md)）
+- 详见 [docs/STS.md](docs/STS.md) · [docs/PRODUCTION.md](docs/PRODUCTION.md) · seccomp [docs/SECCOMP.md](docs/SECCOMP.md)
 
 ## 目录
 

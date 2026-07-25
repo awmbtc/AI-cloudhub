@@ -268,3 +268,5 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Qiniu：`ObjectPresignGet` 原生按 key 签名（`method=qiniu_download`）
 - [x] OCI：Identity 校验短缓存（`AI_CLOUDHUB_OCI_IAM_CACHE_SEC`）
 - [x] smoke-policy 覆盖 OPA deny `provider.write`
+- [x] smoke-objects / smoke-mcp：Qiniu offline HMAC presign
+- [x] docs/PRODUCTION.md + docker-compose.prod STRICT / 强制密钥

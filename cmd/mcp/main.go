@@ -279,7 +279,7 @@ func toolRegistry() []toolMeta {
 			},
 		},
 		{
-			name: "object_presign_get", description: "Short-lived presigned GET (optional versionId). Bytes client↔store only. Requires drive.read.",
+			name: "object_presign_get", description: "Short-lived GET URL (optional versionId). type=qiniu → method=qiniu_download (native HMAC); else S3 presign. Bytes client↔store only. Requires drive.read.",
 			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
 			schema: map[string]interface{}{
 				"type": "object",

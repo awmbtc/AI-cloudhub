@@ -5,7 +5,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-API_PORT="${API_PORT:-18150}"
+if [[ -z "${API_PORT:-}" ]]; then
+  API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+fi
 API="http://127.0.0.1:${API_PORT}"
 export CGO_ENABLED=0
 export NO_PROXY="127.0.0.1,localhost,::1"
@@ -32,7 +34,7 @@ APID=$!
 cleanup() { kill "$APID" 2>/dev/null || true; rm -f "$DB" "${DB}-wal" "${DB}-shm"; }
 trap cleanup EXIT
 
-for _ in $(seq 1 40); do
+for _ in $(seq 1 50); do
   "${CURL[@]}" "$API/healthz" >/dev/null 2>&1 && break
   sleep 0.1
 done
@@ -120,6 +122,26 @@ CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST \
   -d '{"key":"file.bin"}')
 test "$CODE" = "200"
 
+echo "== Qiniu native presign-get (no live Kodo; offline HMAC) =="
+QPID=$("${CURL[@]}" -X POST "$API/v1/providers" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"kodo","type":"qiniu","credentials":{"access_key":"AKSmoke","secret_key":"SKSmokeSecret","endpoint":"cdn.example.com"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+QDID=$("${CURL[@]}" -X POST "$API/v1/drives" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"qdrive\",\"provider_id\":\"$QPID\",\"bucket\":\"bkt\",\"prefix\":\"ws\",\"mount_point\":\"/workspace\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+QPS=$("${CURL[@]}" -X POST "$API/v1/drives/$QDID/objects/presign-get" \
+  -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"key":"pic.png","ttl_min":10}')
+echo "$QPS" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("method")=="qiniu_download", d
+assert d.get("key")=="ws/pic.png", d
+assert "token=" in (d.get("url") or "") and "e=" in (d.get("url") or ""), d
+assert d.get("deadline"), d
+print("qiniu_download ok", d["url"][:80]+"…")
+'
+
 if [[ "$LIVE" == "1" ]]; then
   # Soft live path (expects pre-existing MinIO at MINIO_ENDPOINT; does not seed).
   # Hard-assert inventory + include_objects + auto-start: scripts/smoke-minio-inventory.sh
@@ -138,4 +160,4 @@ else
   echo "== skip LIVE MinIO (soft: AI_CLOUDHUB_SMOKE_MINIO=1; hard-assert: make smoke-minio) =="
 fi
 
-echo "OK objects smoke drive=$DID"
+echo "OK objects smoke drive=$DID qiniu_drive=$QDID"

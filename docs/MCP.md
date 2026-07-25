@@ -44,7 +44,7 @@ go build -o .bin/mcp ./cmd/mcp
 | `create_snapshot` | drive.write | `POST /v1/drives/{id}/snapshots` |
 | `list_objects` | drive.read\|write | `GET /v1/drives/{id}/objects` live inventory |
 | `object_restore_plan` | drive.read\|write | restore guidance: CLI + optional presign + api path |
-| `object_presign_get` | drive.read\|write | short-lived GET URL (optional `version_id`); bytes client↔store |
+| `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
 | `list_jobs` | job.run | `GET /v1/jobs` (+ pending / agent filters) |
 | `create_job` | job.run | `POST /v1/jobs` BYOC enqueue (D-001: user runners only) |

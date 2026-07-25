@@ -176,4 +176,31 @@ for line in sys.stdin:
   print("providers", len(body["items"]))
 '
 
+echo "== MCP object_presign_get (Qiniu native) =="
+# Human token can create qiniu provider; agent has drive.read for the minio drive only —
+# create qiniu drive with human, then call MCP with human token for this check.
+export AI_CLOUDHUB_TOKEN="$TOK"
+QPID=$("${CURL[@]}" -X POST "$API/v1/providers" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"kodo","type":"qiniu","credentials":{"access_key":"AK","secret_key":"SKsecretxx","endpoint":"cdn.example.com"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+QDID=$("${CURL[@]}" -X POST "$API/v1/drives" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"qd\",\"provider_id\":\"$QPID\",\"bucket\":\"b\",\"prefix\":\"p\",\"mount_point\":\"/workspace\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"object_presign_get\",\"arguments\":{\"drive_id\":\"$QDID\",\"key\":\"x.bin\",\"ttl_min\":5}}}" \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"):
+    raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("method")=="qiniu_download", body
+  assert "token=" in (body.get("url") or ""), body
+  print("mcp qiniu_download ok")
+'
+
 echo "OK smoke-mcp-jobs"
