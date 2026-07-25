@@ -4,8 +4,11 @@ export CGO_ENABLED := 0
 BIN_DIR := .bin
 BINS    := api hubd runner mcp
 
-.PHONY: all build test help clean docker-api docker-all release-binaries $(BINS) \
-	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp smoke-allall: build
+.PHONY: all build test help clean docker-api docker-all release-binaries \
+	api hubd runner mcp \
+	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp smoke-all
+
+all: build
 
 build: $(BINS)
 
@@ -34,7 +37,7 @@ help:
 	@echo "  make test           go test ./..."
 	@echo "  make docker-api     Multi-stage distroless API image (deploy/Dockerfile)"
 	@echo "  make docker-all     Multi-binary alpine image (deploy/Dockerfile.all)"
-	@echo "  make release-binaries  Multi-arch archives → dist/ (+ checksums.txt)"
+	@echo "  make release-binaries  Multi-arch archives -> dist/ (+ checksums.txt)"
 	@echo "  make clean          Remove $(BIN_DIR)/"
 	@echo ""
 	@echo "Smoke targets (need local services as documented per script):"
@@ -45,7 +48,7 @@ help:
 	@echo "  make smoke-policy   Policy smoke (scripts/smoke-policy.sh)"
 	@echo "  make smoke-job      Job smoke (scripts/smoke-job.sh)"
 	@echo "  make smoke-mcp      MCP jobs smoke (scripts/smoke-mcp-jobs.sh)"
-	@echo "  make smoke-all      Run all smokes except smoke-minio (smoke + agent + objects + policy + job + mcp)"
+	@echo "  make smoke-all      Run all smokes except smoke-minio"
 	@echo "  (CI: test + smoke-all + smoke-minio + docker image on main push/PR)"
 
 smoke: build
