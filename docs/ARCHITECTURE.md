@@ -116,7 +116,7 @@ STS Session          → 对象存储短时凭证（挂载用，不替代 API �
 | 能力 | 现状 |
 |------|------|
 | **Agent Identity** | CRUD + `POST /v1/agents/{id}/token`（`aid` + `scopes` + `allowed_drive_ids`） |
-| **Policy 文件** | built-in scope/drive/path + 可选 `AI_CLOUDHUB_POLICY_FILE`；`GET /v1/admin/policy`；**非** OPA/Rego |
+| **Policy** | built-in scope/drive/path + 可选 JSON（`AI_CLOUDHUB_POLICY_FILE`）+ 可选 OPA（`AI_CLOUDHUB_OPA_POLICY_FILE`）；`GET /v1/admin/policy` |
 | **Job agent 追溯** | `agent_id`（创建者）/ `claimed_by_agent_id`（领取者）；list 可过滤；审计 job.\* |
 | **MCP jobs** | stdio：`list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job`（`job.run`）+ `list_providers` |
 | **Binding agent 门禁** | create/mutate：`allowAgentDrive`；list 按 allowlist + policy 过滤 |
@@ -392,7 +392,7 @@ S3 兼容统一 Driver；模板差异（endpoint / path-style / region）。
 | **P3** | Job **编排 API**（调度到用户侧/计费 SKU，非免费大池）· MCP · 可观测 · 厂商 C 批 |
 | **1.x→2.0** | **Agent Identity · Capability scopes · Runtime path jail**（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)） |
 
-P0–P3 与 ROADMAP 阶段 A/B 已收口（见 §3.2）；剩余为 OPA 与 OCI/Qiniu 非 S3 原生 STS，不是继续堆网盘功能。
+P0–P3 与 ROADMAP 阶段 A/B 已收口（见 §3.2）；可选三件套（Qiniu 下载 token / OCI API-key IAM / OPA）亦已落地，不是继续堆网盘功能。
 
 ---
 

@@ -90,18 +90,20 @@ func main() {
 	}
 
 	var policyEng *policy.Engine
-	if strings.TrimSpace(cfg.PolicyFile) != "" {
+	reload := time.Duration(cfg.PolicyReloadSec) * time.Second
+	if strings.TrimSpace(cfg.PolicyFile) != "" || strings.TrimSpace(cfg.OPAPolicyFile) != "" {
 		var err error
-		reload := time.Duration(cfg.PolicyReloadSec) * time.Second
 		policyEng, err = policy.NewEngineWithOptions(policy.EngineOptions{
 			FilePath:    cfg.PolicyFile,
 			ReloadEvery: reload,
+			OPAPath:     cfg.OPAPolicyFile,
 		})
 		if err != nil {
-			log.Fatalf("policy file: %v", err)
+			log.Fatalf("policy: %v", err)
 		}
-		log.Printf("policy file loaded path=%s rules=%d mode=%s reload=%s",
-			cfg.PolicyFile, policyEng.Status().RuleCount, policyEng.Status().Mode, reload)
+		st := policyEng.Status()
+		log.Printf("policy loaded json=%s rules=%d mode=%s opa=%v opa_path=%s reload=%s",
+			cfg.PolicyFile, st.RuleCount, st.Mode, st.OPAEnabled, st.OPAPath, reload)
 	} else {
 		policyEng = policy.NewEngine()
 	}

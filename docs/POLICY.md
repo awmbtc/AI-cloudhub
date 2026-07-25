@@ -1,24 +1,37 @@
-# Policy Engine (v0 built-ins + v1 JSON file)
+# Policy Engine (built-ins + JSON + optional OPA/Rego)
 
 AI-cloudhub evaluates **agent** access with:
 
 1. **Built-in checks** (always): token scopes, agent `allowed_drive_ids`, agent path prefixes  
 2. **Optional JSON file** (`AI_CLOUDHUB_POLICY_FILE`): ordered allow/deny rules  
+3. **Optional OPA/Rego** (`AI_CLOUDHUB_OPA_POLICY_FILE`): `data.aicloudhub.authz.allow`  
 
-Humans (non-agent tokens) skip built-in agent checks; file rules with `"principals":["human"]` or `"any"` still apply.
+Humans skip built-in agent checks; JSON rules with `"principals":["human"]`/`"any"` and OPA still apply.
 
-This is **not OPA**. No Rego. Simple JSON, pure Go, CGO-free.
-
-## Enable
+## Enable JSON
 
 ```bash
 export AI_CLOUDHUB_POLICY_FILE=./protocols/policy.example.json
-# optional: re-stat file every N seconds and reload on mtime change
 export AI_CLOUDHUB_POLICY_RELOAD_SEC=30
+```
+
+## Enable OPA
+
+```bash
+export AI_CLOUDHUB_OPA_POLICY_FILE=./protocols/aicloudhub.rego.example
+# optional: OPA deny becomes allow with reason (observe mode)
+export AI_CLOUDHUB_OPA_OBSERVE=0
+# optional: OPA eval errors deny instead of fail-open
+export AI_CLOUDHUB_OPA_STRICT=0
 ./.bin/api
 ```
 
-Example file: [`protocols/policy.example.json`](../protocols/policy.example.json).
+Example Rego: [`protocols/aicloudhub.rego.example`](../protocols/aicloudhub.rego.example).  
+Query: **`data.aicloudhub.authz.allow`** (boolean). Input = request fields (`agent_id`, `action`, `drive_id`, `path`, `scopes`, …).
+
+Evaluation order: **built-in → JSON rules → OPA** (OPA can only further deny unless observe).
+
+JSON example: [`protocols/policy.example.json`](../protocols/policy.example.json).
 
 ## Document schema (version 1)
 
@@ -101,6 +114,6 @@ Admin-only. Returns load status; `?rules=1` includes the document.
 
 ## Non-goals
 
-- OPA / Rego / external PDP  
-- Per-request remote policy network calls  
+- Remote PDP / per-request external policy network calls  
 - Replacing IAM on the object store (BYOS)  
+- Full OPA ecosystem (bundles, decision logs as a service) — local `.rego` file only  

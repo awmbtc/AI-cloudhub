@@ -6,74 +6,71 @@ AI-cloudhub issues **short-lived mount sessions** for rclone/FUSE. Native / S3-c
 
 | source | When | Env |
 |--------|------|-----|
-| `embedded` | Default: short-lived conf with provider keys (encrypted at rest if master key set) | — |
+| `embedded` | Default: short-lived conf with provider keys | — |
 | `refresh` | Session refresh path | — |
-| `minio_sts` | MinIO AssumeRole succeeded | `AI_CLOUDHUB_MINIO_STS=1` **or** `AI_CLOUDHUB_S3_STS=1` |
-| `aws_sts` | AWS AssumeRole succeeded | `AI_CLOUDHUB_AWS_STS=1` + `AI_CLOUDHUB_AWS_STS_ROLE_ARN` (AWS-looking `type=s3` only) |
-| `s3_sts` | S3-compatible AssumeRole succeeded (non-MinIO / non-AWS) | `AI_CLOUDHUB_S3_STS=1` and/or per-vendor flags |
-| `aliyun_sts` | Aliyun RAM STS AssumeRole succeeded | `AI_CLOUDHUB_OSS_NATIVE_STS=1` (or `AI_CLOUDHUB_ALIYUN_STS=1`) + RoleArn `acs:ram::…` |
-| `tencent_sts` | Tencent CAM STS AssumeRole succeeded | `AI_CLOUDHUB_COS_NATIVE_STS=1` (or `AI_CLOUDHUB_TENCENT_STS=1`) + RoleArn `qcs::cam::…` |
-| `qiniu_sts` | Qiniu S3-compat AssumeRole (vendor flag) | `AI_CLOUDHUB_QINIU_STS=1` (+ optional `AI_CLOUDHUB_QINIU_STS_ENDPOINT`) |
-| `oracle_sts` | Oracle S3-compat AssumeRole (vendor flag) | `AI_CLOUDHUB_ORACLE_STS=1` (+ optional `AI_CLOUDHUB_ORACLE_STS_ENDPOINT`) |
+| `minio_sts` | MinIO AssumeRole | `AI_CLOUDHUB_MINIO_STS=1` or `AI_CLOUDHUB_S3_STS=1` |
+| `aws_sts` | AWS AssumeRole | `AI_CLOUDHUB_AWS_STS=1` + RoleArn |
+| `s3_sts` | S3-compatible AssumeRole | `AI_CLOUDHUB_S3_STS=1` / per-vendor |
+| `aliyun_sts` | Aliyun RAM | `AI_CLOUDHUB_OSS_NATIVE_STS=1` + `acs:ram::` RoleArn |
+| `tencent_sts` | Tencent CAM | `AI_CLOUDHUB_COS_NATIVE_STS=1` + `qcs::cam::` RoleArn |
+| `qiniu_sts` | Qiniu S3-compat AssumeRole | `AI_CLOUDHUB_QINIU_STS=1` |
+| `qiniu_download` | **Native Qiniu private download token** (HMAC URL, not S3 session) | `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1` |
+| `oracle_sts` | Oracle S3-compat AssumeRole | `AI_CLOUDHUB_ORACLE_STS=1` |
+| `oci_iam` | **OCI API-key (RSA private key) identity validation** | `AI_CLOUDHUB_ORACLE_NATIVE_IAM=1` + OCI key env |
 
-## Env matrix
+## Qiniu private download token
+
+```bash
+export AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1
+```
+
+On session Issue, control plane signs a **sample** private download URL with the provider AK/SK (deadline = session TTL).  
+`session.note` includes a truncated sample URL — replace `__sample_key__` with the real object key under the drive prefix.  
+Mount/rclone still uses S3-compat credentials when available (`AI_CLOUDHUB_QINIU_STS=1`).
+
+Helpers: `QiniuDownloadToken`, `QiniuSignedDownloadURL`, `QiniuUploadToken` in `internal/sts/qiniu_token.go`.
+
+## OCI API-key IAM (private key)
+
+```bash
+export AI_CLOUDHUB_ORACLE_NATIVE_IAM=1
+export AI_CLOUDHUB_OCI_TENANCY_OCID=ocid1.tenancy...
+export AI_CLOUDHUB_OCI_USER_OCID=ocid1.user...
+export AI_CLOUDHUB_OCI_FINGERPRINT=aa:bb:...
+export AI_CLOUDHUB_OCI_PRIVATE_KEY_PEM="-----BEGIN RSA PRIVATE KEY-----..."
+# or AI_CLOUDHUB_OCI_PRIVATE_KEY_FILE=/path/to/oci_api_key.pem
+export AI_CLOUDHUB_OCI_REGION=us-ashburn-1
+```
+
+Best-effort: signs `GET /20160918/users/{userId}` to **validate** API-key material (`source=oci_iam`).  
+Does **not** auto-mint S3 customer secret keys or PARs in this build. Mount still prefers provider S3 AK/SK / S3-compat STS when present.
+
+## Env matrix (summary)
 
 | Flag | Effect |
 |------|--------|
-| `AI_CLOUDHUB_S3_STS=1` | Try S3-compat AssumeRole (minio-go `STSAssumeRole` against provider endpoint) for: `minio`, `b2`, `oss`, `cos`, `qiniu`, `oracle`, `r2`, and **non-AWS** `type=s3` custom endpoints |
-| `AI_CLOUDHUB_MINIO_STS=1` | Same for `type=minio` only → `source=minio_sts` |
-| `AI_CLOUDHUB_AWS_STS=1` | AWS STS for AWS-looking `type=s3` → `source=aws_sts` (requires role ARN) |
-| `AI_CLOUDHUB_OSS_NATIVE_STS=1` / `AI_CLOUDHUB_ALIYUN_STS=1` | Aliyun **RAM** STS (not S3 endpoint) → `source=aliyun_sts` |
-| `AI_CLOUDHUB_COS_NATIVE_STS=1` / `AI_CLOUDHUB_TENCENT_STS=1` | Tencent **CAM** STS → `source=tencent_sts` |
-| `AI_CLOUDHUB_B2_STS` / `OSS` / `COS` / `QINIU` / `ORACLE` / `R2` `_STS=1` | Per-vendor S3-compat enable (truthy: `1` / `true` / `yes`) |
+| `AI_CLOUDHUB_S3_STS=1` | Generic S3-compat AssumeRole for many types |
+| `AI_CLOUDHUB_*_STS=1` | Per-vendor S3-compat |
+| `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1` | Native Qiniu download token note |
+| `AI_CLOUDHUB_ORACLE_NATIVE_IAM=1` | OCI RSA API-key validation |
+| Aliyun/Tencent NATIVE flags | Cloud RAM/CAM AssumeRole |
 
-Truthy values: `1`, `true`, `yes` (case-insensitive).
-
-### Role ARN
-
-| Env | Used for |
-|-----|----------|
-| `AI_CLOUDHUB_AWS_STS_ROLE_ARN` | AWS AssumeRole (**required**) |
-| `AI_CLOUDHUB_ALIYUN_STS_ROLE_ARN` / `AI_CLOUDHUB_OSS_STS_ROLE_ARN` | Aliyun RAM (`acs:ram::…`, **required** for native) |
-| `AI_CLOUDHUB_TENCENT_STS_ROLE_ARN` / `AI_CLOUDHUB_COS_STS_ROLE_ARN` | Tencent CAM (`qcs::cam::…`, **required** for native) |
-| `AI_CLOUDHUB_MINIO_STS_ROLE_ARN` | MinIO (optional; preferred over generic) |
-| `AI_CLOUDHUB_S3_STS_ROLE_ARN` | Generic fallback for S3-compat / native ARN fallback |
-| `AI_CLOUDHUB_B2_STS_ROLE_ARN` (and `QINIU`/`ORACLE`/`R2`) | Vendor-specific RoleArn for S3-compat |
-
-Optional endpoints (tests / regional / split STS host):
-
-- `AI_CLOUDHUB_AWS_STS_ENDPOINT`, `AI_CLOUDHUB_AWS_STS_EXTERNAL_ID`
-- `AI_CLOUDHUB_ALIYUN_STS_ENDPOINT` (default `https://sts.aliyuncs.com`)
-- `AI_CLOUDHUB_TENCENT_STS_ENDPOINT`, `AI_CLOUDHUB_TENCENT_STS_REGION`
-- **S3-compat STS host override** (when STS ≠ data endpoint):  
-  `AI_CLOUDHUB_S3_STS_ENDPOINT`, or per-vendor  
-  `AI_CLOUDHUB_{MINIO,QINIU,ORACLE,B2,R2}_STS_ENDPOINT`,  
-  `AI_CLOUDHUB_OSS_S3_STS_ENDPOINT`, `AI_CLOUDHUB_COS_S3_STS_ENDPOINT`
-
-### Qiniu / Oracle notes
-
-- **Qiniu:** S3-compatible AssumeRole only (not Qiniu private download tokens). Set `AI_CLOUDHUB_QINIU_STS_ENDPOINT` if STS is not on the Kodo S3 host.
-- **Oracle OCI:** S3 compatibility layer AssumeRole only. Full OCI IAM (user OCID + API private key) is **out of scope** for the AK/SK provider model.
+Truthy: `1` / `true` / `yes`.
 
 ## Behavior notes
 
-1. **Never blocks Issue/Refresh** — any STS error falls back to embedded/refresh credentials and sets `session.note`.
-2. **AWS endpoints** (`looksLikeAWS`) never use the generic S3-compat path; only AWS STS when `AI_CLOUDHUB_AWS_STS=1`.
-3. **OSS/COS**: native cloud STS is preferred when NATIVE flag is on or RoleArn looks vendor-native; on failure, falls back to S3-compat if that flag is also on.
-4. **Flags off** for R2/B2/OSS/COS/Qiniu/Oracle: no STS probe; `session.note` explains how to enable.
-5. Implementation: minio-go for S3-compat; pure Go HMAC for Aliyun RPC + Tencent TC3; AWS STS via minio-go against STS host.
+1. **Never blocks Issue/Refresh** — failures fall back to embedded/refresh + `session.note`.
+2. AWS-looking endpoints never use generic S3-compat STS.
+3. Implementation: minio-go STS; pure Go Aliyun HMAC / Tencent TC3 / Qiniu HMAC / OCI RSA-SHA256.
 
 ## Metrics
 
-`/metrics` exposes:
-
 ```text
-aicloudhub_sessions_issued_total
-aicloudhub_sts_source_total{source="embedded|refresh|minio_sts|aws_sts|s3_sts|aliyun_sts|tencent_sts|qiniu_sts|oracle_sts"}
+aicloudhub_sts_source_total{source="…|qiniu_download|oci_iam|…"}
 ```
 
 ## Production guidance
 
-1. Prefer native STS where available (`aliyun_sts` / `tencent_sts` / `aws_sts` / `minio_sts` / `s3_sts`).  
-2. Always set `AI_CLOUDHUB_MASTER_KEY` so static keys are not plaintext at rest.  
+1. Prefer native STS where available.  
+2. Set `AI_CLOUDHUB_MASTER_KEY`.  
 3. Runtime must refresh before `expires_at` and destroy conf on unmount.  

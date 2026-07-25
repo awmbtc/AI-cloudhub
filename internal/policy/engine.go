@@ -45,37 +45,46 @@ type Decision struct {
 	Reason string
 }
 
-// Engine is Policy v0 built-ins + optional external JSON file (v1).
+// Engine is Policy v0 built-ins + optional external JSON file (v1) + optional OPA/Rego.
 type Engine struct {
-	mu         sync.RWMutex
-	doc        *Document
-	filePath   string
-	fileMeta   fileMeta
+	mu          sync.RWMutex
+	doc         *Document
+	filePath    string
+	fileMeta    fileMeta
 	reloadEvery time.Duration
-	lastCheck  time.Time
+	lastCheck   time.Time
+	opa         *OPAEvaluator
 }
 
-// EngineOptions configures optional file-backed rules.
+// EngineOptions configures optional file-backed rules and OPA.
 type EngineOptions struct {
 	// FilePath is AI_CLOUDHUB_POLICY_FILE (empty = built-ins only).
 	FilePath string
 	// ReloadEvery re-stats the file on Evaluate when elapsed (0 = load once).
 	ReloadEvery time.Duration
+	// OPAPath is AI_CLOUDHUB_OPA_POLICY_FILE (.rego module). Empty = OPA off.
+	OPAPath string
 }
 
 // NewEngine returns Policy Engine with built-ins only.
 func NewEngine() *Engine { return &Engine{doc: &Document{Version: 1, Mode: "enforce"}} }
 
-// NewEngineWithOptions loads optional external policy file.
+// NewEngineWithOptions loads optional external policy file and/or OPA module.
 func NewEngineWithOptions(opts EngineOptions) (*Engine, error) {
 	e := NewEngine()
 	e.filePath = strings.TrimSpace(opts.FilePath)
 	e.reloadEvery = opts.ReloadEvery
-	if e.filePath == "" {
-		return e, nil
+	if e.filePath != "" {
+		if err := e.loadFile(); err != nil {
+			return nil, err
+		}
 	}
-	if err := e.loadFile(); err != nil {
-		return nil, err
+	if strings.TrimSpace(opts.OPAPath) != "" {
+		opa, err := LoadOPAFile(opts.OPAPath)
+		if err != nil {
+			return nil, err
+		}
+		e.opa = opa
 	}
 	return e, nil
 }
@@ -150,6 +159,8 @@ type Status struct {
 	RuleCount   int    `json:"rule_count"`
 	ReloadEvery string `json:"reload_every,omitempty"`
 	ModTime     string `json:"mod_time,omitempty"`
+	OPAEnabled  bool   `json:"opa_enabled"`
+	OPAPath     string `json:"opa_path,omitempty"`
 }
 
 // Status returns current file policy diagnostics.
@@ -173,6 +184,10 @@ func (e *Engine) Status() Status {
 	}
 	if !e.fileMeta.modTime.IsZero() {
 		st.ModTime = e.fileMeta.modTime.UTC().Format(time.RFC3339)
+	}
+	if e.opa != nil {
+		st.OPAEnabled = true
+		st.OPAPath = e.opa.Path()
 	}
 	return st
 }
@@ -227,6 +242,22 @@ func (e *Engine) Evaluate(req Request) Decision {
 		e.mu.RUnlock()
 	}
 	d := applyFileRules(doc, req)
+	if !d.Allow {
+		return d
+	}
+	// OPA after JSON: can only further deny (or observe).
+	if e != nil && e.opa != nil {
+		allow, reason, _ := e.opa.Evaluate(req)
+		if !allow {
+			return Decision{Allow: false, Reason: reason}
+		}
+		if reason != "" && reason != "opa:allow" && reason != "opa:no-result" {
+			// Keep file reason if ok; surface OPA note when informative.
+			if d.Reason == "ok" || d.Reason == "human" {
+				d.Reason = reason
+			}
+		}
+	}
 	if d.Reason == "ok" && req.AgentID == "" {
 		return Decision{Allow: true, Reason: "human"}
 	}

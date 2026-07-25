@@ -251,11 +251,14 @@ curl -s localhost:8080/v1/runtime/check
 | Job `agent_id` / `claimed_by_agent_id` + 审计 + list filter | ✅ |
 | MCP jobs 工具 + `make smoke-mcp` | ✅ |
 | Bindings agent 门禁 · Devices 拒 agent token | ✅ |
+| Qiniu 私有下载 token（`qiniu_download`） | ✅ best-effort / note assist |
+| OCI API-key 私钥 IAM 校验（`oci_iam`） | ✅ best-effort validate |
+| 可选 OPA/Rego（`AI_CLOUDHUB_OPA_POLICY_FILE`） | ✅ |
 
-**结论：** 1.x 收尾 + ROADMAP 2.0 最小企业可用主线已落地；文档与代码口径对齐（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md) M-A/M-B、[ARCHITECTURE.md](./ARCHITECTURE.md) §3.2、[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)）。
+**结论：** 1.x 收尾 + ROADMAP 2.0 最小企业可用主线 + 可选三件套（Qiniu 下载 token / OCI IAM / OPA）已落地；文档与代码口径对齐（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)、[STS.md](./STS.md)、[POLICY.md](./POLICY.md)、[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)）。
 
-### 剩余（仅此 · 刻意未做）
+### 剩余诚实边界（非“未做”）
 
-- **OCI 私钥 IAM**（user OCID + API private key；当前仅 S3 兼容 AssumeRole → `oracle_sts` / `s3_sts`）
-- **Qiniu 私有下载 token 等非 S3 session 模型**（当前仅 S3 兼容 AssumeRole → `qiniu_sts` / `s3_sts`）
-- **OPA/Rego 或远程 PDP**（Policy = built-in + 可选 JSON 文件；见 [POLICY.md](./POLICY.md)）
+- **远程 PDP** / 每请求外部策略网络调用：刻意不做
+- **OCI PAR / S3 secret 自动铸造**：`oci_iam` 仅校验 API-key，挂盘仍靠 S3-compat AK/SK
+- **Qiniu 任意 key 下载 API**：当前为 session.note sample token，非完整对象级 presign 服务

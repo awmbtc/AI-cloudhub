@@ -83,6 +83,9 @@ type Config struct {
 	// PolicyReloadSec re-reads the policy file when mtime changes (0 = load once at start).
 	// Env: AI_CLOUDHUB_POLICY_RELOAD_SEC
 	PolicyReloadSec int
+	// OPAPolicyFile is optional Rego module path (AI_CLOUDHUB_OPA_POLICY_FILE).
+	// Query: data.aicloudhub.authz.allow — see protocols/aicloudhub.rego.example.
+	OPAPolicyFile string
 }
 
 // Load reads configuration from the environment with safe defaults for local docker-compose.
@@ -124,6 +127,7 @@ func Load() Config {
 		AdminCIDRs:        splitCSV(getenv("AI_CLOUDHUB_ADMIN_CIDRS", "")),
 		PolicyFile:        getenv("AI_CLOUDHUB_POLICY_FILE", ""),
 		PolicyReloadSec:   getenvInt("AI_CLOUDHUB_POLICY_RELOAD_SEC", 0),
+		OPAPolicyFile:     getenv("AI_CLOUDHUB_OPA_POLICY_FILE", ""),
 	}
 }
 

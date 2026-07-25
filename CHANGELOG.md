@@ -9,13 +9,18 @@
 
 ## Unreleased
 
+### STS / Policy extensions
+- Qiniu native private download tokens (`AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN`, source `qiniu_download`)
+- OCI API-key IAM validation (`AI_CLOUDHUB_ORACLE_NATIVE_IAM` + private key env, source `oci_iam`)
+- Optional OPA/Rego (`AI_CLOUDHUB_OPA_POLICY_FILE`, query `data.aicloudhub.authz.allow`)
+
 ### Close-out
 - 1.x→2.0 mainline closed: P0–P3, hardening waves 1–4, Stage A (Agent Identity + scopes + path jail), Stage B (drive allowlist, Policy Engine + `AI_CLOUDHUB_POLICY_FILE`, Manifest 2.0, audit.agent_id, Snapshot v0, sandbox env filter)
 - Jobs: `agent_id` / `claimed_by_agent_id`, claim release on policy deny, list filters, job.* audit
 - MCP jobs tools: `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` + `list_providers` (`make smoke-mcp`)
 - Binding agent gates (scope + allowlist/policy; list filter); Devices API rejects agent tokens
-- Multi-vendor STS best-effort (MinIO/AWS/S3-compat, Aliyun RAM, Tencent CAM, Qiniu/Oracle labels); objects/snapshots/OpenAPI/seccomp as previously landed
-- **Remaining only:** OCI private-key IAM, Qiniu non-S3 download-token STS, full OPA/Rego (docs: PROGRESS Close-out, KNOWN_LIMITATIONS, STS.md)
+- Multi-vendor STS best-effort (MinIO/AWS/S3-compat, Aliyun RAM, Tencent CAM, Qiniu download token, OCI API-key IAM); objects/snapshots/OpenAPI/seccomp as previously landed
+- Optional OPA/Rego closes the prior “remaining only” triad (docs: STS.md, POLICY.md, KNOWN_LIMITATIONS)
 
 ### STS
 - Shared S3-compatible AssumeRole + per-vendor flags; Aliyun RAM / Tencent CAM native; Qiniu/Oracle source labels + STS endpoint overrides; metrics + docs/STS.md

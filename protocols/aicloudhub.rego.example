@@ -1,0 +1,32 @@
+# Example OPA/Rego module for AI-cloudhub.
+# Load with: AI_CLOUDHUB_OPA_POLICY_FILE=./protocols/aicloudhub.rego.example
+#
+# Query evaluated: data.aicloudhub.authz.allow
+# Input shape (from policy.Request):
+#   agent_id, action, drive_id, path, scopes, allowed_drive_ids,
+#   read_prefixes, write_prefixes, principal ("agent"|"human")
+
+package aicloudhub.authz
+
+import rego.v1
+
+# Default allow — tighten with deny rules below.
+default allow := true
+
+# Humans unrestricted at OPA layer (built-in JSON policy may still apply).
+allow if {
+	input.principal == "human"
+}
+
+# Example: agents may not call provider.write via OPA (in addition to scopes).
+allow := false if {
+	input.principal == "agent"
+	input.action == "provider.write"
+}
+
+# Example: block path segments for agents (secrets).
+allow := false if {
+	input.principal == "agent"
+	input.path != ""
+	contains(input.path, ".ssh")
+}

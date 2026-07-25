@@ -67,7 +67,7 @@ User
 | # | 落脚点 | 状态 | 说明 |
 |---|--------|------|------|
 | B1 | Capability 绑定 Drive 列表 | **done** | `allowed_drive_ids`；session/list 过滤 |
-| B2 | Policy v0/v1 | **done** | Engine + 可选 `AI_CLOUDHUB_POLICY_FILE`（非 OPA） |
+| B2 | Policy v0/v1 | **done** | Engine + 可选 JSON + 可选 OPA（`AI_CLOUDHUB_OPA_POLICY_FILE`） |
 | B3 | Sandbox v1：env 白名单 | **done** | runner FilterEnv；path jail 在 A |
 | B4 | Manifest 2.0：permissions.read/write | **done** | version=2 + prefixes |
 | B5 | Audit 关联 `agent_id` | **done** | 字段 + `?agent_id=` 过滤 |
@@ -91,7 +91,7 @@ User
 - MCP Tool Marketplace  
 - 企业级 Memory 三层产品  
 - 默认支持 Git/DB/SaaS 作为一等存储（对象存储优先）  
-- 完整 OPA/Rego 引擎  
+- 远程 PDP / OPA 微服务拆分（本地 `.rego` 已可选）  
 - 自建大规模 Runner 池  
 
 ---
@@ -176,7 +176,7 @@ Deny:   .. 穿越、符号链接逃逸（尽力）、空路径
 ### M-B（阶段 B · 2.0 最小企业可用 · 已收口）
 
 - [x] B1 `allowed_drive_ids`；list/session 按白名单过滤  
-- [x] B2 Policy Engine + 可选文件（`AI_CLOUDHUB_POLICY_FILE`，docs/POLICY.md）；**非** OPA  
+- [x] B2 Policy Engine + 可选 JSON（`AI_CLOUDHUB_POLICY_FILE`）+ 可选 OPA（`AI_CLOUDHUB_OPA_POLICY_FILE`，docs/POLICY.md）  
 - [x] B3 Sandbox v1 env 白名单（runner；`AI_CLOUDHUB_PASS_TOKEN=1` 才传父 token）  
 - [x] B4 Manifest permissions（v2 read/write prefixes）  
 - [x] B5 Audit 带 `agent_id` + `?agent_id=` 过滤  
@@ -185,8 +185,9 @@ Deny:   .. 穿越、符号链接逃逸（尽力）、空路径
 - [x] Job/provider 路由：scope + `CheckAccess`；claim deny → `ReleaseToPending`  
 - [x] MCP jobs：`list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` + `list_providers`  
 - [x] Bindings：agent scope + drive allowlist/policy 过滤；Devices：agent token 一律 403  
+- [x] 可选：Qiniu 私有下载 token（`qiniu_download`）；OCI API-key IAM 校验（`oci_iam`）— 见 [STS.md](./STS.md)  
 
-**M-B 之后仍不做：** OPA/Rego；OCI 私钥 IAM；Qiniu 非 S3 下载 token 模型（见 PROGRESS Close-out / KNOWN_LIMITATIONS）。
+**M-B 之后仍不做：** 远程 PDP；OCI PAR/S3 secret 自动铸造；平台大规模 Runner 池（D-001）。诚实边界见 [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)。
 
 ---
 

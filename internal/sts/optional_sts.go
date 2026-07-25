@@ -12,8 +12,8 @@ const (
 	noteB2     = "Backblaze B2: S3-compatible STS not enabled; set AI_CLOUDHUB_B2_STS=1 or AI_CLOUDHUB_S3_STS=1 to attempt AssumeRole"
 	noteOSS    = "Aliyun OSS: set AI_CLOUDHUB_OSS_NATIVE_STS=1 + RoleArn (acs:ram::…) for RAM STS, or AI_CLOUDHUB_OSS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
 	noteCOS    = "Tencent COS: set AI_CLOUDHUB_COS_NATIVE_STS=1 + RoleArn (qcs::cam::…) for CAM STS, or AI_CLOUDHUB_COS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
-	noteQiniu  = "Qiniu Kodo: set AI_CLOUDHUB_QINIU_STS=1 (optional AI_CLOUDHUB_QINIU_STS_ENDPOINT); native Qiniu download tokens are not S3 session creds"
-	noteOracle = "Oracle OCI S3-compat: set AI_CLOUDHUB_ORACLE_STS=1 (optional AI_CLOUDHUB_ORACLE_STS_ENDPOINT); full OCI IAM private-key auth is out of scope"
+	noteQiniu  = "Qiniu Kodo: set AI_CLOUDHUB_QINIU_STS=1 for S3-compat AssumeRole, and/or AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1 for native private download tokens"
+	noteOracle = "Oracle OCI: set AI_CLOUDHUB_ORACLE_STS=1 for S3-compat AssumeRole, and/or AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 with OCI API-key env (tenancy/user/fingerprint/private_key)"
 )
 
 // applyOptionalSTS is the multi-vendor best-effort STS entry used by Issue/Refresh.
@@ -26,8 +26,9 @@ const (
 //     else S3-compat → source=s3_sts
 //   - cos: native Tencent CAM STS when NATIVE flag / qcs RoleArn → source=tencent_sts;
 //     else S3-compat → source=s3_sts
-//   - r2/b2/qiniu/oracle: per-vendor or AI_CLOUDHUB_S3_STS → S3-compat → source=s3_sts
-//     when flags off: embedded/refresh + Note
+//   - qiniu: S3-compat and/or native download token (qiniu_download)
+//   - oracle: S3-compat and/or OCI API-key IAM validate (oci_iam)
+//   - r2/b2: per-vendor or AI_CLOUDHUB_S3_STS → S3-compat → source=s3_sts
 //
 // Always falls back to the original resolved credentials on failure or when disabled.
 // fallbackSource is typically SourceEmbedded (Issue) or SourceRefresh (Refresh).

@@ -181,9 +181,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		},
 		// features: compact capability flags for newer surface (mirrors recent p3 adds).
 		"features": []string{
-			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "seccomp",
+			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "opa_rego", "seccomp",
 			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
-			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
+			"qiniu_download", "oci_iam", "job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
 		},
 		"version": version.Version,
 	})
