@@ -75,3 +75,11 @@ printf '%s\n' \
 - No FUSE mount from this process  
 - No platform multi-tenant runner pool (D-001)  
 - No full MCP resources/prompts surface  
+
+## See also
+
+- [QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md) — zero → agent token + MCP + optional hubd in ~30 minutes  
+- [POLICY.md](./POLICY.md) — scopes, drive allowlist, optional OPA  
+- `scripts/smoke-mcp-jobs.sh` / `make smoke-mcp` — live stdio job tools  
+- `scripts/smoke-agent.sh` / `make smoke-agent` — agent allowlist + scopes  
+

@@ -23,6 +23,7 @@
 | [docs/BUDGET-WOOL.md](docs/BUDGET-WOOL.md) | 穷部署 |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | **实现进度对照表** |
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
+| [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
