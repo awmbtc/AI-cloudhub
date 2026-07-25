@@ -18,6 +18,8 @@
 - smoke-objects + smoke-mcp cover Qiniu offline `qiniu_download` presign
 - Fix: agent `drive.read` may POST object helpers (`presign-get` / `restore-plan` / `version-hint`); only `restore-version` needs write
 - CI: `make smoke-all` on push/PR; smoke scripts use free ports
+- CI: live MinIO smoke (`REQUIRE=1`) + Docker image build/healthz
+- deploy: distroless API Dockerfile (`-s -w`, version ldflags); alpine multi-binary; `.dockerignore`
 - deploy: nginx + Caddy TLS reverse-proxy examples
 
 ### Close-out

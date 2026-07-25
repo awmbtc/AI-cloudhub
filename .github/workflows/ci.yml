@@ -29,7 +29,7 @@ jobs:
           for d in cmd/*/; do
             pkg="${d%/}"
             echo "building ./$pkg"
-            go build -o /dev/null "./$pkg"
+            go build -trimpath -ldflags="-s -w" -o /dev/null "./$pkg"
           done
 
   smoke:
@@ -37,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: "0"
-      # Stable secrets for non-strict smoke APIs
       JWT_SECRET: "ci-smoke-jwt-secret-xx"
     steps:
       - name: Checkout
@@ -65,3 +64,85 @@ jobs:
             /tmp/aihub-*.log
             /tmp/aihub-*-api.log
           if-no-files-found: ignore
+
+  smoke-minio:
+    name: Smoke MinIO live
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+      JWT_SECRET: "ci-smoke-jwt-secret-xx"
+      MINIO_ENDPOINT: "http://127.0.0.1:9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: testbucket
+      AI_CLOUDHUB_SMOKE_MINIO_REQUIRE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name aihub-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --address ":9000"
+          for i in $(seq 1 40); do
+            if curl -sf --connect-timeout 2 http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              echo "MinIO healthy"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "MinIO failed to become healthy" >&2
+          docker logs aihub-minio || true
+          exit 1
+
+      - name: Smoke MinIO inventory
+        run: make smoke-minio
+
+      - name: Upload minio smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-minio-logs
+          path: |
+            /tmp/aihub-*.log
+            /tmp/aihub-minio*
+          if-no-files-found: ignore
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API image
+        run: |
+          docker build -f deploy/Dockerfile \
+            --build-arg VERSION=ci \
+            -t ai-cloudhub:api-ci .
+          docker image inspect ai-cloudhub:api-ci --format 'size={{.Size}}'
+          # Smoke: container starts and /healthz responds (needs a writable DB path — use memory if supported, else /tmp)
+          docker run -d --name aihub-api-ci -p 18080:8080 \
+            -e HTTP_ADDR=:8080 \
+            -e AI_CLOUDHUB_DB=/tmp/aihub.db \
+            -e JWT_SECRET=docker-ci-jwt-secretxx \
+            ai-cloudhub:api-ci
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18080/healthz >/dev/null; then
+              echo "container healthz ok"
+              docker stop aihub-api-ci
+              exit 0
+            fi
+            sleep 0.5
+          done
+          docker logs aihub-api-ci || true
+          docker stop aihub-api-ci || true
+          exit 1

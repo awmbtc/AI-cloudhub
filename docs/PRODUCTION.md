@@ -37,6 +37,9 @@ Object bytes stay client↔your store. Jobs run only on **user** runners (D-001:
 
 ## Docker Compose (prod-ish)
 
+API image is **distroless** (`deploy/Dockerfile`): static binary, nonroot, no shell.  
+Prefer Postgres (compose default) so the container does not need a host bind for SQLite.
+
 ```bash
 export JWT_SECRET="$(openssl rand -hex 32)"
 export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"
@@ -44,6 +47,8 @@ export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"
 export AI_CLOUDHUB_METRICS_TOKEN="$(openssl rand -hex 16)"
 
 docker compose -f deploy/docker-compose.prod.yml up -d --build
+# or: make docker-api && docker run --rm -p 127.0.0.1:8080:8080 -e ...
+
 curl -sS http://127.0.0.1:8080/healthz
 curl -sS http://127.0.0.1:8080/readyz
 ```
@@ -83,8 +88,16 @@ make smoke-all          # policy includes OPA; mcp; jobs; objects (Qiniu offline
 # make smoke-minio
 ```
 
-CI (GitHub Actions) runs `go test`, `go build ./cmd/…`, and `make smoke-all` on every push/PR to `main`. Live MinIO (`smoke-minio`) stays optional/local.
+CI (GitHub Actions) on every push/PR to `main`:
 
+| Job | What |
+|-----|------|
+| Test & Build | `go test ./…` + strip build of all `cmd/*` |
+| Smoke suite | `make smoke-all` (no live object store) |
+| Smoke MinIO live | Docker MinIO + `make smoke-minio` with `REQUIRE=1` |
+| Docker image | multi-stage distroless API image build + `/healthz` |
+
+Images: `deploy/Dockerfile` (distroless API), `deploy/Dockerfile.all` (alpine multi-binary).
 ## What we intentionally do not run in “platform production”
 
 - Large multi-tenant runner pools  

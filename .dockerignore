@@ -1,0 +1,17 @@
+# Slim docker build context (deploy/Dockerfile*)
+.git
+.github
+.bin
+data
+tmp
+*.db
+*.db-journal
+*.log
+.env
+.DS_Store
+**/*_test.go
+scripts/windows
+docs
+*.md
+!go.mod
+!go.sum

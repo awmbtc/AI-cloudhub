@@ -26,7 +26,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-API_PORT="${API_PORT:-18155}"
+if [[ -z "${API_PORT:-}" ]]; then
+  API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+fi
 API="http://127.0.0.1:${API_PORT}"
 export CGO_ENABLED=0
 export NO_PROXY="127.0.0.1,localhost,::1"

@@ -1,19 +1,25 @@
 # Multi-binary image: api + hubd + runner + mcp under /usr/local/bin/
 # Build: docker build -f deploy/Dockerfile.all -t ai-cloudhub:all .
-# Default runtime image (api only): deploy/Dockerfile
-FROM golang:1.22-alpine AS build
+# Default API-only image: deploy/Dockerfile
+ARG GO_VERSION=1.22
+FROM golang:${GO_VERSION}-alpine AS build
 WORKDIR /src
+RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api \
- && CGO_ENABLED=0 go build -o /out/hubd ./cmd/hubd \
- && CGO_ENABLED=0 go build -o /out/runner ./cmd/runner \
- && CGO_ENABLED=0 go build -o /out/mcp ./cmd/mcp
+ARG VERSION=0.2.0
+ENV CGO_ENABLED=0 GOOS=linux
+RUN go build -trimpath -ldflags="-s -w -X github.com/awmbtc/AI-cloudhub/internal/version.Version=${VERSION}" -o /out/api ./cmd/api \
+ && go build -trimpath -ldflags="-s -w -X github.com/awmbtc/AI-cloudhub/internal/version.Version=${VERSION}" -o /out/hubd ./cmd/hubd \
+ && go build -trimpath -ldflags="-s -w -X github.com/awmbtc/AI-cloudhub/internal/version.Version=${VERSION}" -o /out/runner ./cmd/runner \
+ && go build -trimpath -ldflags="-s -w -X github.com/awmbtc/AI-cloudhub/internal/version.Version=${VERSION}" -o /out/mcp ./cmd/mcp
 
+# Alpine keeps a shell for operators overriding entrypoint (hubd/runner/mcp).
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+ && adduser -D -H -u 65532 nonroot
 COPY --from=build /out/api /out/hubd /out/runner /out/mcp /usr/local/bin/
-# Default entry is api; override for hubd/runner/mcp as needed.
+USER nonroot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/api"]
