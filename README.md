@@ -25,8 +25,11 @@
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
 | [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
+| [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：字段、env、curl、session.note） |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
+| [docs/METRICS.md](docs/METRICS.md) | Prometheus `/metrics` 说明 · scrape · Grafana 查询 |
+| [deploy/grafana/](deploy/grafana/) | 示例 dashboard + `prometheus.yml.example` |
 | [deploy/nginx.conf.example](deploy/nginx.conf.example) · [Caddyfile.example](deploy/Caddyfile.example) | 边缘 TLS 反代示例 |
 | Release | `git tag vX.Y.Z && git push --tags` → 多架构二进制；本地 `make release-binaries` |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows 安装 WinFsp/rclone 与 hubd |

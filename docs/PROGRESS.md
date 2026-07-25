@@ -273,3 +273,4 @@ curl -s localhost:8080/v1/runtime/check
 - [x] CI `make smoke-all`；nginx/Caddy TLS 反代示例
 - [x] Docker 瘦身（`-s -w` / distroless API）+ CI `smoke-minio` + image build
 - [x] 多架构 Release（`v*` tag）+ compose healthcheck（api / postgres / redis）
+- [x] 多云接入 runbook：`docs/CLOUD-INTEGRATION.md`（OSS/COS/Qiniu/OCI 字段 · env · curl · session.note）
