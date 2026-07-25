@@ -43,7 +43,8 @@
 | **P3** | Job 持久化+worker、MCP、metrics | ✅ |
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
-| **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.1 |
+| **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
+| **发布** | `v0.2.0` 多架构二进制（tag → GitHub Release） | ✅ |
 
 ## 快速开始
 
