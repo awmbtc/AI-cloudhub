@@ -76,11 +76,15 @@ func runWorker(api, token, mountPoint string) {
 				// no jobs is normal
 				continue
 			}
-			log.Printf("claimed job %s drive=%s created_by=%s claimer=%s cmd=%v",
-				j.ID, j.DriveID, j.AgentID, j.ClaimedByAgentID, j.Command)
+			log.Printf("claimed job %s drive=%s created_by=%s claimer=%s connector=%s cmd=%v",
+				j.ID, j.DriveID, j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.Command)
 			mode := j.Mode
 			if mode != "" {
 				_ = os.Setenv("AI_CLOUDHUB_MODE", mode)
+			}
+			// Job-level connector overrides env (still BYOC clone on this host).
+			if j.ConnectorID != "" {
+				_ = os.Setenv("AI_CLOUDHUB_CONNECTOR_ID", j.ConnectorID)
 			}
 			err = runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
 			ok := err == nil
@@ -101,6 +105,7 @@ type jobDTO struct {
 	Mode             string   `json:"mode"`
 	Command          []string `json:"command"`
 	Status           string   `json:"status"`
+	ConnectorID      string   `json:"connector_id"`
 	AgentID          string   `json:"agent_id"`
 	ClaimedByAgentID string   `json:"claimed_by_agent_id"`
 }

@@ -29,6 +29,8 @@
 - Stripe webhook signature verify (`/v1/webhooks/stripe`, `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET`)
 - Checkout returns `stripe_metadata` for Checkout Session
 - Runner: `AI_CLOUDHUB_CONNECTOR_ID` git shallow clone (BYOC)
+- Paid marketplace `install` requires purchase status=paid
+- Jobs: `connector_id` field; runner claim applies it; MCP create_job support
 - `make smoke-stage-c`; CONNECTORS.md + PAYMENTS.md
 
 ## v0.2.1

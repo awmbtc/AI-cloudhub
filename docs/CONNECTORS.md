@@ -34,6 +34,15 @@ AI_CLOUDHUB_CONNECTOR_ID=CID \
 
 Clone is **shallow** (`--depth 1`). If `path_prefix` is set, dest is `$MOUNT/$path_prefix`; else `$MOUNT/repo`. Existing `.git` skips clone.
 
+### Jobs with `connector_id`
+
+```http
+POST /v1/jobs
+{ "drive_id":"…", "command":["make","test"], "connector_id":"<git connector id>" }
+```
+
+When a BYOC runner **claims** the job, it sets `AI_CLOUDHUB_CONNECTOR_ID` from the job field and runs the same git materialization after mount/sync. MCP `create_job` accepts `connector_id` too.
+
 DB/SaaS connectors are **registry only** in this build: agents read config from API and talk to the SaaS/DB from the runner with local credentials.
 
 ## Security

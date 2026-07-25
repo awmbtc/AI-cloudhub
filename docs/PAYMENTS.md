@@ -47,8 +47,12 @@ curl -sS -X POST $API/v1/webhooks/stripe \
   -d @event.json
 ```
 
+## Paid install gate
+
+`POST /v1/marketplace/{id}/install` for **paid** `agent_template` items requires a purchase with `status=paid` for the same user and item. Free items (`price_cents=0` or system catalog) install without checkout.
+
 ## Limits
 
 - No hosted Checkout UI in control plane  
 - No PCI card data handling  
-- Install of paid templates is not auto-gated on `paid` status yet (hook point for later)  
+- Real Stripe Checkout Session creation is client-side (use returned `stripe_metadata`)  

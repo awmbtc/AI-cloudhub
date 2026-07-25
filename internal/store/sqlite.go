@@ -270,6 +270,7 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE memory_entries ADD COLUMN embedding_json TEXT`,
 		`ALTER TABLE marketplace_items ADD COLUMN price_cents INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE marketplace_items ADD COLUMN currency TEXT`,
+		`ALTER TABLE jobs ADD COLUMN connector_id TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -999,14 +1000,14 @@ func parseTime(s string) time.Time {
 }
 
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
-		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), created_at, updated_at`
+		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''), created_at, updated_at`
 
 func (s *SQLite) CreateJob(j *Job) error {
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID,
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1084,10 +1085,10 @@ func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, err
 func (s *SQLite) UpdateJob(j *Job) error {
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
-		 agent_id=?, claimed_by_agent_id=?, updated_at=?
+		 agent_id=?, claimed_by_agent_id=?, connector_id=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID,
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1542,7 +1543,7 @@ func scanJob(row scannable) (*Job, error) {
 	var cmd, created, updated string
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &created, &updated,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("job not found")

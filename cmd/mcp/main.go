@@ -320,17 +320,18 @@ func toolRegistry() []toolMeta {
 			},
 		},
 		{
-			name: "create_job", description: "Enqueue BYOC job for user runners (D-001: no platform pool). Requires job.run.",
+			name: "create_job", description: "Enqueue BYOC job for user runners (D-001: no platform pool). Optional connector_id for git clone on runner. Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"drive_id":    map[string]interface{}{"type": "string"},
-					"command":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-					"mode":        map[string]interface{}{"type": "string", "description": "mount | sync_workspace | direct"},
-					"binding_id":  map[string]interface{}{"type": "string"},
-					"region_hint": map[string]interface{}{"type": "string"},
-					"note":        map[string]interface{}{"type": "string"},
+					"drive_id":     map[string]interface{}{"type": "string"},
+					"command":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"mode":         map[string]interface{}{"type": "string", "description": "mount | sync_workspace | direct"},
+					"binding_id":   map[string]interface{}{"type": "string"},
+					"region_hint":  map[string]interface{}{"type": "string"},
+					"note":         map[string]interface{}{"type": "string"},
+					"connector_id": map[string]interface{}{"type": "string", "description": "Optional Stage C connector (e.g. git) for runner materialization"},
 				},
 				"required": []string{"drive_id", "command"},
 			},
@@ -543,12 +544,13 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region)
 	case "create_job":
 		var args struct {
-			DriveID    string   `json:"drive_id"`
-			Command    []string `json:"command"`
-			Mode       string   `json:"mode"`
-			BindingID  string   `json:"binding_id"`
-			RegionHint string   `json:"region_hint"`
-			Note       string   `json:"note"`
+			DriveID     string   `json:"drive_id"`
+			Command     []string `json:"command"`
+			Mode        string   `json:"mode"`
+			BindingID   string   `json:"binding_id"`
+			RegionHint  string   `json:"region_hint"`
+			Note        string   `json:"note"`
+			ConnectorID string   `json:"connector_id"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -556,7 +558,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
 			return nil, fmt.Errorf("drive_id and command required")
 		}
-		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note)
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID)
 	case "claim_next_job":
 		return toolClaimNextJob(api, token)
 	case "complete_job":
@@ -901,7 +903,7 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string) (interf
 	return toolResultJSON(parsed)
 }
 
-func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note string) (interface{}, error) {
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string) (interface{}, error) {
 	payload := map[string]interface{}{
 		"drive_id": driveID,
 		"command":  command,
@@ -917,6 +919,9 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	}
 	if note != "" {
 		payload["note"] = note
+	}
+	if connectorID != "" {
+		payload["connector_id"] = connectorID
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
 	if err != nil {

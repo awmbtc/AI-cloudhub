@@ -282,7 +282,29 @@ type AgentInstallResult struct {
 	Extra   map[string]interface{} `json:"payload,omitempty"`
 }
 
+// HasPaidAccess reports whether user may use a paid item (free items always ok).
+func (s *Service) HasPaidAccess(userID, itemID string) (bool, error) {
+	it, err := s.Get(itemID)
+	if err != nil {
+		return false, err
+	}
+	if it.PriceCents <= 0 {
+		return true, nil
+	}
+	purchases, err := s.ListPurchases(userID, 200)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range purchases {
+		if p.ItemID == itemID && p.Status == "paid" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // InstallAgentTemplate materializes an agent from a marketplace agent_template.
+// Paid listings require a purchase with status=paid for this user.
 func (s *Service) InstallAgentTemplate(userID, itemID string, createAgent func(name, desc string, scopes []string) (agentID string, err error)) (*AgentInstallResult, error) {
 	it, err := s.Get(itemID)
 	if err != nil {
@@ -290,6 +312,13 @@ func (s *Service) InstallAgentTemplate(userID, itemID string, createAgent func(n
 	}
 	if it.Kind != KindAgentTemplate {
 		return nil, fmt.Errorf("item kind is %s, need agent_template", it.Kind)
+	}
+	ok, err := s.HasPaidAccess(userID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("purchase required: POST /v1/marketplace/%s/checkout then complete payment (status=paid)", itemID)
 	}
 	var payload map[string]interface{}
 	_ = json.Unmarshal(it.PayloadJSON, &payload)

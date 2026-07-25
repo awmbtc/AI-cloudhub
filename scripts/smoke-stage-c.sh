@@ -122,4 +122,44 @@ assert d.get("status")=="paid", d
 print("stripe webhook ok")
 '
 
+echo "== paid install gate =="
+PAID=$("${CURL[@]}" -X POST "$API/v1/marketplace" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"name":"paid-agent","kind":"agent_template","price_cents":100,"currency":"usd","public":true,"payload":{"name":"paidbot","default_scopes":["drive.read"]}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+CODE=$("${CURL[@]}" -o /tmp/aihub-inst.json -w '%{http_code}' -X POST "$API/v1/marketplace/$PAID/install" "${AUTH[@]}" -d '{}')
+test "$CODE" = "400"
+python3 -c 'import json; d=json.load(open("/tmp/aihub-inst.json")); assert "purchase" in d.get("error","").lower(), d; print("install blocked ok")'
+CHK=$("${CURL[@]}" -X POST "$API/v1/marketplace/$PAID/checkout" "${AUTH[@]}" -d '{}')
+PID=$(echo "$CHK" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+BUY=$(echo "$CHK" | python3 -c 'import sys,json; print(json.load(sys.stdin)["user_id"])')
+PAYLOAD=$(python3 - <<PY
+import json
+print(json.dumps({"type":"checkout.session.completed","data":{"object":{"id":"cs2","metadata":{"purchase_id":"$PID","user_id":"$BUY","item_id":"$PAID"}}}}))
+PY
+)
+export PAYLOAD
+SIG=$(PAYLOAD="$PAYLOAD" python3 - <<'PY'
+import hmac,hashlib,time,os
+ts=int(time.time()); p=os.environ["PAYLOAD"].encode()
+print("t=%d,v1=%s"%(ts,hmac.new(b"whsec_smoke",f"{ts}.".encode()+p,hashlib.sha256).hexdigest()))
+PY
+)
+"${CURL[@]}" -X POST "$API/v1/webhooks/stripe" -H "Stripe-Signature: $SIG" -H "Content-Type: application/json" -d "$PAYLOAD" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/marketplace/$PAID/install" "${AUTH[@]}" -d '{}' | python3 -c '
+import sys,json; d=json.load(sys.stdin); assert d.get("agent_id"); print("paid install ok", d["agent_id"])
+'
+
+echo "== job connector_id field =="
+# need a drive for job
+PIDR=$("${CURL[@]}" -X POST "$API/v1/providers" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"name":"m","type":"minio","credentials":{"access_key":"a","secret_key":"bsecretxx","endpoint":"http://127.0.0.1:9000"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+DID=$("${CURL[@]}" -X POST "$API/v1/drives" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"d\",\"provider_id\":\"$PIDR\",\"bucket\":\"b\",\"mount_point\":\"/workspace\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+J=$("${CURL[@]}" -X POST "$API/v1/jobs" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"echo\",\"hi\"],\"connector_id\":\"$CID\"}" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("connector_id")=="'"$CID"'"; print(d["id"])')
+echo "job connector ok $J"
+
 echo "OK smoke-stage-c"

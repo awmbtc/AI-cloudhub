@@ -34,6 +34,7 @@ type Job struct {
 	Status           Status    `json:"status"`
 	RegionHint       string    `json:"region_hint,omitempty"`
 	Note             string    `json:"note,omitempty"`
+	ConnectorID      string    `json:"connector_id,omitempty"` // Stage C: git/etc for runner
 	AgentID          string    `json:"agent_id,omitempty"`            // creator agent
 	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"` // last claimer agent
 	CreatedAt        time.Time `json:"created_at"`
@@ -42,12 +43,13 @@ type Job struct {
 
 // CreateInput for new job.
 type CreateInput struct {
-	DriveID    string   `json:"drive_id"`
-	BindingID  string   `json:"binding_id"`
-	Mode       string   `json:"mode"`
-	Command    []string `json:"command"`
-	RegionHint string   `json:"region_hint"`
-	Note       string   `json:"note"`
+	DriveID     string   `json:"drive_id"`
+	BindingID   string   `json:"binding_id"`
+	Mode        string   `json:"mode"`
+	Command     []string `json:"command"`
+	RegionHint  string   `json:"region_hint"`
+	Note        string   `json:"note"`
+	ConnectorID string   `json:"connector_id"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -97,6 +99,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		Status:      string(StatusPending),
 		RegionHint:  in.RegionHint,
 		Note:        note,
+		ConnectorID: strings.TrimSpace(in.ConnectorID),
 		AgentID:     strings.TrimSpace(in.AgentID),
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -342,6 +345,7 @@ func jobFromStore(sj *store.Job) *Job {
 		Status:           Status(sj.Status),
 		RegionHint:       sj.RegionHint,
 		Note:             sj.Note,
+		ConnectorID:      sj.ConnectorID,
 		AgentID:          sj.AgentID,
 		ClaimedByAgentID: sj.ClaimedByAgentID,
 		CreatedAt:        sj.CreatedAt,

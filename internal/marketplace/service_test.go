@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/awmbtc/AI-cloudhub/internal/store"
@@ -21,6 +22,37 @@ func TestListSystemAndInstall(t *testing.T) {
 		return created, nil
 	})
 	if err != nil || res.AgentID != "agent-1" {
+		t.Fatalf("%v %+v", err, res)
+	}
+}
+
+func TestInstallPaidRequiresPurchase(t *testing.T) {
+	st := store.NewMemory()
+	s := New(st)
+	it, err := s.Publish("seller", PublishInput{
+		Name: "paid-agent", Kind: KindAgentTemplate, Public: true, PriceCents: 999, Currency: "usd",
+		Payload: map[string]interface{}{"name": "paid", "default_scopes": []interface{}{"drive.read"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InstallAgentTemplate("buyer", it.ID, func(name, desc string, scopes []string) (string, error) {
+		return "x", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "purchase required") {
+		t.Fatalf("want purchase required, got %v", err)
+	}
+	p, err := s.Checkout("buyer", it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WebhookPaid("buyer", p.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.InstallAgentTemplate("buyer", it.ID, func(name, desc string, scopes []string) (string, error) {
+		return "agent-paid", nil
+	})
+	if err != nil || res.AgentID != "agent-paid" {
 		t.Fatalf("%v %+v", err, res)
 	}
 }

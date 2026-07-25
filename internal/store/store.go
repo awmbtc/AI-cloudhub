@@ -128,6 +128,8 @@ type Job struct {
 	Status     string
 	RegionHint string
 	Note       string
+	// ConnectorID optional Stage C connector (e.g. git) for runner materialization.
+	ConnectorID string
 	// AgentID is the agent that created the job (empty = human/API).
 	AgentID string
 	// ClaimedByAgentID is the agent that last claimed the job (empty = human runner).
