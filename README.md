@@ -27,6 +27,7 @@
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
 | [deploy/nginx.conf.example](deploy/nginx.conf.example) · [Caddyfile.example](deploy/Caddyfile.example) | 边缘 TLS 反代示例 |
+| Release | `git tag vX.Y.Z && git push --tags` → 多架构二进制；本地 `make release-binaries` |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows 安装 WinFsp/rclone 与 hubd |
 | [protocols/workspace-manifest.schema.json](protocols/workspace-manifest.schema.json) | Agent Manifest schema |
 

@@ -78,6 +78,26 @@ Browser CORS is off by default for pure agent/CLI use; enable only if a SPA shar
 - runner / jobs: user machine only; never run a multi-tenant pool for strangers (D-001).
 - Optional Linux sandbox: [SECCOMP.md](./SECCOMP.md), `scripts/runner-*.sh`.
 
+## Releases (multi-arch binaries)
+
+Tag a version to publish GitHub Release artifacts (linux/darwin/windows × amd64/arm64):
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+# → workflow .github/workflows/release.yml builds dist/* + checksums.txt
+```
+
+Local dry-run:
+
+```bash
+make release-binaries VERSION=0.2.0
+# dist/aicloudhub_0.2.0_linux_amd64.tar.gz …
+# dist/checksums.txt
+```
+
+Each archive contains `api`, `hubd`, `runner`, `mcp` (pure Go, `CGO_ENABLED=0`).
+
 ## Smoke before cutover
 
 ```bash
@@ -96,8 +116,10 @@ CI (GitHub Actions) on every push/PR to `main`:
 | Smoke suite | `make smoke-all` (no live object store) |
 | Smoke MinIO live | Docker MinIO + `make smoke-minio` with `REQUIRE=1` |
 | Docker image | multi-stage distroless API image build + `/healthz` |
+| Release (on `v*` tags) | multi-arch binary archives + checksums |
 
-Images: `deploy/Dockerfile` (distroless API), `deploy/Dockerfile.all` (alpine multi-binary).
+Images: `deploy/Dockerfile` (distroless API + `healthcheck` subcommand), `deploy/Dockerfile.all` (alpine multi-binary).  
+Compose: postgres/redis/api all have `healthcheck`; api depends on healthy DB/Redis.
 ## What we intentionally do not run in “platform production”
 
 - Large multi-tenant runner pools  

@@ -4,9 +4,8 @@ export CGO_ENABLED := 0
 BIN_DIR := .bin
 BINS    := api hubd runner mcp
 
-.PHONY: all build test help clean docker-api docker-all $(BINS) \
-	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp smoke-all
-all: build
+.PHONY: all build test help clean docker-api docker-all release-binaries $(BINS) \
+	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp smoke-allall: build
 
 build: $(BINS)
 
@@ -23,12 +22,19 @@ docker-api:
 docker-all:
 	docker build -f deploy/Dockerfile.all -t ai-cloudhub:all .
 
+# Cross-compile release tarballs into dist/ (see scripts/release-build.sh).
+# VERSION defaults to git describe; override: make release-binaries VERSION=0.2.0
+release-binaries:
+	@chmod +x scripts/release-build.sh
+	VERSION="$(VERSION)" ./scripts/release-build.sh $(VERSION)
+
 help:
 	@echo "AI-cloudhub targets (CGO_ENABLED=0):"
 	@echo "  make build          Build binaries into $(BIN_DIR)/ (api hubd runner mcp)"
 	@echo "  make test           go test ./..."
 	@echo "  make docker-api     Multi-stage distroless API image (deploy/Dockerfile)"
 	@echo "  make docker-all     Multi-binary alpine image (deploy/Dockerfile.all)"
+	@echo "  make release-binaries  Multi-arch archives → dist/ (+ checksums.txt)"
 	@echo "  make clean          Remove $(BIN_DIR)/"
 	@echo ""
 	@echo "Smoke targets (need local services as documented per script):"

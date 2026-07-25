@@ -21,6 +21,8 @@
 - CI: live MinIO smoke (`REQUIRE=1`) + Docker image build/healthz
 - deploy: distroless API Dockerfile (`-s -w`, version ldflags); alpine multi-binary; `.dockerignore`
 - deploy: nginx + Caddy TLS reverse-proxy examples
+- `api healthcheck` subcommand for distroless compose probes; prod compose postgres/redis/api healthchecks
+- Release workflow on `v*` tags + `scripts/release-build.sh` / `make release-binaries` (multi-arch)
 
 ### Close-out
 - 1.x→2.0 mainline closed: P0–P3, hardening waves 1–4, Stage A (Agent Identity + scopes + path jail), Stage B (drive allowlist, Policy Engine + `AI_CLOUDHUB_POLICY_FILE`, Manifest 2.0, audit.agent_id, Snapshot v0, sandbox env filter)

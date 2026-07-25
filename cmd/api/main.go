@@ -28,6 +28,13 @@ import (
 )
 
 func main() {
+	// Distroless-friendly probe (no curl/shell in the image):
+	//   /api healthcheck
+	// Optional: AI_CLOUDHUB_HEALTHCHECK_URL (default http://127.0.0.1:8080/healthz)
+	if len(os.Args) > 1 && (os.Args[1] == "healthcheck" || os.Args[1] == "-healthcheck") {
+		os.Exit(runHealthcheck())
+	}
+
 	cfg := config.Load()
 	if vr := cfg.Validate(); !vr.OK() {
 		for _, e := range vr.Errors {
@@ -147,6 +154,25 @@ func main() {
 		log.Fatalf("graceful shutdown: %v", err)
 	}
 	log.Printf("server stopped")
+}
+
+func runHealthcheck() int {
+	url := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_HEALTHCHECK_URL"))
+	if url == "" {
+		url = "http://127.0.0.1:8080/healthz"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Get(url)
+	if err != nil {
+		log.Printf("healthcheck: %v", err)
+		return 1
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		log.Printf("healthcheck: HTTP %d", res.StatusCode)
+		return 1
+	}
+	return 0
 }
 
 func openStore(path string) (store.Store, error) {

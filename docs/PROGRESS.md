@@ -272,3 +272,4 @@ curl -s localhost:8080/v1/runtime/check
 - [x] docs/PRODUCTION.md + docker-compose.prod STRICT / 强制密钥
 - [x] CI `make smoke-all`；nginx/Caddy TLS 反代示例
 - [x] Docker 瘦身（`-s -w` / distroless API）+ CI `smoke-minio` + image build
+- [x] 多架构 Release（`v*` tag）+ compose healthcheck（api / postgres / redis）

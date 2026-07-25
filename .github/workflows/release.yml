@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Multi-arch binaries
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+
+      - name: Build artifacts
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          OUT: dist
+        run: |
+          chmod +x scripts/release-build.sh
+          ./scripts/release-build.sh "$VERSION"
+          ls -la dist/
+
+      - name: Build & push note (Docker optional)
+        run: |
+          echo "Docker images are built in CI on main; tag builds publish binaries only."
+          echo "  docker build -f deploy/Dockerfile --build-arg VERSION=${{ steps.ver.outputs.version }} -t ai-cloudhub:api:${{ steps.ver.outputs.version }} ."
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: AI-cloudhub ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            ## Binaries
+
+            Multi-arch pure Go (`CGO_ENABLED=0`) archives for `api`, `hubd`, `runner`, `mcp`.
+
+            | Archive | Platforms |
+            |---------|-----------|
+            | `aicloudhub_*_linux_amd64.tar.gz` | Linux x86_64 |
+            | `aicloudhub_*_linux_arm64.tar.gz` | Linux aarch64 |
+            | `aicloudhub_*_darwin_amd64.tar.gz` | macOS Intel |
+            | `aicloudhub_*_darwin_arm64.tar.gz` | macOS Apple Silicon |
+            | `aicloudhub_*_windows_amd64.zip` | Windows x64 |
+
+            Verify: `shasum -a 256 -c checksums.txt`
+
+            ## Docs
+
+            - [PRODUCTION.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/PRODUCTION.md)
+            - [STS.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/STS.md)
+            - [POLICY.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/POLICY.md)
+
+            **D-001:** no platform multi-tenant runner pool — jobs run on user compute only.
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
