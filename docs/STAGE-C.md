@@ -51,6 +51,8 @@ curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
 
 - Stripe webhook: `POST /v1/webhooks/stripe` + `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET` — see [PAYMENTS.md](./PAYMENTS.md)  
 - Git connector clone on **user runner**: `AI_CLOUDHUB_CONNECTOR_ID` — see [CONNECTORS.md](./CONNECTORS.md)  
+- Paid install → episodic memory + graph edges + lineage (see [MARKETPLACE.md](./MARKETPLACE.md))  
+- Job complete note includes `cloned to <path>` when runner materializes git (append trail)  
 - Regression: `make smoke-stage-c`
 
 ## Still out of scope

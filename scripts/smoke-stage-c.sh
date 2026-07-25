@@ -145,8 +145,41 @@ print("t=%d,v1=%s"%(ts,hmac.new(b"whsec_smoke",f"{ts}.".encode()+p,hashlib.sha25
 PY
 )
 "${CURL[@]}" -X POST "$API/v1/webhooks/stripe" -H "Stripe-Signature: $SIG" -H "Content-Type: application/json" -d "$PAYLOAD" >/dev/null
-"${CURL[@]}" -X POST "$API/v1/marketplace/$PAID/install" "${AUTH[@]}" -d '{}' | python3 -c '
-import sys,json; d=json.load(sys.stdin); assert d.get("agent_id"); print("paid install ok", d["agent_id"])
+INST=$("${CURL[@]}" -X POST "$API/v1/marketplace/$PAID/install" "${AUTH[@]}" -d '{}')
+echo "$INST" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("agent_id"), d
+assert d.get("memory_id"), d
+print("paid install ok", d["agent_id"], "memory", d["memory_id"])
+'
+AGENT_ID=$(echo "$INST" | python3 -c 'import sys,json; print(json.load(sys.stdin)["agent_id"])')
+MEM_ID=$(echo "$INST" | python3 -c 'import sys,json; print(json.load(sys.stdin)["memory_id"])')
+
+echo "== install auto memory + graph =="
+"${CURL[@]}" "$API/v1/memory?key=marketplace.install.$PAID&limit=5" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+items=d.get("items") or []
+assert any(i.get("id")=="'"$MEM_ID"'" for i in items), d
+assert any("Installed marketplace" in (i.get("content") or "") for i in items), d
+print("install memory ok")
+'
+"${CURL[@]}" "$API/v1/graph?object=item:$PAID&limit=20" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+items=d.get("items") or []
+rels={ (e.get("subject"), e.get("relation"), e.get("object")) for e in items }
+assert any(r[1]=="installed" and r[2]=="item:'"$PAID"'" for r in rels), (rels, d)
+assert any(r[0]=="agent:'"$AGENT_ID"'" and r[1]=="from_item" for r in rels), (rels, d)
+print("install graph ok")
+'
+"${CURL[@]}" "$API/v1/lineage?entity=item:$PAID&limit=20" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+items=d.get("items") or []
+assert any(e.get("action")=="marketplace.install" for e in items), d
+print("install lineage ok")
 '
 
 echo "== job connector_id field =="
@@ -157,9 +190,22 @@ PIDR=$("${CURL[@]}" -X POST "$API/v1/providers" "${AUTH[@]}" -H 'Content-Type: a
 DID=$("${CURL[@]}" -X POST "$API/v1/drives" "${AUTH[@]}" -H 'Content-Type: application/json' \
   -d "{\"name\":\"d\",\"provider_id\":\"$PIDR\",\"bucket\":\"b\",\"mount_point\":\"/workspace\"}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-J=$("${CURL[@]}" -X POST "$API/v1/jobs" "${AUTH[@]}" -H 'Content-Type: application/json' \
-  -d "{\"drive_id\":\"$DID\",\"command\":[\"echo\",\"hi\"],\"connector_id\":\"$CID\"}" \
-  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("connector_id")=="'"$CID"'"; print(d["id"])')
+JRESP=$("${CURL[@]}" -X POST "$API/v1/jobs" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"echo\",\"hi\"],\"connector_id\":\"$CID\",\"note\":\"seed\"}")
+J=$(echo "$JRESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("connector_id")=="'"$CID"'"; print(d["id"])')
+echo "$JRESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "BYOC only" in (d.get("note") or ""); print("job create note ok")'
+# complete with clone path note → must append, not replace
+"${CURL[@]}" -X POST "$API/v1/jobs/$J/claim" "${AUTH[@]}" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/jobs/$J/complete" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"ok":true,"note":"cloned to /workspace/repo"}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+n=d.get("note") or ""
+assert "BYOC only" in n, d
+assert "cloned to /workspace/repo" in n, d
+assert "seed" in n, d
+print("job complete append clone path ok")
+'
 echo "job connector ok $J"
 
 echo "OK smoke-stage-c"

@@ -47,7 +47,7 @@ func main() {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	if err := runOnce(api, token, mountPoint, driveID, bindingID, "", args); err != nil {
+	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -86,11 +86,17 @@ func runWorker(api, token, mountPoint string) {
 			if j.ConnectorID != "" {
 				_ = os.Setenv("AI_CLOUDHUB_CONNECTOR_ID", j.ConnectorID)
 			}
-			err = runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
+			clonePath, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
 			ok := err == nil
 			note := ""
+			if clonePath != "" {
+				note = "cloned to " + clonePath
+			}
 			if err != nil {
-				note = err.Error()
+				if note != "" {
+					note += " | "
+				}
+				note += err.Error()
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
 			_ = completeJob(api, token, j.ID, ok, note)
@@ -142,12 +148,13 @@ func completeJob(api, token, id string, ok bool, note string) error {
 	return nil
 }
 
-func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) error {
+// runOnce prepares workspace and runs the agent command.
+// clonePath is non-empty when a git connector was resolved (cloned or already present).
+func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (clonePath string, err error) {
 	log.Printf("AI-cloudhub runner (BYOC) api=%s mount=%s job=%s", api, mountPoint, jobID)
 
 	var sessURL string
 	var body []byte
-	var err error
 	if bindingID != "" {
 		sessURL = api + "/v1/bindings/" + bindingID + "/session"
 		body, err = postJSON(sessURL, token, nil)
@@ -160,7 +167,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		})
 	}
 	if err != nil {
-		return fmt.Errorf("session: %w", err)
+		return "", fmt.Errorf("session: %w", err)
 	}
 
 	var bundle struct {
@@ -182,7 +189,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		Manifest json.RawMessage `json:"manifest"`
 	}
 	if err := json.Unmarshal(body, &bundle); err != nil {
-		return err
+		return "", err
 	}
 	spec := bundle.Spec
 	if spec.RcloneConf == "" {
@@ -193,14 +200,14 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	if _, err := exec.LookPath("rclone"); err != nil {
-		return fmt.Errorf("rclone not found in PATH")
+		return "", fmt.Errorf("rclone not found in PATH")
 	}
 
 	state := filepath.Join(os.TempDir(), "ai-cloudhub-runner")
 	_ = os.MkdirAll(state, 0o700)
 	confPath := filepath.Join(state, "rclone.conf")
 	if err := os.WriteFile(confPath, []byte(spec.RcloneConf), 0o600); err != nil {
-		return err
+		return "", err
 	}
 	_ = os.MkdirAll(filepath.Join(mountPoint, ".ai-cloudhub"), 0o755)
 	_ = os.MkdirAll(mountPoint, 0o755)
@@ -241,7 +248,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		pull.Stdout = os.Stdout
 		pull.Stderr = os.Stderr
 		if err := pull.Run(); err != nil {
-			return fmt.Errorf("sync pull: %w", err)
+			return "", fmt.Errorf("sync pull: %w", err)
 		}
 	} else {
 		mountCmd = exec.Command("rclone", "mount", spec.RemotePath, mountPoint,
@@ -252,7 +259,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		mountCmd.Stdout = os.Stdout
 		mountCmd.Stderr = os.Stderr
 		if err := mountCmd.Start(); err != nil {
-			return fmt.Errorf("mount: %w", err)
+			return "", fmt.Errorf("mount: %w", err)
 		}
 		for i := 0; i < 40; i++ {
 			if st, err := os.Stat(mountPoint); err == nil && st.IsDir() {
@@ -264,8 +271,11 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 
 	// Optional Git connector materialization (BYOC): AI_CLOUDHUB_CONNECTOR_ID + type=git.
 	// Control plane only stores non-secret config; clone runs here with user credentials/env.
-	if err := maybeGitConnector(api, token, mountPoint); err != nil {
-		log.Printf("git connector: %v (continuing)", err)
+	dest, gerr := maybeGitConnector(api, token, mountPoint)
+	if gerr != nil {
+		log.Printf("git connector: %v (continuing)", gerr)
+	} else {
+		clonePath = dest
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -287,6 +297,9 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if jobID != "" {
 		extra["AI_CLOUDHUB_JOB_ID"] = jobID
 	}
+	if clonePath != "" {
+		extra["AI_CLOUDHUB_CLONE_PATH"] = clonePath
+	}
 	jailOn := env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false"
 	var childEnv []string
 	if jailOn {
@@ -304,16 +317,16 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	if len(args) == 0 {
-		log.Printf("ready mode=%s path=%s (no command); waiting signal", mode, mountPoint)
+		log.Printf("ready mode=%s path=%s clone=%s (no command); waiting signal", mode, mountPoint, clonePath)
 		<-sig
-		return nil
+		return clonePath, nil
 	}
 
 	// Path jail: reject command args that resolve outside workspace.
 	if jailOn {
 		jail := sandbox.NewPathJail(mountPoint)
 		if err := jail.Allow(mountPoint); err != nil {
-			return fmt.Errorf("jail mount: %w", err)
+			return clonePath, fmt.Errorf("jail mount: %w", err)
 		}
 		for _, a := range args[1:] {
 			// only check path-looking args (absolute or containing / or ..)
@@ -321,7 +334,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 				continue
 			}
 			if err := jail.Allow(a); err != nil {
-				return fmt.Errorf("path jail: arg %q: %w", a, err)
+				return clonePath, fmt.Errorf("path jail: arg %q: %w", a, err)
 			}
 		}
 	}
@@ -332,7 +345,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if sandbox.Enabled() {
 		if err := sandbox.ApplyRunnerDefault(); err != nil {
 			if sandbox.Strict() {
-				return fmt.Errorf("seccomp: %w", err)
+				return clonePath, fmt.Errorf("seccomp: %w", err)
 			}
 			log.Printf("seccomp: apply failed (continuing): %v", err)
 		} else {
@@ -347,9 +360,9 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	agent.Stderr = os.Stderr
 	agent.Stdin = os.Stdin
 	if err := agent.Run(); err != nil {
-		return fmt.Errorf("agent: %w", err)
+		return clonePath, fmt.Errorf("agent: %w", err)
 	}
-	return nil
+	return clonePath, nil
 }
 
 func postJSON(url, token string, payload interface{}) ([]byte, error) {
@@ -387,24 +400,25 @@ func env(k, d string) string {
 
 // maybeGitConnector clones a git connector into the workspace when AI_CLOUDHUB_CONNECTOR_ID is set.
 // Config comes from GET /v1/connectors/{id}; secrets (tokens) stay in runner env (e.g. GIT_ASKPASS).
-func maybeGitConnector(api, token, mountPoint string) error {
+// Returns dest path when a git workspace is ready (cloned or already present).
+func maybeGitConnector(api, token, mountPoint string) (dest string, err error) {
 	cid := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CONNECTOR_ID"))
 	if cid == "" {
-		return nil
+		return "", nil
 	}
 	req, err := http.NewRequest(http.MethodGet, api+"/v1/connectors/"+cid, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode >= 300 {
-		return fmt.Errorf("GET connector HTTP %d: %s", res.StatusCode, body)
+		return "", fmt.Errorf("GET connector HTTP %d: %s", res.StatusCode, body)
 	}
 	var c struct {
 		Type   string          `json:"type"`
@@ -412,11 +426,11 @@ func maybeGitConnector(api, token, mountPoint string) error {
 		Config json.RawMessage `json:"config"`
 	}
 	if err := json.Unmarshal(body, &c); err != nil {
-		return err
+		return "", err
 	}
 	if !strings.EqualFold(c.Type, "git") {
 		log.Printf("connector %s type=%s (skip git clone)", cid, c.Type)
-		return nil
+		return "", nil
 	}
 	var cfg map[string]interface{}
 	_ = json.Unmarshal(c.Config, &cfg)
@@ -425,11 +439,10 @@ func maybeGitConnector(api, token, mountPoint string) error {
 		remote, _ = cfg["url"].(string)
 	}
 	if remote == "" {
-		return fmt.Errorf("git connector missing remote_url")
+		return "", fmt.Errorf("git connector missing remote_url")
 	}
 	branch, _ := cfg["branch"].(string)
 	prefix, _ := cfg["path_prefix"].(string)
-	dest := mountPoint
 	if prefix != "" {
 		dest = filepath.Join(mountPoint, prefix)
 	} else {
@@ -437,10 +450,10 @@ func maybeGitConnector(api, token, mountPoint string) error {
 	}
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
 		log.Printf("git connector: already cloned at %s", dest)
-		return nil
+		return dest, nil
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		return fmt.Errorf("git not in PATH")
+		return "", fmt.Errorf("git not in PATH")
 	}
 	_ = os.MkdirAll(filepath.Dir(dest), 0o755)
 	args := []string{"clone", "--depth", "1"}
@@ -454,7 +467,7 @@ func maybeGitConnector(api, token, mountPoint string) error {
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git clone: %w", err)
+		return "", fmt.Errorf("git clone: %w", err)
 	}
-	return nil
+	return dest, nil
 }

@@ -160,6 +160,49 @@ func TestReleaseToPending(t *testing.T) {
 	}
 }
 
+func TestCompleteAppendsNote(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-note"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}, Note: "user-seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(j.Note, "user-seed") || !strings.Contains(j.Note, "BYOC only") {
+		t.Fatalf("create note %q", j.Note)
+	}
+	if _, err := svc.Claim(uid, j.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	done, err := svc.Complete(uid, j.ID, true, "cloned to /workspace/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusSucceeded {
+		t.Fatalf("status %s", done.Status)
+	}
+	if !strings.Contains(done.Note, "BYOC only") {
+		t.Fatalf("create trail lost: %q", done.Note)
+	}
+	if !strings.Contains(done.Note, "cloned to /workspace/repo") {
+		t.Fatalf("clone path missing: %q", done.Note)
+	}
+	// empty complete note must not wipe
+	j2, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j2.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	keep, err := svc.Complete(uid, j2.ID, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(keep.Note, "BYOC only") {
+		t.Fatalf("empty complete wiped note: %q", keep.Note)
+	}
+}
+
 func TestCreateRecordsAgentID(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}, AgentID: "creator-a"})

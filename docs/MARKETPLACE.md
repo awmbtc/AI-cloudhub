@@ -25,8 +25,22 @@ DELETE /v1/marketplace/{id}   # human: unpublish own item
 
 Install only supports `kind=agent_template` and creates a user-owned agent via existing Agent Identity APIs.
 
+**Paid gate:** listings with `price_cents > 0` require a purchase with `status=paid` (checkout + Stripe webhook or pay stub) before install succeeds.
+
+### Side effects on successful install
+
+Best-effort (install still succeeds if any side effect fails):
+
+| Side effect | Detail |
+|-------------|--------|
+| Episodic memory | `key=marketplace.install.<item_id>`, content notes agent materialization; response includes `memory_id` |
+| Identity graph | `user:… --installed--> item:…`, `agent:… --from_item--> item:…`, `user:… --owns_agent--> agent:…` |
+| Lineage | `action=marketplace.install`, `entity=item:<id>`, parent `agent:<id>` |
+| Audit | `marketplace.install` |
+
 ## Limits
 
 - No signing / review workflow
-- No billable storefront
+- Skill/manifest kinds are publishable + checkoutable but **install** materializes only `agent_template`
+- No full PCI Stripe storefront (webhook signature + purchase status only)
 - System items cannot be deleted

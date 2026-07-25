@@ -295,6 +295,8 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 }
 
 // Complete sets terminal status.
+// Non-empty note is appended to the existing trail (create D-001 / release / clone path),
+// not replaced — same pattern as ReleaseToPending. Capped at 2000 chars.
 func (s *Service) Complete(userID, id string, ok bool, note string) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
 	if err != nil {
@@ -305,14 +307,31 @@ func (s *Service) Complete(userID, id string, ok bool, note string) (*Job, error
 	} else {
 		sj.Status = string(StatusFailed)
 	}
-	if note != "" {
-		sj.Note = note
+	if extra := strings.TrimSpace(note); extra != "" {
+		sj.Note = appendJobNote(sj.Note, extra)
 	}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
 	return jobFromStore(sj), nil
+}
+
+// appendJobNote joins note segments with " | " and caps length (tail kept).
+func appendJobNote(existing, extra string) string {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
+		return existing
+	}
+	note := strings.TrimSpace(existing)
+	if note != "" {
+		note += " | "
+	}
+	note += extra
+	if len(note) > 2000 {
+		note = note[len(note)-2000:]
+	}
+	return note
 }
 
 // Cancel cancels a non-terminal job.

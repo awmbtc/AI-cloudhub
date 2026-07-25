@@ -286,3 +286,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Docker 瘦身（`-s -w` / distroless API）+ CI `smoke-minio` + image build
 - [x] 多架构 Release（`v*` tag）+ compose healthcheck（api / postgres / redis）
 - [x] 多云接入 runbook：`docs/CLOUD-INTEGRATION.md`（OSS/COS/Qiniu/OCI 字段 · env · curl · session.note）
+
+### Stage C 本波（install 副作用 + job clone note）
+
+- [x] 付费/免费 **agent_template install** 成功后自动写：episodic memory、idgraph edges、lineage
+- [x] install 响应 `memory_id`；审计 `marketplace.install` 保留
+- [x] Job `Complete` note **追加**（不再整段覆盖），cap 2000
+- [x] BYOC runner：`maybeGitConnector` 返回 dest；complete note `cloned to <path>`；env `AI_CLOUDHUB_CLONE_PATH`
+- [x] `smoke-stage-c` 覆盖 install memory/graph/lineage + complete append
+- [x] 文档：MARKETPLACE / CONNECTORS / STAGE-C / CHANGELOG

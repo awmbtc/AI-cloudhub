@@ -32,6 +32,8 @@
 - Paid marketplace `install` requires purchase status=paid
 - Jobs: `connector_id` field; runner claim applies it; MCP create_job support
 - `make smoke-stage-c`; CONNECTORS.md + PAYMENTS.md
+- Install side effects: episodic memory + identity graph + lineage; response `memory_id`
+- Job `Complete` **appends** note (preserves D-001); runner writes `cloned to <path>` + `AI_CLOUDHUB_CLONE_PATH`
 
 ## v0.2.1
 

@@ -208,7 +208,19 @@ func (s *Server) routeMarketplaceSub(w http.ResponseWriter, r *http.Request, use
 			return
 		}
 		s.auth.Audit(userID, "marketplace.install", id, res.AgentID)
-		writeJSON(w, http.StatusCreated, res)
+		// Stage C: auto episodic memory + identity graph + lineage on successful install.
+		side := s.recordMarketplaceInstall(userID, id, res)
+		out := map[string]interface{}{
+			"agent_id": res.AgentID,
+			"name":     res.Name,
+			"scopes":   res.Scopes,
+			"item_id":  res.ItemID,
+			"payload":  res.Extra,
+		}
+		if side.MemoryID != "" {
+			out["memory_id"] = side.MemoryID
+		}
+		writeJSON(w, http.StatusCreated, out)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "checkout" {
