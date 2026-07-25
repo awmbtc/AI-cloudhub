@@ -55,7 +55,8 @@ curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
 - Install kinds: `agent_template` (agent) · `skill` / `manifest` (payload + memory, no agent)  
 - Job complete note: `cloned to <path>` or `clone failed: …`; optional `AI_CLOUDHUB_CLONE_STRICT=1`  
 - Checkout returns `checkout_url` (mock or live Stripe Session) — [PAYMENTS.md](./PAYMENTS.md)  
-- Postgres connector: runner injects `AI_CLOUDHUB_PG_*` + optional host `PGPASSWORD` — [CONNECTORS.md](./CONNECTORS.md)  
+- Postgres / MySQL connectors: runner injects `AI_CLOUDHUB_PG_*` / `AI_CLOUDHUB_MYSQL_*` + host password env — [CONNECTORS.md](./CONNECTORS.md)  
+- OpenAPI: Stage C paths in [openapi.yaml](./openapi.yaml)  
 - Regression: `make smoke-stage-c`
 
 ## Still out of scope

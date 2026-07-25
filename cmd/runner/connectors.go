@@ -14,11 +14,13 @@ import (
 
 // connectorMaterialization is the BYOC outcome of materializing a connector.
 type connectorMaterialization struct {
-	Note      string
-	ClonePath string
-	ExtraEnv  map[string]string
-	PassLibpq bool
-	Err       error
+	Note       string
+	ClonePath  string
+	ExtraEnv   map[string]string
+	PassLibpq  bool
+	PassMysql  bool
+	Err        error
+	StrictHint string // clone | pg | mysql | any
 }
 
 // materializeConnector fetches the job/env connector and applies type-specific BYOC steps.
@@ -30,13 +32,13 @@ func materializeConnector(api, token, mountPoint string) connectorMaterializatio
 	}
 	typ, cfg, err := fetchConnector(api, token, cid)
 	if err != nil {
-		return connectorMaterialization{Err: err, Note: "connector failed: " + err.Error()}
+		return connectorMaterialization{Err: err, Note: "connector failed: " + err.Error(), StrictHint: "any"}
 	}
 	switch strings.ToLower(typ) {
 	case "git":
 		dest, gerr := applyGitClone(cfg, mountPoint)
 		if gerr != nil {
-			return connectorMaterialization{Err: gerr, Note: "clone failed: " + gerr.Error()}
+			return connectorMaterialization{Err: gerr, Note: "clone failed: " + gerr.Error(), StrictHint: "clone"}
 		}
 		if dest == "" {
 			return connectorMaterialization{}
@@ -45,9 +47,15 @@ func materializeConnector(api, token, mountPoint string) connectorMaterializatio
 	case "postgres":
 		extra, note, perr := applyPostgresEnv(cfg)
 		if perr != nil {
-			return connectorMaterialization{Err: perr, Note: "pg failed: " + perr.Error()}
+			return connectorMaterialization{Err: perr, Note: "pg failed: " + perr.Error(), StrictHint: "pg"}
 		}
 		return connectorMaterialization{Note: note, ExtraEnv: extra, PassLibpq: true}
+	case "mysql":
+		extra, note, merr := applyMysqlEnv(cfg)
+		if merr != nil {
+			return connectorMaterialization{Err: merr, Note: "mysql failed: " + merr.Error(), StrictHint: "mysql"}
+		}
+		return connectorMaterialization{Note: note, ExtraEnv: extra, PassMysql: true}
 	default:
 		log.Printf("connector %s type=%s (no materializer)", cid, typ)
 		return connectorMaterialization{}
@@ -202,5 +210,56 @@ func dsnLooksSecret(tmpl string) bool {
 
 func pgStrict() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_PG_STRICT")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// applyMysqlEnv builds non-secret AI_CLOUDHUB_MYSQL_* env for the agent.
+// Password must come from host MYSQL_PWD (PassMysql), never config.
+func applyMysqlEnv(cfg map[string]interface{}) (extra map[string]string, note string, err error) {
+	host := cfgStr(cfg, "host")
+	database := cfgStr(cfg, "database")
+	if host == "" || database == "" {
+		return nil, "", fmt.Errorf("mysql connector missing host or database")
+	}
+	port := cfgStr(cfg, "port")
+	if port == "" {
+		port = "3306"
+	}
+	user := cfgStr(cfg, "user")
+	params := cfgStr(cfg, "params")
+	tmpl := cfgStr(cfg, "dsn_template")
+	if tmpl != "" && dsnLooksSecret(tmpl) {
+		return nil, "", fmt.Errorf("dsn_template must not embed credentials")
+	}
+	if tmpl == "" {
+		// Go-sql-driver style without password: user@tcp(host:port)/db
+		u := user
+		if u == "" {
+			u = "root"
+		}
+		tmpl = fmt.Sprintf("%s@tcp(%s:%s)/%s", u, host, port, database)
+		if params != "" {
+			tmpl += "?" + params
+		}
+	}
+	extra = map[string]string{
+		"AI_CLOUDHUB_MYSQL_HOST":         host,
+		"AI_CLOUDHUB_MYSQL_PORT":         port,
+		"AI_CLOUDHUB_MYSQL_DATABASE":     database,
+		"AI_CLOUDHUB_MYSQL_DSN_TEMPLATE": tmpl,
+	}
+	if user != "" {
+		extra["AI_CLOUDHUB_MYSQL_USER"] = user
+	}
+	if params != "" {
+		extra["AI_CLOUDHUB_MYSQL_PARAMS"] = params
+	}
+	note = fmt.Sprintf("mysql ready host=%s db=%s", host, database)
+	log.Printf("mysql connector: %s", note)
+	return extra, note, nil
+}
+
+func mysqlStrict() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_MYSQL_STRICT")))
 	return v == "1" || v == "true" || v == "yes"
 }

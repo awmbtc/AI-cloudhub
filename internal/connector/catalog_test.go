@@ -77,3 +77,41 @@ func TestCatalogPostgresFields(t *testing.T) {
 		t.Fatal("postgres missing")
 	}
 }
+
+func TestCreateMysqlStripsAndFields(t *testing.T) {
+	s := New(store.NewMemory())
+	c, err := s.Create("u1", CreateInput{
+		Type: "mysql",
+		Name: "mdb",
+		Config: map[string]interface{}{
+			"host": "mysql.example.com", "database": "app", "user": "ro",
+			"password": "SECRET", "mysql_pwd": "also",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(c.ConfigJSON, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["password"]; ok {
+		t.Fatalf("password not stripped: %v", cfg)
+	}
+	if cfg["host"] != "mysql.example.com" {
+		t.Fatalf("%v", cfg)
+	}
+	var found bool
+	for _, m := range Catalog() {
+		if m.Type == "mysql" {
+			found = true
+			joined := strings.Join(m.Fields, ",")
+			if !strings.Contains(joined, "dsn_template") {
+				t.Fatalf("fields %v", m.Fields)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("mysql missing")
+	}
+}

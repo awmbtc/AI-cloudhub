@@ -25,6 +25,8 @@ info:
     - `/v1/agents*` when agent service is wired (default in `cmd/api`).
     - `/v1/devices*` when device service is wired (default in `cmd/api`).
     - `/v1/jobs*` when job service is wired (default in `cmd/api`).
+    - **Stage C** (default in `cmd/api`): `/v1/memory*`, `/v1/marketplace*`, `/v1/purchases*`,
+      `/v1/connectors*`, `/v1/lineage`, `/v1/graph`, `/v1/modules`, `/v1/webhooks/stripe`.
     - `/v1/workspaces*` only when `ENABLE_PLATFORM_S3=1` (legacy platform S3 workspace; not the primary BYOS path).
   contact:
     name: AI-cloudhub
@@ -56,6 +58,22 @@ tags:
     description: Durable BYOC job queue (user runners only; no platform pool)
   - name: devices
     description: hubd/runtime device registration (optional service; human session only)
+  - name: memory
+    description: Stage C Memory Kernel (working|episodic|semantic; optional client embeddings)
+  - name: marketplace
+    description: Stage C catalog, install, checkout (no PCI card data on control plane)
+  - name: connectors
+    description: Git/DB/SaaS connector bindings (non-secret config; materialize on BYOC runner)
+  - name: lineage
+    description: Stage C append-only data lineage events
+  - name: graph
+    description: Stage C identity graph edges
+  - name: modules
+    description: Logical module registry (monolith default; D-002)
+  - name: purchases
+    description: Marketplace purchases list and dev pay stub
+  - name: webhooks
+    description: Payment provider webhooks (Stripe signature)
 
 components:
   securitySchemes:
@@ -665,6 +683,9 @@ components:
         note:
           type: string
           description: Often includes "BYOC only … no platform large pool (D-001)"
+        connector_id:
+          type: string
+          description: Optional Stage C connector (git clone / postgres|mysql env on runner)
         created_at:
           type: string
           format: date-time
@@ -692,6 +713,9 @@ components:
           type: string
         note:
           type: string
+        connector_id:
+          type: string
+          description: Optional git/postgres/mysql connector for runner materialization
 
     JobComplete:
       type: object
@@ -836,6 +860,122 @@ components:
         scopes:
           type: array
           items: { type: string }
+
+
+    MemoryEntry:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        agent_id: { type: string }
+        drive_id: { type: string }
+        layer:
+          type: string
+          enum: [working, episodic, semantic]
+        key: { type: string }
+        content: { type: string }
+        meta: { type: object, additionalProperties: true }
+        embedding:
+          type: array
+          items: { type: number }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    MarketplaceItem:
+      type: object
+      properties:
+        id: { type: string }
+        publisher_user_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind:
+          type: string
+          enum: [agent_template, skill, manifest]
+        version: { type: string }
+        payload: { type: object, additionalProperties: true }
+        public: { type: boolean }
+        price_cents: { type: integer, format: int64 }
+        currency: { type: string }
+        created_at: { type: string, format: date-time }
+
+    CheckoutResult:
+      type: object
+      description: Purchase plus Stripe hints; checkout_url is mock without STRIPE secret key
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        item_id: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        currency: { type: string }
+        status: { type: string, enum: [pending, paid, failed, refunded] }
+        provider: { type: string }
+        provider_ref: { type: string }
+        stripe_metadata:
+          type: object
+          additionalProperties: { type: string }
+        checkout_url: { type: string }
+        session_id: { type: string }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+
+    InstallResult:
+      type: object
+      properties:
+        kind: { type: string }
+        item_id: { type: string }
+        name: { type: string }
+        agent_id: { type: string, description: Set only for agent_template }
+        scopes:
+          type: array
+          items: { type: string }
+        payload: { type: object, additionalProperties: true }
+        memory_id: { type: string }
+
+    ConnectorBinding:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        type: { type: string, example: git }
+        name: { type: string }
+        config:
+          type: object
+          additionalProperties: true
+          description: Non-secret JSON object (not base64)
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+
+    GraphEdge:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        subject: { type: string }
+        relation: { type: string }
+        object: { type: string }
+        meta: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+
+    LineageEvent:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        actor_id: { type: string }
+        action: { type: string }
+        entity: { type: string }
+        parent: { type: string }
+        detail: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ModuleInfo:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        package: { type: string }
+        process: { type: string }
+        status: { type: string }
 
     Device:
       type: object
@@ -3425,3 +3565,452 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+
+  /v1/modules:
+    get:
+      tags: [modules]
+      summary: List logical modules
+      operationId: listModules
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Module registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModuleInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/memory:
+    get:
+      tags: [memory]
+      summary: List memory entries
+      operationId: listMemory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: layer, in: query, schema: { type: string } }
+        - { name: key, in: query, schema: { type: string } }
+        - { name: drive_id, in: query, schema: { type: string } }
+        - { name: agent_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MemoryEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [memory]
+      summary: Put memory entry
+      operationId: putMemory
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                layer: { type: string, enum: [working, episodic, semantic] }
+                content: { type: string }
+                key: { type: string }
+                drive_id: { type: string }
+                agent_id: { type: string }
+                meta: { type: object, additionalProperties: true }
+                embedding: { type: array, items: { type: number } }
+                ttl_sec: { type: integer }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEntry' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/memory/search:
+    post:
+      tags: [memory]
+      summary: Vector search (client embeddings)
+      operationId: searchMemory
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: array, items: { type: number } }
+                k: { type: integer }
+                layer: { type: string }
+      responses:
+        '200':
+          description: Hits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        entry: { $ref: '#/components/schemas/MemoryEntry' }
+                        score: { type: number }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/memory/{id}:
+    get:
+      tags: [memory]
+      summary: Get memory entry
+      operationId: getMemory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEntry' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [memory]
+      summary: Delete memory entry
+      operationId: deleteMemory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Deleted
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/marketplace:
+    get:
+      tags: [marketplace]
+      summary: List catalog
+      operationId: listMarketplace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: mine, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MarketplaceItem' }
+    post:
+      tags: [marketplace]
+      summary: Publish item (human)
+      operationId: publishMarketplace
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                kind: { type: string, enum: [agent_template, skill, manifest] }
+                version: { type: string }
+                payload: { type: object }
+                public: { type: boolean }
+                price_cents: { type: integer, format: int64 }
+                currency: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketplaceItem' }
+        '403':
+          description: Human session required
+
+  /v1/marketplace/{id}:
+    get:
+      tags: [marketplace]
+      summary: Get item
+      operationId: getMarketplaceItem
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketplaceItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [marketplace]
+      summary: Unpublish own item (human)
+      operationId: deleteMarketplaceItem
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
+        '403': { description: Human session required }
+
+  /v1/marketplace/{id}/install:
+    post:
+      tags: [marketplace]
+      summary: Install item
+      description: |
+        agent_template → creates agent (human only). skill|manifest → payload + memory (agents OK).
+        Paid items require purchase status=paid.
+      operationId: installMarketplace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Human required for agent_template }
+
+  /v1/marketplace/{id}/checkout:
+    post:
+      tags: [marketplace]
+      summary: Checkout (human)
+      description: Returns purchase + stripe_metadata + checkout_url (mock or live Session).
+      operationId: checkoutMarketplace
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutResult' }
+        '403': { description: Human session required }
+
+  /v1/purchases:
+    get:
+      tags: [purchases]
+      summary: List purchases (human)
+      operationId: listPurchases
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { type: object } }
+
+  /v1/purchases/{id}/pay:
+    post:
+      tags: [purchases]
+      summary: Dev pay stub (mark paid)
+      operationId: payPurchase
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider_ref: { type: string }
+      responses:
+        '200': { description: Purchase paid }
+
+  /v1/webhooks/stripe:
+    post:
+      tags: [webhooks]
+      summary: Stripe webhook (signature)
+      description: No bearer auth; verify Stripe-Signature with AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET.
+      operationId: stripeWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Purchase updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/connectors/catalog:
+    get:
+      tags: [connectors]
+      summary: Connector type catalog
+      operationId: connectorsCatalog
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { type: object } }
+
+  /v1/connectors:
+    get:
+      tags: [connectors]
+      summary: List connector bindings
+      operationId: listConnectors
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectorBinding' }
+    post:
+      tags: [connectors]
+      summary: Register connector (human)
+      description: Secrets in config are stripped. Materialization runs on BYOC runner.
+      operationId: createConnector
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, example: postgres }
+                name: { type: string }
+                config: { type: object, additionalProperties: true }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectorBinding' }
+        '403': { description: Human session required }
+
+  /v1/connectors/{id}:
+    get:
+      tags: [connectors]
+      summary: Get connector
+      operationId: getConnector
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectorBinding' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [connectors]
+      summary: Delete connector (human)
+      operationId: deleteConnector
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted }
+        '403': { description: Human session required }
+
+  /v1/lineage:
+    get:
+      tags: [lineage]
+      summary: List lineage events
+      operationId: listLineage
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: entity, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LineageEvent' }
+    post:
+      tags: [lineage]
+      summary: Record lineage event
+      operationId: recordLineage
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, entity]
+              properties:
+                action: { type: string }
+                entity: { type: string }
+                parent: { type: string }
+                detail: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LineageEvent' }
+
+  /v1/graph:
+    get:
+      tags: [graph]
+      summary: List identity graph edges
+      operationId: listGraph
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: subject, in: query, schema: { type: string } }
+        - { name: object, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/GraphEdge' }
+    post:
+      tags: [graph]
+      summary: Upsert graph edge
+      operationId: linkGraph
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, relation, object]
+              properties:
+                subject: { type: string }
+                relation: { type: string }
+                object: { type: string }
+                meta: { type: object }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphEdge' }

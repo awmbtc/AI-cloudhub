@@ -32,7 +32,8 @@ func Catalog() []TypeMeta {
 			Fields: []string{"host", "port?", "database", "user?", "schema?", "sslmode?", "dsn_template?"},
 			Notes:  "Non-secret binding; runner injects AI_CLOUDHUB_PG_*; password via host PGPASSWORD (D-001)"},
 		{Type: "mysql", Name: "MySQL", Category: "db", Implemented: true,
-			Fields: []string{"host", "database"}, Notes: "Binding registry; query plane on user side"},
+			Fields: []string{"host", "port?", "database", "user?", "params?", "dsn_template?"},
+			Notes:  "Non-secret binding; runner injects AI_CLOUDHUB_MYSQL_*; password via host MYSQL_PWD (D-001)"},
 		{Type: "notion", Name: "Notion workspace", Category: "saas", Implemented: true,
 			Fields: []string{"workspace_id"}, Notes: "OAuth/token held by user; control plane stores non-secret config only"},
 		{Type: "slack", Name: "Slack workspace", Category: "saas", Implemented: true,
@@ -85,12 +86,16 @@ func (s *Service) Create(userID string, in CreateInput) (*store.ConnectorBinding
 	}
 	// Strip common secret keys if user mistakenly sent them (case-insensitive).
 	stripSecretKeys(cfg)
-	if t == "postgres" {
+	if t == "postgres" || t == "mysql" {
 		if strings.TrimSpace(cfgString(cfg, "host")) == "" || strings.TrimSpace(cfgString(cfg, "database")) == "" {
-			return nil, fmt.Errorf("postgres connector requires host and database")
+			return nil, fmt.Errorf("%s connector requires host and database", t)
 		}
 		if tmpl := cfgString(cfg, "dsn_template"); tmpl != "" && dsnTemplateLooksSecret(tmpl) {
-			return nil, fmt.Errorf("dsn_template must not embed credentials (use runner PGPASSWORD)")
+			hint := "PGPASSWORD"
+			if t == "mysql" {
+				hint = "MYSQL_PWD"
+			}
+			return nil, fmt.Errorf("dsn_template must not embed credentials (use runner %s)", hint)
 		}
 	}
 	b, _ := json.Marshal(cfg)
@@ -121,7 +126,7 @@ func (s *Service) Delete(userID, id string) error {
 
 var secretConfigKeys = []string{
 	"password", "token", "secret", "api_key", "access_token",
-	"dsn", "url", "connection_string", "conn_str", "pgpassword", "private_key",
+	"dsn", "url", "connection_string", "conn_str", "pgpassword", "mysql_pwd", "private_key",
 }
 
 func stripSecretKeys(cfg map[string]interface{}) {

@@ -92,7 +92,26 @@ Injected (non-secret):
 
 When jail is on, parent **`PGPASSWORD`** (and related libpq keys) pass through only if postgres materialization succeeded (`PassLibpq`). Set `AI_CLOUDHUB_PASS_PG=0` to disable. Soft fail note: `pg failed: …`; `AI_CLOUDHUB_PG_STRICT=1` fails the job.
 
-MySQL / SaaS connectors remain **registry only** in this build (same binding API; no runner materializer yet).
+## MySQL + runner contract
+
+Parallel to Postgres:
+
+```http
+POST /v1/connectors
+{ "type":"mysql", "name":"app-db",
+  "config":{ "host":"mysql.example.com", "database":"app", "user":"app_ro", "port":"3306" } }
+```
+
+| Env (injected) | Meaning |
+|----------------|---------|
+| `AI_CLOUDHUB_MYSQL_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_PARAMS` | fields |
+| `AI_CLOUDHUB_MYSQL_DSN_TEMPLATE` | password-less DSN (`user@tcp(host:port)/db`) |
+
+Host secrets: `MYSQL_PWD` (pass-through when jail on + materialize succeeded).  
+`AI_CLOUDHUB_MYSQL_STRICT=1` fails job on materialize error; `AI_CLOUDHUB_PASS_MYSQL=0` disables pwd pass-through.  
+Job note: `mysql ready host=… db=…` or `mysql failed: …`.
+
+SaaS connectors (Notion/Slack/GitHub) remain **registry only** in this build.
 
 ## Security
 

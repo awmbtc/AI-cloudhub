@@ -73,6 +73,31 @@ func TestFilterEnvPassLibpq(t *testing.T) {
 	}
 }
 
+func TestFilterEnvPassMysql(t *testing.T) {
+	base := []string{"PATH=/bin", "MYSQL_PWD=secret", "EVIL=1", "AI_CLOUDHUB_WORKSPACE=/w"}
+	got := FilterEnv(base, map[string]string{"AI_CLOUDHUB_MYSQL_HOST": "db"}, EnvFilter{})
+	m := map[string]string{}
+	for _, e := range got {
+		i := indexEq(e)
+		m[e[:i]] = e[i+1:]
+	}
+	if _, ok := m["MYSQL_PWD"]; ok {
+		t.Fatal("MYSQL_PWD must be blocked without PassMysql")
+	}
+	got2 := FilterEnv(base, map[string]string{"AI_CLOUDHUB_MYSQL_HOST": "db"}, EnvFilter{PassMysql: true})
+	m2 := map[string]string{}
+	for _, e := range got2 {
+		i := indexEq(e)
+		m2[e[:i]] = e[i+1:]
+	}
+	if m2["MYSQL_PWD"] != "secret" {
+		t.Fatalf("want MYSQL_PWD with PassMysql, got %v", m2)
+	}
+	if _, ok := m2["EVIL"]; ok {
+		t.Fatal("EVIL should stay blocked")
+	}
+}
+
 func TestFilterEnvDenyNetwork(t *testing.T) {
 	base := []string{"PATH=/bin", "HTTP_PROXY=http://proxy:8080", "AI_CLOUDHUB_WORKSPACE=/w"}
 	got := FilterEnv(base, nil, EnvFilter{DenyNetwork: true})

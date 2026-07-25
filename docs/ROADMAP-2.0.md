@@ -202,7 +202,7 @@ Deny:   .. 穿越、符号链接逃逸（尽力）、空路径
 - [x] Bindings：agent scope + drive allowlist/policy 过滤；Devices：agent token 一律 403  
 - [x] 可选：Qiniu 私有下载 token（`qiniu_download`）；OCI API-key IAM 校验（`oci_iam`）— 见 [STS.md](./STS.md)  
 
-**M-B 之后仍不做：** 远程 PDP；OCI PAR/S3 secret 自动铸造；平台大规模 Runner 池（D-001）。诚实边界见 [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)。
+**M-B 之后黑名单仍生效：** 平台大规模 Runner 池（D-001）。Stage C 已交付远程 PDP / OCI PAR·secret（best-effort）；诚实边界见 [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md) · [STAGE-C.md](./STAGE-C.md)。
 
 ---
 

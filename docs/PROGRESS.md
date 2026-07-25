@@ -319,3 +319,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Postgres connector：create strip + host/db 校验；runner `AI_CLOUDHUB_PG_*` + `PassLibpq`
 - [x] `AI_CLOUDHUB_PG_STRICT` / `AI_CLOUDHUB_PASS_PG=0`
 - [x] smoke-stage-c：checkout_url + postgres strip；版本钉 **0.2.3** + tag
+
+### 本波（mysql BYOC + OpenAPI Stage C）
+
+- [x] MySQL connector：catalog/create strip + runner `AI_CLOUDHUB_MYSQL_*` + `PassMysql` (`MYSQL_PWD`)
+- [x] `AI_CLOUDHUB_MYSQL_STRICT` / `AI_CLOUDHUB_PASS_MYSQL=0`
+- [x] OpenAPI：`/v1/memory*` `/v1/marketplace*` `/v1/connectors*` `/v1/lineage` `/v1/graph` `/v1/modules` purchases/webhooks
+- [x] Job schema `connector_id`；smoke-stage-c mysql strip

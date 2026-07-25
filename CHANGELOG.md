@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Connectors
+- MySQL BYOC env materializer (parity with postgres): `AI_CLOUDHUB_MYSQL_*`, host `MYSQL_PWD` via sandbox `PassMysql`
+- `AI_CLOUDHUB_MYSQL_STRICT` / `AI_CLOUDHUB_PASS_MYSQL=0`
+
+### OpenAPI
+- Stage C paths and schemas: memory, marketplace, checkout_url, connectors, lineage, graph, modules, purchases, Stripe webhook
+- Job `connector_id` documented
+
 ## v0.2.3
 
 Stage C deepen: MCP tools, Stripe checkout_url, postgres BYOC env, config JSON fix.

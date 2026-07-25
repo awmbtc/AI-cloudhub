@@ -287,23 +287,24 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 	}
 
-	// BYOC connector materialization: git clone and/or postgres env inject.
-	// Control plane stores non-secret config only; host holds secrets (GIT_ASKPASS / PGPASSWORD).
-	// Soft default: continue agent on fail but surface note; CLONE_STRICT / PG_STRICT fail job.
+	// BYOC connector materialization: git / postgres / mysql env inject.
+	// Control plane stores non-secret config only; host holds secrets (GIT_ASKPASS / PGPASSWORD / MYSQL_PWD).
+	// Soft default: continue agent on fail but surface note; *_STRICT fail job.
 	mat := materializeConnector(api, token, mountPoint)
 	if mat.Note != "" {
 		cloneNote = mat.Note
 	}
 	if mat.Err != nil {
 		strict := false
-		if strings.HasPrefix(mat.Note, "clone failed") || strings.Contains(mat.Err.Error(), "git") {
+		switch mat.StrictHint {
+		case "clone":
 			strict = cloneStrict()
-		}
-		if strings.HasPrefix(mat.Note, "pg failed") || strings.Contains(mat.Err.Error(), "postgres") {
-			strict = strict || pgStrict()
-		}
-		if strings.HasPrefix(mat.Note, "connector failed") {
-			strict = cloneStrict() || pgStrict()
+		case "pg":
+			strict = pgStrict()
+		case "mysql":
+			strict = mysqlStrict()
+		default:
+			strict = cloneStrict() || pgStrict() || mysqlStrict()
 		}
 		log.Printf("connector: %v (strict=%v)", mat.Err, strict)
 		if strict {
@@ -323,7 +324,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 
 	// Sandbox v1: filter parent env; inject only AI_CLOUDHUB_* + safe keys.
 	// Opt-out: AI_CLOUDHUB_JAIL=0. Pass parent API token only if AI_CLOUDHUB_PASS_TOKEN=1.
-	// PassLibpq when postgres connector materializes (host PGPASSWORD).
+	// PassLibpq / PassMysql when DB connectors materialize (host PGPASSWORD / MYSQL_PWD).
 	extra := map[string]string{}
 	for k, v := range bundle.Session.Manifest.Env {
 		extra[k] = v
@@ -343,6 +344,10 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if env("AI_CLOUDHUB_PASS_PG", "") == "0" || strings.EqualFold(env("AI_CLOUDHUB_PASS_PG", ""), "false") {
 		passLibpq = false
 	}
+	passMysql := mat.PassMysql
+	if env("AI_CLOUDHUB_PASS_MYSQL", "") == "0" || strings.EqualFold(env("AI_CLOUDHUB_PASS_MYSQL", ""), "false") {
+		passMysql = false
+	}
 	jailOn := env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false"
 	var childEnv []string
 	if jailOn {
@@ -350,8 +355,11 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		// Soft network policy: AI_CLOUDHUB_NETWORK=deny strips proxy env (not a kernel netns).
 		netDeny := strings.EqualFold(env("AI_CLOUDHUB_NETWORK", ""), "deny") ||
 			env("AI_CLOUDHUB_NETWORK", "") == "0" || env("AI_CLOUDHUB_NETWORK", "") == "off"
-		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok, PassLibpq: passLibpq, DenyNetwork: netDeny})
-		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v pass_libpq=%v network_deny=%v)", len(childEnv), passTok, passLibpq, netDeny)
+		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{
+			PassToken: passTok, PassLibpq: passLibpq, PassMysql: passMysql, DenyNetwork: netDeny,
+		})
+		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v pass_libpq=%v pass_mysql=%v network_deny=%v)",
+			len(childEnv), passTok, passLibpq, passMysql, netDeny)
 	} else {
 		childEnv = os.Environ()
 		for k, v := range extra {

@@ -45,3 +45,28 @@ func TestDSNLooksSecret(t *testing.T) {
 		t.Fatal("passwordless should be ok")
 	}
 }
+
+func TestApplyMysqlEnv(t *testing.T) {
+	extra, note, err := applyMysqlEnv(map[string]interface{}{
+		"host": "db.example.com", "database": "app", "user": "ro", "port": "3307",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extra["AI_CLOUDHUB_MYSQL_HOST"] != "db.example.com" || extra["AI_CLOUDHUB_MYSQL_DATABASE"] != "app" {
+		t.Fatalf("%v", extra)
+	}
+	if extra["AI_CLOUDHUB_MYSQL_PORT"] != "3307" {
+		t.Fatalf("port %v", extra)
+	}
+	if !strings.Contains(extra["AI_CLOUDHUB_MYSQL_DSN_TEMPLATE"], "tcp(db.example.com:3307)/app") {
+		t.Fatalf("dsn %v", extra["AI_CLOUDHUB_MYSQL_DSN_TEMPLATE"])
+	}
+	if !strings.Contains(note, "mysql ready") {
+		t.Fatalf("note %q", note)
+	}
+	_, _, err = applyMysqlEnv(map[string]interface{}{"host": "h"})
+	if err == nil {
+		t.Fatal("want missing database")
+	}
+}

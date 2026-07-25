@@ -67,6 +67,7 @@ import sys,json
 d=json.load(sys.stdin)
 assert any(i["type"]=="git" for i in d["items"])
 assert any(i["type"]=="postgres" and "dsn_template" in ",".join(i.get("fields") or []) for i in d["items"])
+assert any(i["type"]=="mysql" and "dsn_template" in ",".join(i.get("fields") or []) for i in d["items"])
 print("catalog ok")
 '
 CID=$("${CURL[@]}" -X POST "$API/v1/connectors" "${AUTH[@]}" -H 'Content-Type: application/json' \
@@ -95,6 +96,19 @@ assert isinstance(cfg, dict), cfg
 assert "password" not in cfg and "NOPENOW" not in str(cfg)
 assert cfg.get("host")=="db.example.com" and cfg.get("database")=="app"
 print("postgres connector ok", d["id"])
+'
+MYID=$("${CURL[@]}" -X POST "$API/v1/connectors" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"type":"mysql","name":"mdb","config":{"host":"mysql.example.com","database":"app","user":"ro","password":"NOPENOW","port":"3306"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" "$API/v1/connectors/$MYID" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["type"]=="mysql"
+cfg=d.get("config") or {}
+assert isinstance(cfg, dict), cfg
+assert "password" not in cfg and "NOPENOW" not in str(cfg)
+assert cfg.get("host")=="mysql.example.com" and cfg.get("database")=="app"
+print("mysql connector ok", d["id"])
 '
 
 echo "== marketplace checkout + stripe webhook =="

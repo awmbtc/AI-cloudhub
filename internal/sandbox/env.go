@@ -57,6 +57,11 @@ var libpqPassExact = []string{
 	"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGPASSFILE",
 }
 
+// mysql client keys allowed when PassMysql is true (host secrets for mysql connector).
+var mysqlPassExact = []string{
+	"MYSQL_PWD", "MYSQL_PASSWORD", "MYSQL_HOST", "MYSQL_TCP_PORT", "MYSQL_UNIX_PORT",
+}
+
 // EnvFilter filters process environment for Sandbox v1.
 type EnvFilter struct {
 	// AllowPrefixes: if empty, DefaultEnvAllowPrefixes is used.
@@ -68,6 +73,8 @@ type EnvFilter struct {
 	// PassLibpq when true allows PGPASSWORD and related libpq keys from parent env
 	// (used after postgres connector materialization; secrets stay on runner host).
 	PassLibpq bool
+	// PassMysql when true allows MYSQL_PWD and related keys from parent env.
+	PassMysql bool
 	// DenyNetwork strips proxy-related env and injects AI_CLOUDHUB_NETWORK=deny.
 	// This is a soft policy for agents; it does not enforce kernel netns.
 	DenyNetwork bool
@@ -91,10 +98,15 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 	if f.PassToken {
 		delete(blockSet, "AI_CLOUDHUB_TOKEN")
 	}
-	libpqSet := map[string]bool{}
+	secretPass := map[string]bool{}
 	if f.PassLibpq {
 		for _, k := range libpqPassExact {
-			libpqSet[strings.ToUpper(k)] = true
+			secretPass[strings.ToUpper(k)] = true
+		}
+	}
+	if f.PassMysql {
+		for _, k := range mysqlPassExact {
+			secretPass[strings.ToUpper(k)] = true
 		}
 	}
 	if f.DenyNetwork {
@@ -120,7 +132,7 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 		if f.DenyNetwork && strings.Contains(uk, "PROXY") {
 			return
 		}
-		if !keyAllowed(key, allow) && !libpqSet[uk] {
+		if !keyAllowed(key, allow) && !secretPass[uk] {
 			return
 		}
 		// last write wins
