@@ -101,4 +101,24 @@ CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/providers" -H "Autho
 test "$CODE" = "403"
 echo "provider scope gate ok (403)"
 
+echo "== agent cannot list devices =="
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/devices" -H "Authorization: Bearer $ATOK")
+test "$CODE" = "403"
+echo "device agent deny ok"
+
+echo "== binding list filtered to allowed drives =="
+# human creates bindings for d1 and d2
+B1=$("${CURL[@]}" -X POST "$API/v1/bindings" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$D1\",\"device_id\":\"dev-a\",\"mount_point\":\"/workspace\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+B2=$("${CURL[@]}" -X POST "$API/v1/bindings" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$D2\",\"device_id\":\"dev-b\",\"mount_point\":\"/workspace\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+N=$("${CURL[@]}" "$API/v1/bindings" -H "Authorization: Bearer $ATOK" \
+  | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["items"]))')
+test "$N" = "1"
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/bindings/$B2" -H "Authorization: Bearer $ATOK")
+test "$CODE" = "403"
+echo "binding filter ok n=$N b1=$B1 b2 denied"
+
 echo "OK agent=$AID drive=$D1 snapshot=$SID"

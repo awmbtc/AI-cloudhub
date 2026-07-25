@@ -105,15 +105,16 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 
 ### MCP helper（agents）
 
-`cmd/mcp` 是 **MCP-compatible-ish** 的 stdio 工具服务（stdlib only），供 Agent 主机接入：
+`cmd/mcp` 是 **MCP-compatible-ish** 的 stdio 工具服务（stdlib only），供 Agent 主机接入。Agent token 按 tool 声明的 scope 门禁。
 
-| Tool | 作用 |
-|------|------|
-| `list_drives` | `GET /v1/drives` |
-| `ensure_mounted_hint` | 挂载说明；可选 `drive_id`/`binding_id` 探测 session |
-| `workspace_env` | Manifest 约定的 `AI_CLOUDHUB_*` 环境变量名 |
+| Tool | Scope | 作用 |
+|------|--------|------|
+| `whoami` / `list_drives` / `list_providers` | me / drive / provider | 身份与资源列表 |
+| `list_objects` / snapshot tools | drive.* | 对象清单与元数据快照 |
+| `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` | job.run | BYOC 任务（用户 runner，D-001） |
+| `ensure_mounted_hint` / `workspace_env` / `resolve_path` | drive / local | 挂载提示与路径 jail |
 
-详情：[docs/MCP.md](docs/MCP.md)。
+详情：[docs/MCP.md](docs/MCP.md) · 现场：`make smoke-mcp`
 
 ## 主要 API
 

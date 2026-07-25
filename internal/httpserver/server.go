@@ -1293,6 +1293,10 @@ func (s *Server) routeBindingsRoot(w http.ResponseWriter, r *http.Request, userI
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// Agent may only bind drives they are allowed to access.
+		if !s.allowAgentDrive(w, r, in.DriveID) {
+			return
+		}
 		b, err := s.drives.CreateBinding(userID, in)
 		if err != nil {
 			// Quota exceeded is a client error (429-ish via 400 msg is fine for MVP; use 409 for clear conflict).
@@ -1303,17 +1307,44 @@ func (s *Server) routeBindingsRoot(w http.ResponseWriter, r *http.Request, userI
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "binding.create", b.ID, b.DriveID)
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "binding.create", b.ID, b.DriveID)
+		} else {
+			s.auth.Audit(userID, "binding.create", b.ID, b.DriveID)
+		}
 		writeJSON(w, http.StatusCreated, b)
 	case http.MethodGet:
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
+			return
+		}
 		dev := r.URL.Query().Get("device_id")
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.drives.ListBindings(userID, dev)})
+		items := s.drives.ListBindings(userID, dev)
+		// Filter bindings to agent-allowed drives.
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" && s.agents != nil {
+			filtered := items[:0]
+			for _, b := range items {
+				if s.agents.CheckDriveAccess(pr.AgentID, b.DriveID) == nil {
+					// Also run file policy for drive.read
+					req := policy.Request{AgentID: pr.AgentID, Scopes: pr.Scopes, Action: policy.ActionDriveRead, DriveID: b.DriveID}
+					if s.agents.CheckAccess(req) == nil {
+						filtered = append(filtered, b)
+					}
+				}
+			}
+			items = filtered
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (s *Server) routeDevicesRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
+	// Device registry is for hubd / human operators — not agent tokens.
+	if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+		writeErr(w, http.StatusForbidden, "agent token cannot manage devices")
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		var in device.RegisterInput
@@ -1335,6 +1366,10 @@ func (s *Server) routeDevicesRoot(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (s *Server) routeDevicesSub(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
+	if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+		writeErr(w, http.StatusForbidden, "agent token cannot manage devices")
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/devices/")
 	id = strings.Trim(id, "/")
 	if id == "" || strings.Contains(id, "/") {
@@ -1362,17 +1397,24 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	id := parts[0]
+	// Load binding once for drive allowlist (agents).
+	b0, berr := s.drives.GetBinding(userID, id)
+	if berr != nil {
+		writeErr(w, http.StatusNotFound, berr.Error())
+		return
+	}
 	if len(parts) == 1 {
 		if r.Method != http.MethodGet {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		b, err := s.drives.GetBinding(userID, id)
-		if err != nil {
-			writeErr(w, http.StatusNotFound, err.Error())
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
 			return
 		}
-		writeJSON(w, http.StatusOK, b)
+		if !s.allowAgentDrive(w, r, b0.DriveID) {
+			return
+		}
+		writeJSON(w, http.StatusOK, b0)
 		return
 	}
 	switch parts[1] {
@@ -1381,19 +1423,35 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		bundle, err := s.drives.IssueSessionForBinding(userID, id)
+		if !s.requireScope(w, r, auth.ScopeDriveRead) {
+			return
+		}
+		if !s.allowAgentDrive(w, r, b0.DriveID) {
+			return
+		}
+		sb, err := s.drives.IssueSessionForBinding(userID, id)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		metrics.IncSession()
-		if bundle.Session != nil {
-			metrics.IncSTSSource(bundle.Session.Source)
+		if sb != nil && sb.Session != nil {
+			metrics.IncSTSSource(sb.Session.Source)
 		}
-		writeJSON(w, http.StatusOK, bundle)
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "binding.session", id, b0.DriveID)
+		}
+		writeJSON(w, http.StatusOK, sb)
+		return
 	case "report":
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
+		if !s.allowAgentDrive(w, r, b0.DriveID) {
 			return
 		}
 		var body struct {
@@ -1409,11 +1467,21 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "binding.report", id, string(b.Actual))
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "binding.report", id, string(b.Actual))
+		} else {
+			s.auth.Audit(userID, "binding.report", id, string(b.Actual))
+		}
 		writeJSON(w, http.StatusOK, b)
 	case "desired":
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+			return
+		}
+		if !s.allowAgentDrive(w, r, b0.DriveID) {
 			return
 		}
 		var body struct {
@@ -1428,7 +1496,11 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "binding.desired", id, string(b.Desired))
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "binding.desired", id, string(b.Desired))
+		} else {
+			s.auth.Audit(userID, "binding.desired", id, string(b.Desired))
+		}
 		writeJSON(w, http.StatusOK, b)
 	default:
 		writeErr(w, http.StatusNotFound, "not found")

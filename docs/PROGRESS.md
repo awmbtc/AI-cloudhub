@@ -230,6 +230,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP `cancel_job` / `list_providers`
 - [x] `scripts/smoke-mcp-jobs.sh` + `make smoke-mcp`
 
+## 本波（Bindings/Devices agent 门禁）
+
+- [x] Bindings：scope + `allowAgentDrive`；list 过滤禁止 drive
+- [x] Devices：agent token 一律 403（hubd/人侧）
+- [x] smoke-agent 覆盖；README MCP 工具表更新
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）

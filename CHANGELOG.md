@@ -59,6 +59,7 @@
 - GET /v1/jobs filters agent_id and claimed_by_agent_id
 - MCP tools: list_jobs, create_job, claim_next_job, complete_job (job.run)
 - MCP cancel_job + list_providers; make smoke-mcp
+- Bindings: agent scope + drive allowlist filter; devices reject agent tokens
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

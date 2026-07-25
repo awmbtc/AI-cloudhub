@@ -9,7 +9,7 @@
   - 登录返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换 refresh。
   - 单会话吊销：`POST /v1/auth/logout`（可选 body `refresh_token`）
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
-- **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
+- **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。**Devices API 禁止 agent token**（仅 hubd/人）；Bindings 列表按允许的 drive 过滤。
 - **Policy：** 内置 scope + drive 白名单 + path 前缀；可选外部 JSON（`AI_CLOUDHUB_POLICY_FILE`，见 [POLICY.md](./POLICY.md)）。**无** OPA/Rego。
 - **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free；`PROFILE=default|strict|netdeny`；`SECCOMP_NET=deny` 时 **socket 仅 AF_UNIX**；`SECCOMP_STRICT=1` 加载失败中止。见 [SECCOMP.md](./SECCOMP.md)。
 - **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。Live 硬断言见 `make smoke-minio`。
