@@ -13,10 +13,11 @@ const (
 	ActionDriveRead    = "drive.read"
 	ActionDriveWrite   = "drive.write"
 	ActionDriveSession = "drive.session"
-	ActionJobRun       = "job.run"
-	ActionProviderRead = "provider.read"
-	ActionPathRead     = "path.read"
-	ActionPathWrite    = "path.write"
+	ActionJobRun        = "job.run"
+	ActionProviderRead  = "provider.read"
+	ActionProviderWrite = "provider.write"
+	ActionPathRead      = "path.read"
+	ActionPathWrite     = "path.write"
 )
 
 // Request is an authorization request.
@@ -277,6 +278,8 @@ func scopeForAction(action string) string {
 		return "job.run"
 	case ActionProviderRead:
 		return "provider.read"
+	case ActionProviderWrite:
+		return "provider.write"
 	default:
 		return ""
 	}
@@ -288,10 +291,17 @@ func hasScope(scopes []string, need string) bool {
 			return true
 		}
 	}
-	// drive.write implies drive.read for session
+	// write implies read for drive and provider
 	if need == "drive.read" {
 		for _, s := range scopes {
 			if s == "drive.write" {
+				return true
+			}
+		}
+	}
+	if need == "provider.read" {
+		for _, s := range scopes {
+			if s == "provider.write" {
 				return true
 			}
 		}

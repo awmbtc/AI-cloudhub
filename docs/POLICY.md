@@ -45,7 +45,7 @@ Example file: [`protocols/policy.example.json`](../protocols/policy.example.json
 | `rules` | **Ordered**; first matching **deny** or **allow** wins |
 | `effect` | `deny` \| `allow` |
 | `principals` | `agent` \| `human` \| `any` (empty = any) |
-| `actions` | e.g. `drive.read`, `drive.write`, `drive.session`, `job.run`, `path.read`, `path.write` |
+| `actions` | e.g. `drive.read`, `drive.write`, `drive.session`, `job.run`, `provider.read`, `provider.write`, `path.read`, `path.write` |
 | `agent_ids` | exact agent UUID list (empty = any agent) |
 | `drive_ids` | exact drive id list |
 | `path_deny_prefixes` | rule matches if request path hits any prefix/segment |
@@ -65,6 +65,8 @@ Request
 Drive HTTP routes call `CheckAccess` with action derived from method (`GET` → read, mutating → write, `/session` → `drive.session`).
 
 Job routes (`POST /v1/jobs`, claim/complete/cancel) call `CheckAccess` with action `job.run` (and drive id when known). Agents need token scope `job.run` **and** pass file rules.
+
+Provider routes call scope `provider.read` / `provider.write` and file policy actions of the same names. `provider.write` implies `provider.read` in the built-in scope map.
 
 `POST /v1/jobs/next/claim` uses **ClaimNextFiltered**: if a claimed job’s drive is denied, the job is **released back to `pending`** (note annotated) and the next pending job is tried (up to 32). Direct `POST /v1/jobs/{id}/claim` also releases on post-claim deny.
 

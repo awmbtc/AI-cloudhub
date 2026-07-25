@@ -253,7 +253,16 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.jobs.ListPending(userID, region)})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.jobs.List(userID)})
+		filt := job.ListFilter{
+			AgentID:          strings.TrimSpace(r.URL.Query().Get("agent_id")),
+			ClaimedByAgentID: strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
+		}
+		items := s.jobs.List(userID, filt)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"items":               items,
+			"agent_id":            filt.AgentID,
+			"claimed_by_agent_id": filt.ClaimedByAgentID,
+		})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -598,6 +607,9 @@ func (s *Server) routeProvidersRoot(w http.ResponseWriter, r *http.Request, user
 		if !s.requireScope(w, r, auth.ScopeProviderWrite) {
 			return
 		}
+		if !s.allowAgentProvider(w, r, policy.ActionProviderWrite) {
+			return
+		}
 		var in provider.CreateInput
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -612,10 +624,17 @@ func (s *Server) routeProvidersRoot(w http.ResponseWriter, r *http.Request, user
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "provider.create", rec.ID, string(rec.Type))
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "provider.create", rec.ID, string(rec.Type))
+		} else {
+			s.auth.Audit(userID, "provider.create", rec.ID, string(rec.Type))
+		}
 		writeJSON(w, http.StatusCreated, rec.Public())
 	case http.MethodGet:
 		if !s.requireScope(w, r, auth.ScopeProviderRead) {
+			return
+		}
+		if !s.allowAgentProvider(w, r, policy.ActionProviderRead) {
 			return
 		}
 		list := s.providers.List(userID)
@@ -644,6 +663,12 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		if !s.requireScope(w, r, auth.ScopeProviderRead) {
+			return
+		}
+		if !s.allowAgentProvider(w, r, policy.ActionProviderRead) {
+			return
+		}
 		res, err := s.providers.HealthProbe(r.Context(), userID, id)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
@@ -653,7 +678,11 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 		if !res.OK {
 			status = http.StatusBadGateway // credentials/network failed
 		}
-		s.auth.Audit(userID, "provider.health", id, res.Message)
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "provider.health", id, res.Message)
+		} else {
+			s.auth.Audit(userID, "provider.health", id, res.Message)
+		}
 		writeJSON(w, status, res)
 		return
 	}
@@ -663,6 +692,12 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 	}
 	switch r.Method {
 	case http.MethodGet:
+		if !s.requireScope(w, r, auth.ScopeProviderRead) {
+			return
+		}
+		if !s.allowAgentProvider(w, r, policy.ActionProviderRead) {
+			return
+		}
 		rec, err := s.providers.Get(userID, id)
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
@@ -671,6 +706,9 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 		writeJSON(w, http.StatusOK, rec.Public())
 	case http.MethodDelete:
 		if !s.requireScope(w, r, auth.ScopeProviderWrite) {
+			return
+		}
+		if !s.allowAgentProvider(w, r, policy.ActionProviderWrite) {
 			return
 		}
 		// Capture name/type for audit before delete removes the row.
@@ -682,11 +720,33 @@ func (s *Server) routeProvidersSub(w http.ResponseWriter, r *http.Request, userI
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "provider.delete", id, detail)
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "provider.delete", id, detail)
+		} else {
+			s.auth.Audit(userID, "provider.delete", id, detail)
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// allowAgentProvider runs file policy for provider.read / provider.write (humans always pass).
+func (s *Server) allowAgentProvider(w http.ResponseWriter, r *http.Request, action string) bool {
+	pr := principalFrom(r)
+	if pr == nil || pr.AgentID == "" || s.agents == nil {
+		return true
+	}
+	req := policy.Request{
+		AgentID: pr.AgentID,
+		Scopes:  pr.Scopes,
+		Action:  action,
+	}
+	if err := s.agents.CheckAccess(req); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID, _, _ string) {

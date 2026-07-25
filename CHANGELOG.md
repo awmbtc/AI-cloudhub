@@ -55,6 +55,8 @@
 - ClaimNextFiltered + ReleaseToPending: policy/drive deny after claim returns job to pending
 - Jobs track agent_id (creator) and claimed_by_agent_id (claimer); store migrate + audit job.create
 - Audit job.claim / job.complete / job.cancel; smoke-job covers agent trace + durability
+- Provider routes: scope+policy for read/write/health; provider.write implies read
+- GET /v1/jobs filters agent_id and claimed_by_agent_id
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

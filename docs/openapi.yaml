@@ -2606,13 +2606,30 @@ paths:
             type: string
             enum: [pending]
           description: When pending, returns claimable jobs only
+        - name: agent_id
+          in: query
+          required: false
+          description: Filter by creator agent_id (ignored when status=pending)
+          schema: { type: string }
+        - name: claimed_by_agent_id
+          in: query
+          required: false
+          description: Filter by claimer agent_id (ignored when status=pending)
+          schema: { type: string }
       responses:
         '200':
           description: Job list
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ItemsJob'
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Job'
+                  agent_id: { type: string }
+                  claimed_by_agent_id: { type: string }
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

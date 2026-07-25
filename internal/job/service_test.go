@@ -175,6 +175,33 @@ func TestCreateRecordsAgentID(t *testing.T) {
 	}
 }
 
+func TestListFilterByAgent(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-lf"
+	if _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"a"}, AgentID: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	j2, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"b"}, AgentID: "a2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j2.ID, "claimer-x"); err != nil {
+		t.Fatal(err)
+	}
+	onlyA1 := svc.List(uid, ListFilter{AgentID: "a1"})
+	if len(onlyA1) != 1 || onlyA1[0].AgentID != "a1" {
+		t.Fatalf("%+v", onlyA1)
+	}
+	byClaimer := svc.List(uid, ListFilter{ClaimedByAgentID: "claimer-x"})
+	if len(byClaimer) != 1 || byClaimer[0].ID != j2.ID {
+		t.Fatalf("%+v", byClaimer)
+	}
+	all := svc.List(uid)
+	if len(all) != 2 {
+		t.Fatalf("all=%d", len(all))
+	}
+}
+
 func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-filt"

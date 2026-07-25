@@ -44,6 +44,25 @@ func TestEngineScope(t *testing.T) {
 	}
 }
 
+func TestEngineProviderWriteImpliesRead(t *testing.T) {
+	d := NewEngine().Evaluate(Request{
+		AgentID: "a1",
+		Scopes:  []string{"provider.write"},
+		Action:  ActionProviderRead,
+	})
+	if !d.Allow {
+		t.Fatal(d.Reason)
+	}
+	d = NewEngine().Evaluate(Request{
+		AgentID: "a1",
+		Scopes:  []string{"provider.read"},
+		Action:  ActionProviderWrite,
+	})
+	if d.Allow {
+		t.Fatal("provider.read must not imply write")
+	}
+}
+
 func TestCanAccessDrive(t *testing.T) {
 	if err := CanAccessDrive("a1", []string{"d1"}, "d2"); err == nil {
 		t.Fatal("expected deny")

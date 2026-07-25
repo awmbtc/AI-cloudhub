@@ -91,4 +91,14 @@ echo "== session manifest v2 =="
 "${CURL[@]}" -X POST "$API/v1/drives/$D1/session" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{}' | python3 -c 'import sys,json; d=json.load(sys.stdin); m=d.get("manifest") or {}; assert m.get("version")==2, m; print("manifest v2 ok")'
 
+echo "== agent without provider.read cannot list providers =="
+AID2=$("${CURL[@]}" -X POST "$API/v1/agents" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"noprov","default_scopes":["drive.read"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+ATOK2=$("${CURL[@]}" -X POST "$API/v1/agents/$AID2/token" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/providers" -H "Authorization: Bearer $ATOK2")
+test "$CODE" = "403"
+echo "provider scope gate ok (403)"
+
 echo "OK agent=$AID drive=$D1 snapshot=$SID"

@@ -116,14 +116,30 @@ func (s *Service) Get(userID, id string) (*Job, error) {
 	return jobFromStore(sj), nil
 }
 
-// List returns jobs for user.
-func (s *Service) List(userID string) []*Job {
+// ListFilter optional filters for List.
+type ListFilter struct {
+	AgentID          string // creator agent_id
+	ClaimedByAgentID string // claimer
+}
+
+// List returns jobs for user, optionally filtered by agent ids.
+func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 	list, err := s.store.ListJobs(userID)
 	if err != nil {
 		return nil
 	}
+	var f ListFilter
+	if len(filter) > 0 {
+		f = filter[0]
+	}
 	out := make([]*Job, 0, len(list))
 	for _, sj := range list {
+		if f.AgentID != "" && sj.AgentID != f.AgentID {
+			continue
+		}
+		if f.ClaimedByAgentID != "" && sj.ClaimedByAgentID != f.ClaimedByAgentID {
+			continue
+		}
 		out = append(out, jobFromStore(sj))
 	}
 	return out

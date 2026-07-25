@@ -140,4 +140,17 @@ print("human-created claimed_by", d["claimed_by_agent_id"])
 "${CURL[@]}" -X POST "$API/v1/jobs/$J2/complete" -H "Authorization: Bearer $ATOK" \
   -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
 
+echo "== list filter by agent_id / claimed_by_agent_id =="
+# create another agent job then filter
+J3=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+N=$("${CURL[@]}" "$API/v1/jobs?agent_id=$AID" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["items"]))')
+test "$N" -ge 2
+N2=$("${CURL[@]}" "$API/v1/jobs?claimed_by_agent_id=$AID" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["items"]))')
+test "$N2" -ge 2
+echo "list filter ok agent_id count=$N claimer count=$N2 (j3=$J3)"
+
 echo "OK smoke-job durable BYOC + agent_id trace"

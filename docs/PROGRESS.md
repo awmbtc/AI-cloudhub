@@ -214,6 +214,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `make smoke-job`：restart 耐久 + creator/claimer agent 字段
 - [x] runner jobDTO 含 agent 字段
 
+## 本波（Provider policy + job list filter）
+
+- [x] Provider GET/health 强制 `provider.read`；写/删走 policy；`provider.write` ⇒ read
+- [x] `GET /v1/jobs?agent_id=&claimed_by_agent_id=`
+- [x] smoke-agent provider 403；smoke-job list filter
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
