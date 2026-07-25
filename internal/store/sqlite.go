@@ -271,6 +271,8 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE marketplace_items ADD COLUMN price_cents INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE marketplace_items ADD COLUMN currency TEXT`,
 		`ALTER TABLE jobs ADD COLUMN connector_id TEXT`,
+		`ALTER TABLE jobs ADD COLUMN exit_code INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN duration_ms INTEGER`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1000,14 +1002,15 @@ func parseTime(s string) time.Time {
 }
 
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
-		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''), created_at, updated_at`
+		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
+		 exit_code, COALESCE(duration_ms,0), created_at, updated_at`
 
 func (s *SQLite) CreateJob(j *Job) error {
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs,
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1085,10 +1088,10 @@ func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, err
 func (s *SQLite) UpdateJob(j *Job) error {
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
-		 agent_id=?, claimed_by_agent_id=?, connector_id=?, updated_at=?
+		 agent_id=?, claimed_by_agent_id=?, connector_id=?, exit_code=?, duration_ms=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs,
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1541,9 +1544,11 @@ func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
 func scanJob(row scannable) (*Job, error) {
 	var j Job
 	var cmd, created, updated string
+	var exitCode sql.NullInt64
+	var durationMs int64
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &created, &updated,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("job not found")
@@ -1551,7 +1556,19 @@ func scanJob(row scannable) (*Job, error) {
 		return nil, err
 	}
 	j.CommandJSON = []byte(cmd)
+	if exitCode.Valid {
+		v := int(exitCode.Int64)
+		j.ExitCode = &v
+	}
+	j.DurationMs = durationMs
 	j.CreatedAt = parseTime(created)
 	j.UpdatedAt = parseTime(updated)
 	return &j, nil
+}
+
+func nullInt(p *int) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
 }

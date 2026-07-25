@@ -47,9 +47,10 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
 | `list_jobs` | job.run | `GET /v1/jobs` (+ pending / agent filters) |
+| `get_job` | job.run | `GET /v1/jobs/{id}` (includes `exit_code` / `duration_ms` when set) |
 | `create_job` | job.run | `POST /v1/jobs` BYOC enqueue (D-001: user runners only) |
 | `claim_next_job` | job.run | `POST /v1/jobs/next/claim` (policy-filtered) |
-| `complete_job` | job.run | `POST /v1/jobs/{id}/complete` |
+| `complete_job` | job.run | `POST /v1/jobs/{id}/complete` — optional `exit_code`, `duration_ms` |
 | `cancel_job` | job.run | `POST /v1/jobs/{id}/cancel` |
 | `list_providers` | provider.read\|write | `GET /v1/providers` (public fields) |
 | `list_marketplace` | auth | `GET /v1/marketplace` |

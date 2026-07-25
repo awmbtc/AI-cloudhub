@@ -355,3 +355,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] rclone 进程退出 → actual=error + remount；binding.mode 变更 → remount
 - [x] `cmd/hubd` 单测；WINDOWS / KNOWN_LIMITATIONS 同步
 - [x] 版本钉 **0.2.7** + tag
+
+### 本波（job result + get_job + STS live）
+
+- [x] Job `exit_code` / `duration_ms` store+API+runner+OpenAPI
+- [x] MCP `get_job` + complete 结构化字段；smoke-job / smoke-mcp
+- [x] smoke-sts Phase L：live MinIO STS（opt-in）

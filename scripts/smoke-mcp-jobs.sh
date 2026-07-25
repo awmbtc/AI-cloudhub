@@ -66,7 +66,7 @@ for line in sys.stdin:
   d=json.loads(line)
   for t in (d.get("result") or {}).get("tools") or []:
     names.add(t["name"])
-need={"list_jobs","create_job","claim_next_job","complete_job","cancel_job","list_providers",
+need={"list_jobs","get_job","create_job","claim_next_job","complete_job","cancel_job","list_providers",
       "list_marketplace","install_marketplace","marketplace_checkout","list_memory","put_memory","search_memory",
       "list_graph","link_graph","list_connectors","connectors_catalog","create_connector","get_connector","delete_connector",
       "list_lineage","record_lineage"}
@@ -127,7 +127,7 @@ echo "claimed $CLAIMED"
 
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"complete_job\",\"arguments\":{\"job_id\":\"$CLAIMED\",\"ok\":true,\"note\":\"mcp-smoke\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"complete_job\",\"arguments\":{\"job_id\":\"$CLAIMED\",\"ok\":true,\"note\":\"mcp-smoke\",\"exit_code\":0,\"duration_ms\":55}}}" \
   | ./.bin/mcp 2>/dev/null | python3 -c '
 import sys,json
 for line in sys.stdin:
@@ -135,7 +135,23 @@ for line in sys.stdin:
   if d.get("id")!=2: continue
   body=json.loads(((d.get("result") or {}).get("content") or [{}])[0].get("text") or "")
   assert body.get("status")=="succeeded", body
+  assert body.get("exit_code")==0 and body.get("duration_ms")==55, body
   print("completed")
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"get_job\",\"arguments\":{\"job_id\":\"$CLAIMED\"}}}" \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("id")=="'"$CLAIMED"'" and body.get("status")=="succeeded", body
+  assert body.get("exit_code")==0, body
+  print("get_job ok", body["id"])
 '
 
 echo "== MCP cancel_job =="

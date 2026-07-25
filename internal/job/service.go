@@ -37,8 +37,12 @@ type Job struct {
 	ConnectorID      string    `json:"connector_id,omitempty"` // Stage C: git/etc for runner
 	AgentID          string    `json:"agent_id,omitempty"`            // creator agent
 	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"` // last claimer agent
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	// ExitCode process exit when reported by runner (nil = not set).
+	ExitCode *int `json:"exit_code,omitempty"`
+	// DurationMs runner wall time in milliseconds (0 = not reported).
+	DurationMs int64     `json:"duration_ms,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // CreateInput for new job.
@@ -294,21 +298,36 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 	return nil, fmt.Errorf("no pending jobs")
 }
 
+// CompleteInput is the optional structured result of a BYOC runner complete.
+type CompleteInput struct {
+	OK         bool
+	Note       string
+	ExitCode   *int  // nil = not reported
+	DurationMs int64 // 0 = not reported
+}
+
 // Complete sets terminal status.
 // Non-empty note is appended to the existing trail (create D-001 / release / clone path),
 // not replaced — same pattern as ReleaseToPending. Capped at 2000 chars.
-func (s *Service) Complete(userID, id string, ok bool, note string) (*Job, error) {
+func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
 	if err != nil {
 		return nil, fmt.Errorf("job not found")
 	}
-	if ok {
+	if in.OK {
 		sj.Status = string(StatusSucceeded)
 	} else {
 		sj.Status = string(StatusFailed)
 	}
-	if extra := strings.TrimSpace(note); extra != "" {
+	if extra := strings.TrimSpace(in.Note); extra != "" {
 		sj.Note = appendJobNote(sj.Note, extra)
+	}
+	if in.ExitCode != nil {
+		v := *in.ExitCode
+		sj.ExitCode = &v
+	}
+	if in.DurationMs > 0 {
+		sj.DurationMs = in.DurationMs
 	}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
@@ -354,7 +373,7 @@ func (s *Service) Cancel(userID, id string) (*Job, error) {
 func jobFromStore(sj *store.Job) *Job {
 	var cmd []string
 	_ = json.Unmarshal(sj.CommandJSON, &cmd)
-	return &Job{
+	j := &Job{
 		ID:               sj.ID,
 		UserID:           sj.UserID,
 		DriveID:          sj.DriveID,
@@ -367,7 +386,13 @@ func jobFromStore(sj *store.Job) *Job {
 		ConnectorID:      sj.ConnectorID,
 		AgentID:          sj.AgentID,
 		ClaimedByAgentID: sj.ClaimedByAgentID,
+		DurationMs:       sj.DurationMs,
 		CreatedAt:        sj.CreatedAt,
 		UpdatedAt:        sj.UpdatedAt,
 	}
+	if sj.ExitCode != nil {
+		v := *sj.ExitCode
+		j.ExitCode = &v
+	}
+	return j
 }

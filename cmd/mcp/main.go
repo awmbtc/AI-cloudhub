@@ -148,7 +148,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers",
+	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "get_job", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers",
 		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector", "marketplace_checkout", "list_lineage", "record_lineage":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
@@ -313,11 +313,22 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"status":               map[string]interface{}{"type": "string", "description": "pending for claimable only"},
-					"agent_id":             map[string]interface{}{"type": "string"},
-					"claimed_by_agent_id":  map[string]interface{}{"type": "string"},
-					"region":               map[string]interface{}{"type": "string", "description": "Only with status=pending"},
+					"status":              map[string]interface{}{"type": "string", "description": "pending for claimable only"},
+					"agent_id":            map[string]interface{}{"type": "string"},
+					"claimed_by_agent_id": map[string]interface{}{"type": "string"},
+					"region":              map[string]interface{}{"type": "string", "description": "Only with status=pending"},
 				},
+			},
+		},
+		{
+			name: "get_job", description: "Get one BYOC job by id (GET /v1/jobs/{id}). Includes exit_code/duration_ms when completed. Requires job.run.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"job_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"job_id"},
 			},
 		},
 		{
@@ -343,14 +354,16 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
-			name: "complete_job", description: "Mark claimed job succeeded or failed. Requires job.run.",
+			name: "complete_job", description: "Mark claimed job succeeded or failed. Optional exit_code and duration_ms. Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"job_id": map[string]interface{}{"type": "string"},
-					"ok":     map[string]interface{}{"type": "boolean", "description": "true=succeeded (default true)"},
-					"note":   map[string]interface{}{"type": "string"},
+					"job_id":      map[string]interface{}{"type": "string"},
+					"ok":          map[string]interface{}{"type": "boolean", "description": "true=succeeded (default true)"},
+					"note":        map[string]interface{}{"type": "string"},
+					"exit_code":   map[string]interface{}{"type": "integer", "description": "Process exit code from runner"},
+					"duration_ms": map[string]interface{}{"type": "integer", "description": "Wall time ms"},
 				},
 				"required": []string{"job_id"},
 			},
@@ -707,15 +720,26 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		})
 	case "list_jobs":
 		var args struct {
-			Status             string `json:"status"`
-			AgentID            string `json:"agent_id"`
-			ClaimedByAgentID   string `json:"claimed_by_agent_id"`
-			Region             string `json:"region"`
+			Status           string `json:"status"`
+			AgentID          string `json:"agent_id"`
+			ClaimedByAgentID string `json:"claimed_by_agent_id"`
+			Region           string `json:"region"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
 		}
 		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region)
+	case "get_job":
+		var args struct {
+			JobID string `json:"job_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.JobID) == "" {
+			return nil, fmt.Errorf("job_id required")
+		}
+		return toolGetJob(api, token, args.JobID)
 	case "create_job":
 		var args struct {
 			DriveID     string   `json:"drive_id"`
@@ -737,9 +761,11 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolClaimNextJob(api, token)
 	case "complete_job":
 		var args struct {
-			JobID string `json:"job_id"`
-			OK    *bool  `json:"ok"`
-			Note  string `json:"note"`
+			JobID      string `json:"job_id"`
+			OK         *bool  `json:"ok"`
+			Note       string `json:"note"`
+			ExitCode   *int   `json:"exit_code"`
+			DurationMs int64  `json:"duration_ms"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -751,7 +777,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if args.OK != nil {
 			ok = *args.OK
 		}
-		return toolCompleteJob(api, token, args.JobID, ok, args.Note)
+		return toolCompleteJob(api, token, args.JobID, ok, args.Note, args.ExitCode, args.DurationMs)
 	case "cancel_job":
 		var args struct {
 			JobID string `json:"job_id"`
@@ -1279,8 +1305,27 @@ func toolClaimNextJob(api, token string) (interface{}, error) {
 	return toolResultJSON(parsed)
 }
 
-func toolCompleteJob(api, token, jobID string, ok bool, note string) (interface{}, error) {
+func toolGetJob(api, token, jobID string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodGet, api+"/v1/jobs/"+jobID, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("get job HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *int, durationMs int64) (interface{}, error) {
 	payload := map[string]interface{}{"ok": ok, "note": note}
+	if exitCode != nil {
+		payload["exit_code"] = *exitCode
+	}
+	if durationMs > 0 {
+		payload["duration_ms"] = durationMs
+	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/"+jobID+"/complete", token, payload)
 	if err != nil {
 		return nil, err
@@ -1358,7 +1403,7 @@ func toolWorkspaceEnv(workspace string) interface{} {
 		"tools": []string{
 			"whoami", "list_drives", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
-			"list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job",
+			"list_jobs", "get_job", "create_job", "claim_next_job", "complete_job", "cancel_job",
 			"list_marketplace", "install_marketplace", "marketplace_checkout", "list_memory", "put_memory", "search_memory",
 			"list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector",
 			"list_lineage", "record_lineage",

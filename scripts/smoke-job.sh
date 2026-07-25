@@ -119,10 +119,17 @@ assert d["agent_id"]==d["claimed_by_agent_id"] or True
 print("claimed", d["id"], "creator", d["agent_id"], "claimer", d["claimed_by_agent_id"], d["command"])
 '
 
-echo "== complete =="
+echo "== complete with exit_code + duration_ms =="
 "${CURL[@]}" -X POST "$API/v1/jobs/$JID/complete" -H "Authorization: Bearer $ATOK" \
-  -H 'Content-Type: application/json' -d '{"ok":true,"note":"smoke"}' \
-  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["status"]=="succeeded"; print("completed", d["status"])'
+  -H 'Content-Type: application/json' -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123}' \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="succeeded", d
+assert d.get("exit_code")==0, d
+assert d.get("duration_ms")==123, d
+print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"])
+'
 
 echo "== second job: human creates, agent claims =="
 J2=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \

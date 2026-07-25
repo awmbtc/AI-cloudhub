@@ -134,8 +134,12 @@ type Job struct {
 	AgentID string
 	// ClaimedByAgentID is the agent that last claimed the job (empty = human runner).
 	ClaimedByAgentID string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// ExitCode set on complete when runner reports process exit (nil = not reported).
+	ExitCode *int
+	// DurationMs wall time of runner execution in milliseconds (0 = not reported).
+	DurationMs int64
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).

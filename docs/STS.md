@@ -117,7 +117,10 @@ See [METRICS.md](./METRICS.md).
 ```bash
 make smoke-sts
 # = go test ./internal/sts + API flags-off source=embedded + qiniu_download + metrics
-# Live (optional): AI_CLOUDHUB_SMOKE_STS_LIVE=1  (+ vendor creds; default SKIP)
+# Live MinIO STS (optional):
+#   AI_CLOUDHUB_SMOKE_STS_LIVE=1 make smoke-sts
+#   MINIO_ENDPOINT=http://127.0.0.1:9000  (or auto docker minio/minio)
+#   AI_CLOUDHUB_SMOKE_STS_REQUIRE=1  → fail if MinIO unavailable
 ```
 
 Also: [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md) offline table.

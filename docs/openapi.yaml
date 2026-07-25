@@ -686,6 +686,14 @@ components:
         connector_id:
           type: string
           description: Optional Stage C connector (git clone / postgres|mysql env on runner)
+        exit_code:
+          type: integer
+          nullable: true
+          description: Process exit code when reported by runner (omitted if unknown)
+        duration_ms:
+          type: integer
+          format: int64
+          description: Runner wall time in milliseconds (0 if not reported)
         created_at:
           type: string
           format: date-time
@@ -724,6 +732,13 @@ components:
           type: boolean
         note:
           type: string
+        exit_code:
+          type: integer
+          description: Optional process exit code
+        duration_ms:
+          type: integer
+          format: int64
+          description: Optional wall duration in ms
 
     Agent:
       type: object

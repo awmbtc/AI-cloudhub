@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -157,16 +158,29 @@ func runWorker(api, token, mountPoint string) {
 			if j.ConnectorID != "" {
 				_ = os.Setenv("AI_CLOUDHUB_CONNECTOR_ID", j.ConnectorID)
 			}
+			start := time.Now()
 			cloneNote, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
+			durMs := time.Since(start).Milliseconds()
 			ok := err == nil
 			note := cloneNote
+			exitCode := 0
 			if err != nil {
 				note = joinJobNote(cloneNote, err.Error())
+				exitCode = exitCodeFromErr(err)
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
-			_ = completeJob(api, token, j.ID, ok, note)
+			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs)
 		}
 	}
+}
+
+// exitCodeFromErr unwraps exec.ExitError; otherwise 1 for non-exit failures.
+func exitCodeFromErr(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 1
 }
 
 type jobDTO struct {
@@ -200,9 +214,16 @@ func claimNext(api, token string) (*jobDTO, error) {
 	return &j, nil
 }
 
-func completeJob(api, token, id string, ok bool, note string) error {
-	payload, _ := json.Marshal(map[string]interface{}{"ok": ok, "note": note})
-	req, _ := http.NewRequest(http.MethodPost, api+"/v1/jobs/"+id+"/complete", bytes.NewReader(payload))
+func completeJob(api, token, id string, ok bool, note string, exitCode *int, durationMs int64) error {
+	payload := map[string]interface{}{"ok": ok, "note": note}
+	if exitCode != nil {
+		payload["exit_code"] = *exitCode
+	}
+	if durationMs > 0 {
+		payload["duration_ms"] = durationMs
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest(http.MethodPost, api+"/v1/jobs/"+id+"/complete", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)

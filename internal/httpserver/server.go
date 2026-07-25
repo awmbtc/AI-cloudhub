@@ -455,11 +455,15 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			return
 		}
 		var body struct {
-			OK   bool   `json:"ok"`
-			Note string `json:"note"`
+			OK         bool   `json:"ok"`
+			Note       string `json:"note"`
+			ExitCode   *int   `json:"exit_code"`
+			DurationMs int64  `json:"duration_ms"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		j, err := s.jobs.Complete(userID, id, body.OK, body.Note)
+		j, err := s.jobs.Complete(userID, id, job.CompleteInput{
+			OK: body.OK, Note: body.Note, ExitCode: body.ExitCode, DurationMs: body.DurationMs,
+		})
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

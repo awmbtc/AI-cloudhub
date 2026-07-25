@@ -173,9 +173,13 @@ func TestCompleteAppendsNote(t *testing.T) {
 	if _, err := svc.Claim(uid, j.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	done, err := svc.Complete(uid, j.ID, true, "cloned to /workspace/repo")
+	code := 0
+	done, err := svc.Complete(uid, j.ID, CompleteInput{OK: true, Note: "cloned to /workspace/repo", ExitCode: &code, DurationMs: 42})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if done.ExitCode == nil || *done.ExitCode != 0 || done.DurationMs != 42 {
+		t.Fatalf("exit/duration %+v", done)
 	}
 	if done.Status != StatusSucceeded {
 		t.Fatalf("status %s", done.Status)
@@ -194,7 +198,7 @@ func TestCompleteAppendsNote(t *testing.T) {
 	if _, err := svc.Claim(uid, j2.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	keep, err := svc.Complete(uid, j2.ID, true, "")
+	keep, err := svc.Complete(uid, j2.ID, CompleteInput{OK: true})
 	if err != nil {
 		t.Fatal(err)
 	}

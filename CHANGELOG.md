@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Jobs
+- Structured complete: `exit_code` (nullable), `duration_ms` on Job + complete body
+- Soft migrate sqlite/postgres; runner reports exit + wall duration; MCP `complete_job` args
+
+### MCP
+- `get_job` tool (`GET /v1/jobs/{id}`)
+
+### STS
+- Phase L live MinIO STS path when `AI_CLOUDHUB_SMOKE_STS_LIVE=1` (docker auto-start or MINIO_ENDPOINT)
+
 ## v0.2.7
 
 hubd mode-from-binding and post-mount process health.
