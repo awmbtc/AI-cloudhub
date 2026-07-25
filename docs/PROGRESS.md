@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.6 已发布；STS 联调 + Windows hubd + Stage C metrics
+## 总览：v0.2.7 已发布；hubd mode 优先级 + 挂载进程存活
 
 | 阶段 | 状态 |
 |------|------|
@@ -354,3 +354,4 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Mode 优先级：binding → session.mode → manifest env → mount
 - [x] rclone 进程退出 → actual=error + remount；binding.mode 变更 → remount
 - [x] `cmd/hubd` 单测；WINDOWS / KNOWN_LIMITATIONS 同步
+- [x] 版本钉 **0.2.7** + tag

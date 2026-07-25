@@ -1,12 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.2.7
+
+hubd mode-from-binding and post-mount process health.
 
 ### hubd
 - Mode resolution: binding.mode → session.mode → AI_CLOUDHUB_MODE → mount
 - Detect dead rclone mount process → report actual=error and remount
 - Remount when binding.mode changes while active
 - Unit tests: `go test ./cmd/hubd`
+- Docs: WINDOWS.md, KNOWN_LIMITATIONS soft-refresh honesty
 
 ## v0.2.6
 
