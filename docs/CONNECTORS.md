@@ -113,6 +113,20 @@ Job note: `mysql ready host=… db=…` or `mysql failed: …`.
 
 SaaS connectors (Notion/Slack/GitHub) remain **registry only** in this build.
 
+## Materialize-only 联调 (no rclone)
+
+```bash
+export AI_CLOUDHUB_API=… AI_CLOUDHUB_TOKEN=…
+export AI_CLOUDHUB_CONNECTOR_ID=<id>
+export AI_CLOUDHUB_MOUNT=/tmp/ws
+export AI_CLOUDHUB_MATERIALIZE_ONLY=1
+# optional: AI_CLOUDHUB_MATERIALIZE_REPORT=/tmp/mat.json
+./.bin/runner
+# stdout JSON: note, clone_path, extra_env, pass_libpq / pass_mysql
+```
+
+Regression: `make smoke-byoc` (`scripts/smoke-byoc-connectors.sh`) — local bare git clone + pg/mysql env inject.
+
 ## Security
 
 - D-001: runner is **your** machine, not a platform pool  

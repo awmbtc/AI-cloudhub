@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Ops / BYOC
+- Runner `AI_CLOUDHUB_MATERIALIZE_ONLY=1`: connector materialize without rclone (JSON report)
+- `make smoke-byoc` — local bare git clone + postgres/mysql env inject
+- `make prod-preflight` — production env checklist script
+- PRODUCTION.md: Stage C/Stripe/PDP, BYOC cutover checklist
+
 ## v0.2.4
 
 Stage C contract + MCP write surface for connectors; MySQL BYOC.

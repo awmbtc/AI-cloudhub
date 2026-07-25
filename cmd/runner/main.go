@@ -33,6 +33,15 @@ func main() {
 	}
 	mountPoint := env("AI_CLOUDHUB_MOUNT", "/workspace")
 
+	// Materialize-only: connector fetch + git clone / DB env inject (no rclone/session).
+	// Used for BYOC connector 联调 and smoke-byoc-connectors (D-001: still user machine).
+	if envTruthy(os.Getenv("AI_CLOUDHUB_MATERIALIZE_ONLY")) {
+		if err := runMaterializeOnly(api, token, mountPoint); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	if env("AI_CLOUDHUB_WORKER", "") == "1" || env("AI_CLOUDHUB_WORKER", "") == "true" {
 		runWorker(api, token, mountPoint)
 		return
@@ -41,7 +50,7 @@ func main() {
 	driveID := os.Getenv("AI_CLOUDHUB_DRIVE_ID")
 	bindingID := os.Getenv("AI_CLOUDHUB_BINDING_ID")
 	if driveID == "" && bindingID == "" {
-		log.Fatal("set AI_CLOUDHUB_DRIVE_ID / BINDING_ID, or AI_CLOUDHUB_WORKER=1")
+		log.Fatal("set AI_CLOUDHUB_DRIVE_ID / BINDING_ID, AI_CLOUDHUB_WORKER=1, or AI_CLOUDHUB_MATERIALIZE_ONLY=1")
 	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "--" {
@@ -50,6 +59,46 @@ func main() {
 	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func envTruthy(v string) bool {
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// runMaterializeOnly applies the connector for AI_CLOUDHUB_CONNECTOR_ID without drive mount.
+// Writes report JSON to stdout (and optional AI_CLOUDHUB_MATERIALIZE_REPORT path).
+func runMaterializeOnly(api, token, mountPoint string) error {
+	if strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CONNECTOR_ID")) == "" {
+		return fmt.Errorf("AI_CLOUDHUB_CONNECTOR_ID required for MATERIALIZE_ONLY")
+	}
+	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+		return err
+	}
+	mat := materializeConnector(api, token, mountPoint)
+	report := map[string]interface{}{
+		"note":        mat.Note,
+		"clone_path":  mat.ClonePath,
+		"extra_env":   mat.ExtraEnv,
+		"pass_libpq":  mat.PassLibpq,
+		"pass_mysql":  mat.PassMysql,
+		"strict_hint": mat.StrictHint,
+		"ok":          mat.Err == nil,
+		"mount":       mountPoint,
+	}
+	if mat.Err != nil {
+		report["error"] = mat.Err.Error()
+	}
+	b, _ := json.MarshalIndent(report, "", "  ")
+	if path := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_MATERIALIZE_REPORT")); path != "" {
+		_ = os.WriteFile(path, b, 0o600)
+	}
+	fmt.Println(string(b))
+	if mat.Err != nil {
+		// Soft-style: still exit 1 so smoke can assert; CLONE/PG/MYSQL strict not applied here.
+		return mat.Err
+	}
+	return nil
 }
 
 // cloneStrict fails the job when git connector materialization fails.

@@ -24,16 +24,19 @@ Object bytes stay client↔your store. Jobs run only on **user** runners (D-001:
 | Redis rate limit | `AI_CLOUDHUB_REDIS=redis://…` | Multi-instance shared limiter |
 | Listen | `HTTP_ADDR=:8080` | Put TLS / reverse proxy in front |
 
-## Optional policy / STS
+## Optional policy / STS / Stage C
 
 | Feature | Env | Docs |
 |---------|-----|------|
 | JSON policy | `AI_CLOUDHUB_POLICY_FILE` (+ optional `POLICY_RELOAD_SEC`) | [POLICY.md](./POLICY.md) |
 | OPA/Rego | `AI_CLOUDHUB_OPA_POLICY_FILE` | [POLICY.md](./POLICY.md) |
 | OPA observe | `AI_CLOUDHUB_OPA_OBSERVE=1` | Log-would-deny without blocking |
+| Remote PDP | `AI_CLOUDHUB_PDP_URL` | [POLICY.md](./POLICY.md) — your process; fail-open default |
 | MinIO/AWS/S3 STS | `AI_CLOUDHUB_*_STS=1` | [STS.md](./STS.md) |
 | Qiniu download assist | `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1` | Session note; object GET via `presign-get` always for type=qiniu |
 | OCI API-key check | `AI_CLOUDHUB_ORACLE_NATIVE_IAM=1` + OCI key env | Cache: `AI_CLOUDHUB_OCI_IAM_CACHE_SEC` |
+| Stripe webhooks | `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET` | [PAYMENTS.md](./PAYMENTS.md) |
+| Live Checkout URL | `AI_CLOUDHUB_STRIPE_SECRET_KEY` (+ SUCCESS/CANCEL URLs) | mock URL if unset |
 
 ## Docker Compose (prod-ish)
 
@@ -84,41 +87,57 @@ If nginx/Caddy sets HSTS, leave `AI_CLOUDHUB_HSTS=0` on the API.
 
 Browser CORS is off by default for pure agent/CLI use; enable only if a SPA shares the origin policy you configure at the proxy.
 
-## Runtime hosts (user side)
+## Runtime hosts (user side / BYOC)
 
 - Install **rclone** (+ FUSE / WinFsp on Windows). See [WINDOWS.md](./WINDOWS.md).
 - hubd: `AI_CLOUDHUB_API` + human/device token + `AI_CLOUDHUB_DEVICE_ID`.
-- runner / jobs: user machine only; never run a multi-tenant pool for strangers (D-001).
+- runner / jobs: **your machine only** — never a multi-tenant pool (D-001).
 - Optional Linux sandbox: [SECCOMP.md](./SECCOMP.md), `scripts/runner-*.sh`.
+
+### Connectors on the runner
+
+Register non-secret config on the control plane; materialize on the user runner:
+
+| Type | Runner effect | Host secrets |
+|------|---------------|--------------|
+| `git` | shallow clone → `$MOUNT/repo` (or `path_prefix`) | `GIT_ASKPASS` / SSH |
+| `postgres` | inject `AI_CLOUDHUB_PG_*` | `PGPASSWORD` |
+| `mysql` | inject `AI_CLOUDHUB_MYSQL_*` | `MYSQL_PWD` |
+
+Jobs: set `connector_id` on create; claim sets `AI_CLOUDHUB_CONNECTOR_ID`.  
+联调 without rclone: `AI_CLOUDHUB_MATERIALIZE_ONLY=1` + `AI_CLOUDHUB_CONNECTOR_ID` (see [CONNECTORS.md](./CONNECTORS.md)).
+
+```bash
+# Local regression of git clone + DB env inject (no FUSE):
+make smoke-byoc
+```
 
 ## Releases (multi-arch binaries)
 
-Tag a version to publish GitHub Release artifacts (linux/darwin/windows × amd64/arm64):
-
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
-# → workflow .github/workflows/release.yml builds dist/* + checksums.txt
+git tag v0.2.4
+git push origin v0.2.4
+# → .github/workflows/release.yml → dist/* + checksums.txt
 ```
 
-Local dry-run:
+Local dry-run: `make release-binaries VERSION=0.2.4`  
+Archives: `api`, `hubd`, `runner`, `mcp` (`CGO_ENABLED=0`).
+
+## Preflight + smoke before cutover
 
 ```bash
-make release-binaries VERSION=0.2.0
-# dist/aicloudhub_0.2.0_linux_amd64.tar.gz …
-# dist/checksums.txt
-```
+# 1) Env checklist (fails on missing JWT/STRICT/MASTER_KEY)
+export JWT_SECRET=… AI_CLOUDHUB_MASTER_KEY=… AI_CLOUDHUB_STRICT=1
+export AI_CLOUDHUB_ALLOW_REGISTER=0 AI_CLOUDHUB_METRICS_TOKEN=…
+export AI_CLOUDHUB_DB=postgres://…   # recommended multi-replica
+make prod-preflight                  # scripts/prod-preflight.sh
 
-Each archive contains `api`, `hubd`, `runner`, `mcp` (pure Go, `CGO_ENABLED=0`).
-
-## Smoke before cutover
-
-```bash
+# 2) Functional regression
 export CGO_ENABLED=0
 make test
-make smoke-all          # policy includes OPA; mcp; jobs; objects (Qiniu offline HMAC)
-# optional live MinIO:
-# make smoke-minio
+make smoke-all          # includes smoke-stage-c + mcp
+make smoke-byoc         # git/pg/mysql materialize on this host
+# optional live MinIO: make smoke-minio
 ```
 
 CI (GitHub Actions) on every push/PR to `main`:
@@ -131,13 +150,25 @@ CI (GitHub Actions) on every push/PR to `main`:
 | Docker image | multi-stage distroless API image build + `/healthz` |
 | Release (on `v*` tags) | multi-arch binary archives + checksums |
 
-Images: `deploy/Dockerfile` (distroless API + `healthcheck` subcommand), `deploy/Dockerfile.all` (alpine multi-binary).  
-Compose: postgres/redis/api all have `healthcheck`; api depends on healthy DB/Redis.
+Images: `deploy/Dockerfile` (distroless API), `deploy/Dockerfile.all` (alpine multi-binary).  
+Compose: postgres/redis/api healthchecks; api depends on healthy DB/Redis.
+
+## Cutover checklist (copy/paste)
+
+1. [ ] `make prod-preflight` green (or only expected warnings)  
+2. [ ] Postgres + Redis for multi-replica API  
+3. [ ] TLS at edge; API on loopback; metrics token set  
+4. [ ] First admin created; `ALLOW_REGISTER=0`  
+5. [ ] Policy file / OPA / PDP URL as required by your org  
+6. [ ] Stripe webhook secret if using paid marketplace  
+7. [ ] User runners installed (rclone + optional git/psql clients) — **not** platform pool  
+8. [ ] `make smoke-all` + `make smoke-byoc` on a canary host  
+
 ## What we intentionally do not run in “platform production”
 
-- Large multi-tenant runner pools  
+- Large multi-tenant runner pools (D-001)  
 - Object body proxy through the API  
-- Remote PDP (local JSON / OPA file only)  
-- Auto-minting OCI S3 customer secrets / PARs  
+- Hosted embedding / OpenLineage warehouse / PCI card collection  
+- Control-plane storage of DB passwords or git deploy keys  
 
-See [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md).
+See [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md) · [STAGE-C.md](./STAGE-C.md) · [CONNECTORS.md](./CONNECTORS.md).

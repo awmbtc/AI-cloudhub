@@ -332,3 +332,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP：`create_connector` / `get_connector` / `delete_connector` / `marketplace_checkout`
 - [x] smoke-mcp 覆盖 human connector CRUD + checkout_url
 - [x] 版本钉 **0.2.4** + tag
+
+### 本波（BYOC 联调 + 生产 runbook）
+
+- [x] runner `AI_CLOUDHUB_MATERIALIZE_ONLY=1`（无 rclone 物化 git/pg/mysql）
+- [x] `scripts/smoke-byoc-connectors.sh` + `make smoke-byoc`（本地 bare git + DB env）
+- [x] `scripts/prod-preflight.sh` + `make prod-preflight`
+- [x] PRODUCTION.md：Stage C/Stripe/PDP、BYOC 表、cutover checklist；纠偏「无远程 PDP」
