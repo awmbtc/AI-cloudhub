@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.3 已发布；Stage C + MCP + checkout_url + postgres BYOC
+## 总览：v0.2.4 已发布；MCP connectors + mysql/OpenAPI Stage C
 
 | 阶段 | 状态 |
 |------|------|
@@ -326,3 +326,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `AI_CLOUDHUB_MYSQL_STRICT` / `AI_CLOUDHUB_PASS_MYSQL=0`
 - [x] OpenAPI：`/v1/memory*` `/v1/marketplace*` `/v1/connectors*` `/v1/lineage` `/v1/graph` `/v1/modules` purchases/webhooks
 - [x] Job schema `connector_id`；smoke-stage-c mysql strip
+
+### 本波（v0.2.4 · MCP connector CRUD + checkout）
+
+- [x] MCP：`create_connector` / `get_connector` / `delete_connector` / `marketplace_checkout`
+- [x] smoke-mcp 覆盖 human connector CRUD + checkout_url
+- [x] 版本钉 **0.2.4** + tag

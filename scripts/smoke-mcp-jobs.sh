@@ -67,8 +67,9 @@ for line in sys.stdin:
   for t in (d.get("result") or {}).get("tools") or []:
     names.add(t["name"])
 need={"list_jobs","create_job","claim_next_job","complete_job","cancel_job","list_providers",
-      "list_marketplace","install_marketplace","list_memory","put_memory","search_memory",
-      "list_graph","link_graph","list_connectors","connectors_catalog","list_lineage","record_lineage"}
+      "list_marketplace","install_marketplace","marketplace_checkout","list_memory","put_memory","search_memory",
+      "list_graph","link_graph","list_connectors","connectors_catalog","create_connector","get_connector","delete_connector",
+      "list_lineage","record_lineage"}
 assert need <= names, names
 print("tools ok", sorted(need))
 '
@@ -309,6 +310,71 @@ for line in sys.stdin:
   body=json.loads((r.get("content") or [{}])[0].get("text") or "")
   assert len(body.get("items") or [])>=1, body
   print("list_lineage ok")
+'
+
+echo "== MCP create_connector / get / delete (human) + checkout =="
+export AI_CLOUDHUB_TOKEN="$TOK"
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_connector","arguments":{"type":"postgres","name":"mcp-pg","config":{"host":"db.example.com","database":"app","user":"ro","password":"STRIPME"}}}}' \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("type")=="postgres" and body.get("id"), body
+  cfg=body.get("config") or {}
+  assert "password" not in cfg and "STRIPME" not in str(cfg), body
+  open("/tmp/aihub-mcp-cid","w").write(body["id"])
+  print("create_connector ok", body["id"])
+'
+CIDM=$(cat /tmp/aihub-mcp-cid)
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"get_connector\",\"arguments\":{\"connector_id\":\"$CIDM\"}}}" \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("id") and body.get("type")=="postgres", body
+  print("get_connector ok")
+'
+# paid checkout mock url
+PAID=$("${CURL[@]}" -X POST "$API/v1/marketplace" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"mcp-paid","kind":"skill","price_cents":99,"currency":"usd","public":true,"payload":{"x":1}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"marketplace_checkout\",\"arguments\":{\"item_id\":\"$PAID\"}}}" \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  body=json.loads((r.get("content") or [{}])[0].get("text") or "")
+  assert body.get("status")=="pending" and body.get("checkout_url"), body
+  print("marketplace_checkout ok", body["session_id"])
+'
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"delete_connector\",\"arguments\":{\"connector_id\":\"$CIDM\"}}}" \
+  | ./.bin/mcp 2>/dev/null | python3 -c '
+import sys,json
+for line in sys.stdin:
+  d=json.loads(line.strip() or "{}")
+  if d.get("id")!=2: continue
+  r=d.get("result") or {}
+  if r.get("isError"): raise SystemExit(str(r))
+  print("delete_connector ok")
 '
 
 echo "== MCP object_presign_get (Qiniu native) =="

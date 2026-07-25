@@ -196,6 +196,67 @@ func toolConnectorsCatalog(api, token string) (interface{}, error) {
 	return toolResultJSON(parsed)
 }
 
+func toolCreateConnector(api, token, typ, name string, config map[string]interface{}) (interface{}, error) {
+	payload := map[string]interface{}{"type": typ}
+	if name != "" {
+		payload["name"] = name
+	}
+	if config != nil {
+		payload["config"] = config
+	} else {
+		payload["config"] = map[string]interface{}{}
+	}
+	body, code, err := httpDo(http.MethodPost, api+"/v1/connectors", token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("create connector HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolGetConnector(api, token, id string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodGet, api+"/v1/connectors/"+url.PathEscape(id), token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("get connector HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolDeleteConnector(api, token, id string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodDelete, api+"/v1/connectors/"+url.PathEscape(id), token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("delete connector HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolMarketplaceCheckout(api, token, itemID string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodPost, api+"/v1/marketplace/"+url.PathEscape(itemID)+"/checkout", token, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("marketplace checkout HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
 func toolListLineage(api, token, entity string, limit int) (interface{}, error) {
 	q := url.Values{}
 	if entity != "" {

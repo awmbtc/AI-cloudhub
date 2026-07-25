@@ -54,9 +54,13 @@ go build -o .bin/mcp ./cmd/mcp
 | `list_providers` | provider.read\|write | `GET /v1/providers` (public fields) |
 | `list_marketplace` | auth | `GET /v1/marketplace` |
 | `install_marketplace` | auth | `POST …/install` — **skill/manifest OK for agents**; `agent_template` human-only |
+| `marketplace_checkout` | auth (human API) | `POST …/checkout` → `checkout_url` + metadata |
 | `list_memory` / `put_memory` / `search_memory` | auth | Memory Kernel (+ vector search) |
 | `list_graph` / `link_graph` | auth | Identity Graph edges |
 | `list_connectors` / `connectors_catalog` | auth | Connector bindings / types |
+| `create_connector` | auth (human API) | `POST /v1/connectors` (secrets stripped) |
+| `get_connector` | auth | `GET /v1/connectors/{id}` |
+| `delete_connector` | auth (human API) | `DELETE /v1/connectors/{id}` |
 | `list_lineage` / `record_lineage` | auth | Data Lineage events |
 
 Live smoke: `make smoke-mcp` (`scripts/smoke-mcp-jobs.sh`) covers jobs + Stage C tools.

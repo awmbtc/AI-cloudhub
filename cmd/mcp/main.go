@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.3"
+const serverVersion = "0.2.4"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -149,7 +149,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 		}
 		return okResp(id, result)
 	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers",
-		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "list_lineage", "record_lineage":
+		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector", "marketplace_checkout", "list_lineage", "record_lineage":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -471,6 +471,52 @@ func toolRegistry() []toolMeta {
 			name: "connectors_catalog", description: "List connector types (GET /v1/connectors/catalog).",
 			scopes: nil,
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "create_connector", description: "Register connector binding (POST /v1/connectors). Human session required. Secrets in config are stripped; BYOC materializes on runner.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"type":   map[string]interface{}{"type": "string", "description": "git|postgres|mysql|…"},
+					"name":   map[string]interface{}{"type": "string"},
+					"config": map[string]interface{}{"type": "object", "description": "Non-secret config only"},
+				},
+				"required": []string{"type"},
+			},
+		},
+		{
+			name: "get_connector", description: "Get connector binding (GET /v1/connectors/{id}).",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"connector_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"connector_id"},
+			},
+		},
+		{
+			name: "delete_connector", description: "Delete connector binding (DELETE /v1/connectors/{id}). Human session required.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"connector_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"connector_id"},
+			},
+		},
+		{
+			name: "marketplace_checkout", description: "Checkout paid marketplace item (POST …/checkout). Human session; returns checkout_url + stripe_metadata.",
+			scopes: nil,
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"item_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"item_id"},
+			},
 		},
 		{
 			name: "list_lineage", description: "List lineage events (GET /v1/lineage). Optional entity filter.",
@@ -807,6 +853,52 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolListConnectors(api, token)
 	case "connectors_catalog":
 		return toolConnectorsCatalog(api, token)
+	case "create_connector":
+		var args struct {
+			Type   string                 `json:"type"`
+			Name   string                 `json:"name"`
+			Config map[string]interface{} `json:"config"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.Type) == "" {
+			return nil, fmt.Errorf("type required")
+		}
+		return toolCreateConnector(api, token, args.Type, args.Name, args.Config)
+	case "get_connector":
+		var args struct {
+			ConnectorID string `json:"connector_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.ConnectorID) == "" {
+			return nil, fmt.Errorf("connector_id required")
+		}
+		return toolGetConnector(api, token, args.ConnectorID)
+	case "delete_connector":
+		var args struct {
+			ConnectorID string `json:"connector_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.ConnectorID) == "" {
+			return nil, fmt.Errorf("connector_id required")
+		}
+		return toolDeleteConnector(api, token, args.ConnectorID)
+	case "marketplace_checkout":
+		var args struct {
+			ItemID string `json:"item_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.ItemID) == "" {
+			return nil, fmt.Errorf("item_id required")
+		}
+		return toolMarketplaceCheckout(api, token, args.ItemID)
 	case "list_lineage":
 		var args struct {
 			Entity string `json:"entity"`
@@ -1267,8 +1359,9 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			"whoami", "list_drives", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
 			"list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job",
-			"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory",
-			"list_graph", "link_graph", "list_connectors", "connectors_catalog", "list_lineage", "record_lineage",
+			"list_marketplace", "install_marketplace", "marketplace_checkout", "list_memory", "put_memory", "search_memory",
+			"list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector",
+			"list_lineage", "record_lineage",
 		},
 	}
 	out, err := toolResultJSON(doc)
