@@ -32,17 +32,17 @@
 | Capability Token | access token 扩展字段 | `agent_id` + `scopes[]` |
 | Policy Engine | 先 JSON/硬编码规则 | scope 校验 + 归属；引擎后置 |
 | Sandbox | runner/hubd + jail 包 | **路径 jail v0** |
-| Audit Graph | `audit_events` 扩展字段 | action 已有；逐步加 agent_id |
-| Snapshot / Memory / Marketplace | — | **Not in 1.x / 2.0 初版** |
+| Audit Graph | `audit_events` 扩展字段 | action + `agent_id` + 过滤（已落地） |
+| Snapshot / Memory / Marketplace | Snapshot v0 元数据 API | Memory / Marketplace **Not in 2.0 初版** |
 
 ```text
 User
- ├── Agent[]          ← 新增：智能体主体
+ ├── Agent[]          ← 智能体主体（CRUD + capability token）
  ├── Provider[]
  ├── Drive[]
- ├── Binding[]
- ├── Device[]
- ├── Job[]            ← 后续可挂 agent_id
+ ├── Binding[]        ← agent：allowlist + policy 门禁
+ ├── Device[]         ← agent token 禁止
+ ├── Job[]            ← agent_id（创建者）+ claimed_by_agent_id
  └── Token (access)  ← 可带 agent_id + scopes
 ```
 
@@ -67,7 +67,7 @@ User
 | # | 落脚点 | 状态 | 说明 |
 |---|--------|------|------|
 | B1 | Capability 绑定 Drive 列表 | **done** | `allowed_drive_ids`；session/list 过滤 |
-| B2 | Policy v0 | **done** | `internal/policy` Engine（scope+drive+path 前缀） |
+| B2 | Policy v0/v1 | **done** | Engine + 可选 `AI_CLOUDHUB_POLICY_FILE`（非 OPA） |
 | B3 | Sandbox v1：env 白名单 | **done** | runner FilterEnv；path jail 在 A |
 | B4 | Manifest 2.0：permissions.read/write | **done** | version=2 + prefixes |
 | B5 | Audit 关联 `agent_id` | **done** | 字段 + `?agent_id=` 过滤 |
@@ -164,20 +164,29 @@ Deny:   .. 穿越、符号链接逃逸（尽力）、空路径
 
 ## 5. 里程碑验收清单
 
-### M-A（本波结束）
+### M-A（阶段 A · 已收口）
 
 - [x] 文档：本 ROADMAP + ARCHITECTURE 演进节 + D-002  
 - [x] `go test ./...` 绿  
 - [x] 创建 agent → 签发 token → 用 agent token 调 API  
 - [x] agent token 无 `drive.write` 时创建 drive 失败  
+- [x] Admin API 拒绝 agent token  
 - [x] jail 拒绝 `/etc/passwd` 与 `../../../etc`（unit + runner 默认开启）
 
-### M-B（2.0）
+### M-B（阶段 B · 2.0 最小企业可用 · 已收口）
 
-- [x] Policy 文件或表驱动（`AI_CLOUDHUB_POLICY_FILE`，docs/POLICY.md）  
-- [x] Manifest permissions（v2 read/write prefixes）  
-- [x] Audit 带 agent_id  
-- [x] Job 挂 agent_id / claimed_by_agent_id（创建与 claim 可追溯）  
+- [x] B1 `allowed_drive_ids`；list/session 按白名单过滤  
+- [x] B2 Policy Engine + 可选文件（`AI_CLOUDHUB_POLICY_FILE`，docs/POLICY.md）；**非** OPA  
+- [x] B3 Sandbox v1 env 白名单（runner；`AI_CLOUDHUB_PASS_TOKEN=1` 才传父 token）  
+- [x] B4 Manifest permissions（v2 read/write prefixes）  
+- [x] B5 Audit 带 `agent_id` + `?agent_id=` 过滤  
+- [x] B6 Snapshot v0（元数据快照 API；非对象级 Git FS）  
+- [x] Job 挂 `agent_id` / `claimed_by_agent_id`（创建与 claim 可追溯；list 可过滤）  
+- [x] Job/provider 路由：scope + `CheckAccess`；claim deny → `ReleaseToPending`  
+- [x] MCP jobs：`list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` + `list_providers`  
+- [x] Bindings：agent scope + drive allowlist/policy 过滤；Devices：agent token 一律 403  
+
+**M-B 之后仍不做：** OPA/Rego；OCI 私钥 IAM；Qiniu 非 S3 下载 token 模型（见 PROGRESS Close-out / KNOWN_LIMITATIONS）。
 
 ---
 

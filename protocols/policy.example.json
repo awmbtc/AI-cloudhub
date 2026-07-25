@@ -1,9 +1,11 @@
 {
+  "_comment": "Example AI_CLOUDHUB_POLICY_FILE (version 1). Keys named _comment are documentation only and ignored by the Go loader. Rules are ordered; first matching deny or allow wins. Built-in checks (token scopes, agent allowed_drive_ids, agent path prefixes) always run before this file.",
   "version": 1,
   "mode": "enforce",
   "rules": [
     {
       "id": "block-secret-paths",
+      "_comment": "Deny agent path/drive access under secret-like prefixes (segment or path match). Complements built-in agent path prefixes.",
       "effect": "deny",
       "principals": ["agent"],
       "actions": ["path.read", "path.write", "drive.read", "drive.write", "drive.session"],
@@ -12,11 +14,20 @@
     },
     {
       "id": "jobs-require-scope",
+      "_comment": "File-level gate for action job.run: when this rule matches, require_scopes must all be present or the request is denied. Built-in scope checks already require job.run on job routes; this is a redundant/example pattern for file policy (same idea as path secrets above).",
       "effect": "deny",
       "principals": ["agent"],
       "actions": ["job.run"],
       "require_scopes": ["job.run"],
       "reason": "job.run scope required"
+    },
+    {
+      "id": "deny-provider-write-for-agents",
+      "_comment": "Optional example: block agents from provider.write (create/update/delete providers). Leave provider.read allowed so agents can list public provider fields. Remove or comment-out this rule if agents should manage providers. provider.write implies provider.read in the built-in scope map only — file rules still match on the exact action name.",
+      "effect": "deny",
+      "principals": ["agent"],
+      "actions": ["provider.write"],
+      "reason": "agents cannot write providers"
     }
   ]
 }

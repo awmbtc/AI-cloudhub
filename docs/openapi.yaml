@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.1.1
+  version: 0.2.0
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -11,13 +11,20 @@ info:
     - **No platform runner pool**: the product does **not** operate a large multi-tenant runner fleet
       (decision **D-001**). Jobs are claimed only by runners authenticated as the job owner.
 
-    **Auth**: most `/v1/*` routes require `Authorization: Bearer <token>` from `POST /v1/auth/login`.
-    Admin routes additionally require `role=admin` (first registered user is admin).
+    **Auth**: most `/v1/*` routes require `Authorization: Bearer <token>` from `POST /v1/auth/login`
+    (human session) or `POST /v1/agents/{id}/token` (agent capability token with scopes).
+    Admin routes additionally require `role=admin` (first registered user is admin) and a human session.
+
+    **Agent scopes (v0)**: `drive.read`, `drive.write`, `job.run`, `provider.read`, `provider.write`.
+    Human tokens are unrestricted for API scope checks. Agents are also constrained by
+    `allowed_drive_ids` and optional path prefixes / external policy file.
 
     **Default listen**: `:8080` (`HTTP_ADDR`). Routes registered in `internal/httpserver/server.go`.
 
     **Optional routes**
+    - `/v1/agents*` when agent service is wired (default in `cmd/api`).
     - `/v1/devices*` when device service is wired (default in `cmd/api`).
+    - `/v1/jobs*` when job service is wired (default in `cmd/api`).
     - `/v1/workspaces*` only when `ENABLE_PLATFORM_S3=1` (legacy platform S3 workspace; not the primary BYOS path).
   contact:
     name: AI-cloudhub
@@ -33,27 +40,29 @@ tags:
     description: Liveness, readiness, metrics, host runtime preflight
   - name: auth
     description: Register, login, current user, password
+  - name: agents
+    description: Agent identity CRUD and capability tokens (human session only for management)
   - name: admin
-    description: Admin-only user list, role change, audit
+    description: Admin-only user list, role change, audit, policy status
   - name: providers
     description: Object-storage provider catalog and credential bindings
   - name: drives
     description: Logical drives (provider + bucket + prefix)
   - name: bindings
-    description: Desired/actual mount state on a device
+    description: Desired/actual mount state on a device (agent drive allowlist + drive.read/write scopes)
   - name: sessions
     description: Short-lived STS mount sessions and refresh
   - name: jobs
     description: Durable BYOC job queue (user runners only; no platform pool)
   - name: devices
-    description: hubd/runtime device registration (optional service)
+    description: hubd/runtime device registration (optional service; human session only)
 
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: opaque token from POST /v1/auth/login
+      bearerFormat: opaque token from POST /v1/auth/login or POST /v1/agents/{id}/token
 
   schemas:
     Error:
@@ -121,6 +130,17 @@ components:
         role:
           type: string
           enum: [admin, user]
+        principal:
+          type: string
+          enum: [human, agent]
+          description: human session vs agent capability token
+        agent_id:
+          type: string
+          description: Present when principal is agent
+        scopes:
+          type: array
+          items: { type: string }
+          description: Capability scopes when principal is agent
 
     ChangePassword:
       type: object
@@ -614,6 +634,9 @@ components:
         Work item for a **user-side BYOC runner**. Creating a job does not schedule onto
         a platform-owned pool; claim with the owner's token via POST /v1/jobs/{id}/claim
         or POST /v1/jobs/next/claim.
+        List filters: `agent_id` (creator) and `claimed_by_agent_id` (claimer) on GET /v1/jobs
+        (ignored when `status=pending`). On claim, `claimed_by_agent_id` is set from the
+        principal when using an agent token.
       properties:
         id:
           type: string
@@ -625,7 +648,7 @@ components:
           type: string
         agent_id:
           type: string
-          description: Agent that created the job (empty if human)
+          description: Creator agent_id set by control plane from principal (empty if human)
         claimed_by_agent_id:
           type: string
           description: Agent that last claimed the job (empty if human runner)
@@ -677,6 +700,142 @@ components:
           type: boolean
         note:
           type: string
+
+    Agent:
+      type: object
+      description: |
+        Agent identity owned by a user. Management APIs require a human session
+        (`403 human session required` for agent tokens). Capability tokens are
+        issued via `POST /v1/agents/{id}/token`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        default_scopes:
+          type: array
+          items:
+            type: string
+            enum: [drive.read, drive.write, job.run, provider.read, provider.write]
+          description: Used when token request omits scopes
+        allowed_drive_ids:
+          type: array
+          items: { type: string }
+          description: Drive allowlist; empty means no drives permitted for agent
+        read_prefixes:
+          type: array
+          items: { type: string }
+          description: Optional path prefixes for read policy
+        write_prefixes:
+          type: array
+          items: { type: string }
+          description: Optional path prefixes for write policy
+        created_at:
+          type: string
+          format: date-time
+
+    AgentCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        default_scopes:
+          type: array
+          items:
+            type: string
+            enum: [drive.read, drive.write, job.run, provider.read, provider.write]
+          description: Defaults to [drive.read, drive.write] when omitted or empty
+        allowed_drive_ids:
+          type: array
+          items: { type: string }
+          description: Must belong to the owner when set
+        read_prefixes:
+          type: array
+          items: { type: string }
+        write_prefixes:
+          type: array
+          items: { type: string }
+
+    AgentUpdate:
+      type: object
+      description: |
+        Partial update (PUT or PATCH). When `allowed_drive_ids` is present in JSON
+        (including `[]`), the server replaces the drive allowlist.
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        default_scopes:
+          type: array
+          items:
+            type: string
+            enum: [drive.read, drive.write, job.run, provider.read, provider.write]
+        allowed_drive_ids:
+          type: array
+          items: { type: string }
+          description: Replaces allowlist when present; empty array clears it
+        set_drives:
+          type: boolean
+          description: |
+            When true, replaces AllowedDriveIDs even if empty. The HTTP layer also
+            sets this automatically when `allowed_drive_ids` is non-null in the body.
+        read_prefixes:
+          type: array
+          items: { type: string }
+        write_prefixes:
+          type: array
+          items: { type: string }
+
+    AgentTokenRequest:
+      type: object
+      properties:
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [drive.read, drive.write, job.run, provider.read, provider.write]
+          description: Defaults to agent.default_scopes when omitted or empty
+        ttl_min:
+          type: integer
+          description: Token lifetime in minutes; defaults to 60 when <= 0
+          default: 60
+
+    AgentTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Bearer token for Authorization header
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          format: int64
+          description: Lifetime in seconds
+        agent_id:
+          type: string
+        scopes:
+          type: array
+          items: { type: string }
 
     Device:
       type: object
@@ -921,6 +1080,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Binding'
+
+    ItemsAgent:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
 
     ItemsJob:
       type: object
@@ -1186,7 +1353,10 @@ paths:
   /v1/me:
     get:
       tags: [auth]
-      summary: Current user id, username, role
+      summary: Current user id, username, role (and agent principal fields)
+      description: |
+        Human tokens return `principal=human`. Agent capability tokens also include
+        `agent_id`, `scopes`, and `principal=agent`.
       operationId: getMe
       security:
         - bearerAuth: []
@@ -1433,10 +1603,277 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/agents:
+    get:
+      tags: [agents]
+      summary: List agents for current user
+      description: |
+        Human session only. Agent tokens receive `403 human session required`.
+        Returns `{ "items": [Agent, ...] }`. Disabled service returns `404 agents disabled`.
+      operationId: listAgents
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemsAgent'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: Agent token cannot manage agents (human session required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Agents service disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [agents]
+      summary: Create agent identity
+      description: |
+        Human session only. Default scopes are `drive.read` + `drive.write` when omitted.
+        `allowed_drive_ids` must belong to the owner when set.
+      operationId: createAgent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Agent token cannot manage agents (human session required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Agents service disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/agents/{id}:
+    get:
+      tags: [agents]
+      summary: Get agent by id
+      description: Human session only.
+      operationId: getAgent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Human session required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      tags: [agents]
+      summary: Update agent (full/partial body)
+      description: |
+        Human session only. Same handler as PATCH. When `allowed_drive_ids` is present
+        in JSON (including `[]`), the drive allowlist is replaced.
+      operationId: putAgent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUpdate'
+      responses:
+        '200':
+          description: Updated agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Human session required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [agents]
+      summary: Patch agent fields
+      description: Same as PUT; human session only.
+      operationId: patchAgent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUpdate'
+      responses:
+        '200':
+          description: Updated agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Human session required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [agents]
+      summary: Delete agent
+      description: Human session only.
+      operationId: deleteAgent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Human session required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/agents/{id}/token:
+    post:
+      tags: [agents]
+      summary: Issue agent capability token
+      description: |
+        Human session only. Agent must be `status=active`. Body may set `scopes` and
+        `ttl_min` (minutes; default 60). Omitted scopes use agent `default_scopes`.
+        Returned bearer is used like a login token; API scope checks apply
+        (`drive.read` / `drive.write` / `job.run` / …).
+      operationId: issueAgentToken
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentTokenRequest'
+      responses:
+        '200':
+          description: Capability token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTokenResponse'
+        '400':
+          description: Agent disabled, unknown scope, or bad body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Human session required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2393,6 +2830,11 @@ paths:
     get:
       tags: [bindings]
       summary: List bindings (optional device filter)
+      description: |
+        Requires scope **drive.read** (agent tokens). Humans are unrestricted.
+        For agent tokens, results are filtered to drives on the agent's
+        `allowed_drive_ids` allowlist and that pass drive.read policy checks.
+        Optional `device_id` filter applies before allowlist filtering.
       operationId: listBindings
       security:
         - bearerAuth: []
@@ -2404,18 +2846,27 @@ paths:
             type: string
       responses:
         '200':
-          description: Binding list
+          description: Binding list (agent-visible subset for agent tokens)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ItemsBinding'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
     post:
       tags: [bindings]
       summary: Create binding (desired mount on device)
+      description: |
+        Requires scope **drive.write** (agent tokens). Agents may only bind drives
+        on their `allowed_drive_ids` allowlist (and drive.write policy).
       operationId: createBinding
       security:
         - bearerAuth: []
@@ -2436,6 +2887,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.write or drive not on agent allowlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           description: Binding quota exceeded
           content:
@@ -2449,6 +2906,9 @@ paths:
     get:
       tags: [bindings]
       summary: Get binding
+      description: |
+        Requires scope **drive.read**. Agents must be allowed the binding's drive
+        (`allowed_drive_ids` + policy).
       operationId: getBinding
       security:
         - bearerAuth: []
@@ -2466,6 +2926,12 @@ paths:
                 $ref: '#/components/schemas/Binding'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.read or drive not allowed for agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -2475,6 +2941,8 @@ paths:
     post:
       tags: [bindings, sessions]
       summary: Issue STS session for binding (hubd)
+      description: |
+        Requires scope **drive.read**. Agents must be allowed the binding's drive.
       operationId: issueBindingSession
       security:
         - bearerAuth: []
@@ -2494,6 +2962,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.read or drive not allowed for agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2501,6 +2975,8 @@ paths:
     post:
       tags: [bindings]
       summary: Report actual mount state (hubd/runner)
+      description: |
+        Requires scope **drive.write**. Agents must be allowed the binding's drive.
       operationId: reportBindingActual
       security:
         - bearerAuth: []
@@ -2526,6 +3002,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.write or drive not allowed for agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2533,6 +3015,8 @@ paths:
     post:
       tags: [bindings]
       summary: Set desired mount state
+      description: |
+        Requires scope **drive.write**. Agents must be allowed the binding's drive.
       operationId: setBindingDesired
       security:
         - bearerAuth: []
@@ -2558,6 +3042,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing scope drive.write or drive not allowed for agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2705,6 +3195,10 @@ paths:
     post:
       tags: [jobs]
       summary: Claim a specific pending job (BYOC worker)
+      description: |
+        Requires scope **job.run** for agent tokens. Sets `claimed_by_agent_id` from the
+        agent principal when present. Agents may only claim jobs whose drive is allowed
+        (allowlist + job.run policy); denied claims are released back to pending.
       operationId: claimJob
       security:
         - bearerAuth: []
@@ -2724,6 +3218,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing job.run, drive not allowed for agent, or no claimable job for agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2731,8 +3231,10 @@ paths:
     post:
       tags: [jobs]
       summary: Claim oldest pending job for user (BYOC worker)
+      description: |
+        Path uses id segment `next` with action `claim` (same router as /v1/jobs/{id}/claim).
+        Requires scope **job.run** for agent tokens. Skips jobs whose drive the agent cannot access.
       operationId: claimNextJob
-      description: Path uses id segment `next` with action `claim` (same router as /v1/jobs/{id}/claim).
       security:
         - bearerAuth: []
       responses:
@@ -2750,6 +3252,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Missing job.run or no claimable jobs for this agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2815,6 +3323,9 @@ paths:
     get:
       tags: [devices]
       summary: List registered devices
+      description: |
+        Human / hubd only. Agent capability tokens receive
+        `403 agent token cannot manage devices`.
       operationId: listDevices
       security:
         - bearerAuth: []
@@ -2827,11 +3338,20 @@ paths:
                 $ref: '#/components/schemas/ItemsDevice'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Agent token cannot manage devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
     post:
       tags: [devices]
       summary: Register or refresh device (hubd)
+      description: |
+        Human / hubd only. Agent capability tokens receive
+        `403 agent token cannot manage devices`.
       operationId: registerDevice
       security:
         - bearerAuth: []
@@ -2852,6 +3372,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Agent token cannot manage devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -2859,6 +3385,9 @@ paths:
     get:
       tags: [devices]
       summary: Get device
+      description: |
+        Human / hubd only. Agent capability tokens receive
+        `403 agent token cannot manage devices`.
       operationId: getDevice
       security:
         - bearerAuth: []
@@ -2876,6 +3405,12 @@ paths:
                 $ref: '#/components/schemas/Device'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Agent token cannot manage devices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':

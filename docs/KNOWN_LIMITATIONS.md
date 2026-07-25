@@ -9,8 +9,10 @@
   - 登录返回 `token` + `refresh_token`；`POST /v1/auth/refresh` 轮换 refresh。
   - 单会话吊销：`POST /v1/auth/logout`（可选 body `refresh_token`）
   - 全会话吊销：改密 / `POST /v1/admin/users/{id}/revoke-sessions`
-- **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。**Devices API 禁止 agent token**（仅 hubd/人）；Bindings 列表按允许的 drive 过滤。
-- **Policy：** 内置 scope + drive 白名单 + path 前缀；可选外部 JSON（`AI_CLOUDHUB_POLICY_FILE`，见 [POLICY.md](./POLICY.md)）。**无** OPA/Rego。
+- **Agent 身份：** CRUD + token scopes；`allowed_drive_ids` 白名单（空=全部）；PUT 更新；Manifest 2.0 前缀。
+  - **Devices：** agent token **一律 403**（`agent token cannot manage devices`；仅 hubd/人）。
+  - **Bindings：** create/mutate 走 `allowAgentDrive`（scope + drive allowlist + policy）；**list 过滤**掉 agent 不可见的 drive。
+- **Policy：** 内置 scope + drive 白名单 + path 前缀；可选外部 JSON（`AI_CLOUDHUB_POLICY_FILE`，见 [POLICY.md](./POLICY.md)）。**无** OPA/Rego / 远程 PDP（刻意未做）。
 - **Runtime jail：** runner 默认路径 jail + **env 白名单**（`AI_CLOUDHUB_JAIL`；`AI_CLOUDHUB_PASS_TOKEN=1` 才注入父 API token）。可选 **进程内 seccomp**（Linux）：`AI_CLOUDHUB_SECCOMP=1`，CGO-free；`PROFILE=default|strict|netdeny`；`SECCOMP_NET=deny` 时 **socket 仅 AF_UNIX**；`SECCOMP_STRICT=1` 加载失败中止。见 [SECCOMP.md](./SECCOMP.md)。
 - **Snapshot / objects：** 元数据 + 清单（含可选 version_id）；`version-hint` / `restore-plan` / `presign-get` 辅助 BYOS；`restore-version` 仅对对象存储发 **CopyObject**（用用户凭证），控制面**不**代理对象 body。Live 硬断言见 `make smoke-minio`。
 - **Network deny：** env 剥离；`runner-netns.sh` / `runner-bwrap.sh` / `runner-seccomp.sh`（Linux，可选外部包装）。进程内 seccomp 与外部包装可叠加使用。
@@ -30,10 +32,14 @@
   | oss | **Aliyun RAM** AssumeRole | `AI_CLOUDHUB_OSS_NATIVE_STS=1` + `acs:ram::` RoleArn | `aliyun_sts` |
   | cos | **Tencent CAM** AssumeRole | `AI_CLOUDHUB_COS_NATIVE_STS=1` + `qcs::cam::` RoleArn | `tencent_sts` |
   | oss/cos 另可选 | S3 兼容 AssumeRole（原生失败可回退） | `AI_CLOUDHUB_OSS_STS` / `COS_STS` / `S3_STS` | `s3_sts` |
-  | r2/b2/qiniu/oracle | S3 兼容 AssumeRole（可选） | `AI_CLOUDHUB_S3_STS=1` 或 `AI_CLOUDHUB_<VENDOR>_STS=1` | `s3_sts` |
+  | r2/b2 | S3 兼容 AssumeRole（可选） | `AI_CLOUDHUB_S3_STS=1` 或 per-vendor | `s3_sts` |
+  | qiniu | S3 兼容 AssumeRole（**非**私有下载 token） | `AI_CLOUDHUB_QINIU_STS=1` 或 `S3_STS` | `qiniu_sts` 或 `s3_sts` |
+  | oracle | S3 兼容层 AssumeRole（**非** OCI 私钥 IAM） | `AI_CLOUDHUB_ORACLE_STS=1` 或 `S3_STS` | `oracle_sts` 或 `s3_sts` |
   | 上述厂商且开关关 | 不探测 | — | embedded + Note |
 
   失败永不阻断 Issue，一律回退 embedded 短时会话。
+
+  **刻意不做的 STS 模型：** OCI user OCID + API private key IAM；Qiniu 私有下载 / 管理 token（非 S3 session）。见 [STS.md](./STS.md)。
 
 ## Runtime
 
@@ -57,3 +63,4 @@
 
 - 非完整网盘 UI。
 - 控制面不捆绑 MinIO 服务（非魔改 MinIO）。
+- 2.0 主线已收口；剩余大项仅 **OPA/Rego** 与 **OCI/Qiniu 非 S3 原生 STS**（见上）。

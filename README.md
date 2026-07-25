@@ -123,6 +123,9 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/healthz` | 健康 + 能力清单 |
+| GET | `/readyz` | 存储就绪 |
+| GET | `/metrics` | Prometheus 指标 |
+| GET | `/v1/runtime/check` | 本机 rclone/FUSE 预检 |
 | GET | `/v1/providers/catalog` | 厂商目录 |
 | POST | `/v1/auth/register` `login` | 账号（首用户 admin） |
 | GET | `/v1/me` | 当前用户与角色 |
@@ -130,15 +133,35 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 | GET | `/v1/admin/users` | 用户列表（admin） |
 | POST | `/v1/admin/users/{id}/role` | 设角色（admin） |
 | GET | `/v1/admin/audit` | 审计（admin） |
-| GET | `/readyz` | 存储就绪 |
-| CRUD | `/v1/providers` | 绑定 Key（A+B 批） |
+| GET | `/v1/admin/policy` | 外部策略文件状态（admin；`docs/POLICY.md`） |
+| CRUD | `/v1/providers` | 绑定 Key（A+B+C） |
 | CRUD | `/v1/drives` | 逻辑盘 |
 | POST | `/v1/drives/{id}/session` | STS + Manifest |
 | POST | `/v1/sessions/refresh` | 续期 STS（token 轮换） |
 | POST | `/v1/drives/{id}/barrier` | write barrier |
+| GET | `/v1/drives/{id}/objects` | 对象清单（元数据 only；不代下） |
+| POST | `…/objects/presign-get` `restore-plan` `restore-version` | 预签名 / 恢复指引 / 版本恢复 |
+| GET/POST | `/v1/drives/{id}/snapshots` | 元数据快照（≤50/盘；可选 inventory） |
+| GET | `…/snapshots/diff` · POST `…/{sid}/restore` | 快照 diff / 恢复 drive 元数据 |
 | CRUD | `/v1/bindings` | desired 挂载 |
 | POST | `/v1/bindings/{id}/session` | hubd 拉会话 |
 | POST | `/v1/bindings/{id}/report` | actual 上报 |
+| CRUD | `/v1/agents` | Agent 身份、scope、path jail |
+| GET/POST | `/v1/jobs` | BYOC 任务队列（用户 runner，D-001） |
+| POST | `/v1/jobs/next/claim` `…/{id}/complete` `cancel` | 领取 / 完成 / 取消 |
+
+Agent 侧亦可通过 **MCP helper**（`cmd/mcp`，stdio）调用同等能力（list/create job、objects、snapshots 等），见上文 MCP 节与 [docs/MCP.md](docs/MCP.md)。
+
+现场回归（需本地 `api`）：
+
+```bash
+make smoke-agent   # Agent + snapshot
+make smoke-job     # Job 持久化 / claim / complete
+make smoke-mcp     # MCP tools ↔ jobs
+make smoke-policy  # 外部 policy + admin/policy
+make smoke-minio   # 真 MinIO inventory + include_objects
+# make smoke-objects  make smoke-all
+```
 
 可选原生 / S3 兼容 STS（best-effort，失败一律回退 embedded 短时会话）：
 

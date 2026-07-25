@@ -236,7 +236,26 @@ curl -s localhost:8080/v1/runtime/check
 - [x] Devices：agent token 一律 403（hubd/人侧）
 - [x] smoke-agent 覆盖；README MCP 工具表更新
 
-## 仍可后续
+## Close-out（主线收口 · 全部 major waves 完成）
 
-- OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）
-- OPA/Rego 或远程 PDP（刻意未做）
+| 波次 | 状态 |
+|------|------|
+| P0 无感闭环 · P1 持久化/加密/限流 · P2 厂商/STS 骨架 · P3 jobs/mcp/metrics | ✅ |
+| 加固 1–4 波（配额/审计/会话吊销/refresh） | ✅ |
+| 阶段 A：Agent CRUD/token/scopes + path jail | ✅ |
+| 阶段 B：drive allowlist · Policy Engine · env 白名单 · Manifest 2.0 · audit.agent_id · Snapshot v0 | ✅ |
+| STS：MinIO/AWS/S3-compat · Aliyun RAM · Tencent CAM · Qiniu/Oracle 标签 | ✅ best-effort |
+| Objects / Snapshots / OpenAPI / smoke-* | ✅ |
+| Seccomp（default/strict/netdeny）· bwrap/netns 包装 | ✅ |
+| Policy 外部 JSON + job/provider CheckAccess | ✅ |
+| Job `agent_id` / `claimed_by_agent_id` + 审计 + list filter | ✅ |
+| MCP jobs 工具 + `make smoke-mcp` | ✅ |
+| Bindings agent 门禁 · Devices 拒 agent token | ✅ |
+
+**结论：** 1.x 收尾 + ROADMAP 2.0 最小企业可用主线已落地；文档与代码口径对齐（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md) M-A/M-B、[ARCHITECTURE.md](./ARCHITECTURE.md) §3.2、[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)）。
+
+### 剩余（仅此 · 刻意未做）
+
+- **OCI 私钥 IAM**（user OCID + API private key；当前仅 S3 兼容 AssumeRole → `oracle_sts` / `s3_sts`）
+- **Qiniu 私有下载 token 等非 S3 session 模型**（当前仅 S3 兼容 AssumeRole → `qiniu_sts` / `s3_sts`）
+- **OPA/Rego 或远程 PDP**（Policy = built-in + 可选 JSON 文件；见 [POLICY.md](./POLICY.md)）

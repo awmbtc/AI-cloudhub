@@ -22,8 +22,11 @@ Example file: [`protocols/policy.example.json`](../protocols/policy.example.json
 
 ## Document schema (version 1)
 
+`_comment` keys are documentation only (ignored by the loader). Full example: [`protocols/policy.example.json`](../protocols/policy.example.json).
+
 ```json
 {
+  "_comment": "version 1; ordered rules; first matching deny|allow wins",
   "version": 1,
   "mode": "enforce",
   "rules": [
@@ -32,8 +35,25 @@ Example file: [`protocols/policy.example.json`](../protocols/policy.example.json
       "effect": "deny",
       "principals": ["agent"],
       "actions": ["path.read", "path.write", "drive.read", "drive.write", "drive.session"],
-      "path_deny_prefixes": [".ssh", ".env"],
+      "path_deny_prefixes": [".ssh", ".env", ".aws", "secrets"],
       "reason": "secret paths blocked for agents"
+    },
+    {
+      "id": "jobs-require-scope",
+      "_comment": "Built-in already requires job.run on job routes; file require_scopes is an extra/example gate",
+      "effect": "deny",
+      "principals": ["agent"],
+      "actions": ["job.run"],
+      "require_scopes": ["job.run"],
+      "reason": "job.run scope required"
+    },
+    {
+      "id": "deny-provider-write-for-agents",
+      "_comment": "Optional: agents may provider.read (list) but not provider.write",
+      "effect": "deny",
+      "principals": ["agent"],
+      "actions": ["provider.write"],
+      "reason": "agents cannot write providers"
     }
   ]
 }

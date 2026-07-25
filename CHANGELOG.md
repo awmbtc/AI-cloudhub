@@ -9,69 +9,27 @@
 
 ## Unreleased
 
+### Close-out
+- 1.x→2.0 mainline closed: P0–P3, hardening waves 1–4, Stage A (Agent Identity + scopes + path jail), Stage B (drive allowlist, Policy Engine + `AI_CLOUDHUB_POLICY_FILE`, Manifest 2.0, audit.agent_id, Snapshot v0, sandbox env filter)
+- Jobs: `agent_id` / `claimed_by_agent_id`, claim release on policy deny, list filters, job.* audit
+- MCP jobs tools: `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` + `list_providers` (`make smoke-mcp`)
+- Binding agent gates (scope + allowlist/policy; list filter); Devices API rejects agent tokens
+- Multi-vendor STS best-effort (MinIO/AWS/S3-compat, Aliyun RAM, Tencent CAM, Qiniu/Oracle labels); objects/snapshots/OpenAPI/seccomp as previously landed
+- **Remaining only:** OCI private-key IAM, Qiniu non-S3 download-token STS, full OPA/Rego (docs: PROGRESS Close-out, KNOWN_LIMITATIONS, STS.md)
+
 ### STS
-- Shared S3-compatible AssumeRole helper (`TryS3AssumeRole` / minio-go) for multi-vendor best-effort STS
-- Generic `AI_CLOUDHUB_S3_STS=1` + per-vendor flags (`B2`/`OSS`/`COS`/`QINIU`/`ORACLE`/`R2`) → `source=s3_sts`
-- Custom non-AWS `type=s3` endpoints via `AI_CLOUDHUB_S3_STS`; AWS-looking still routes to `aws_sts`
-- Metrics label `s3_sts`; docs/STS.md + KNOWN_LIMITATIONS matrix
+- Shared S3-compatible AssumeRole + per-vendor flags; Aliyun RAM / Tencent CAM native; Qiniu/Oracle source labels + STS endpoint overrides; metrics + docs/STS.md
 
 ### Hardening
-- Provider health probe: `GET|POST /v1/providers/{id}/health` (ListBuckets, 8s timeout)
-- Drive quota (default 20/user) and provider quota (default 20/user); binding remains 10
-- Admin audit filter: `GET /v1/admin/audit?user_id=&limit=`
-- Config validation: JWT min length 16, reject default secret / missing master key when `AI_CLOUDHUB_STRICT=1`
-- Password/username policy; token TTL; register gate; login lockout + fail audit
-- Last-admin demotion blocked; security headers; max body size; optional metrics token
-- Session revoke: jti denylist + token_version; logout; admin revoke-sessions; password change invalidates all
-- Audit filter by action: `GET /v1/admin/audit?action=`
-- Refresh tokens (opaque, hashed); `POST /v1/auth/refresh` with rotation
-- Admin create user `POST /v1/admin/users`; optional HSTS; JSON Content-Type 415
-- ROADMAP-2.0 + D-002: Agent Identity CRUD, capability scopes on tokens, runner path jail
-- Docs: formal evolution roadmap aligned with architecture
-- Stage B: agent drive allowlist, Policy Engine v0, Manifest 2.0 permissions, audit.agent_id
-- Sandbox v1 env filter in runner; Snapshot v0 metadata API under /v1/drives/{id}/snapshots
-- MCP v0.2: tool scopes via /v1/me, path jail, whoami/resolve_path/snapshots tools
-- Admin API IP allowlist: AI_CLOUDHUB_ADMIN_CIDRS
-- Snapshot restore apply=true rehydrates drive metadata; 50 snapshots/drive cap
-- Runner AI_CLOUDHUB_NETWORK=deny strips proxy env; scripts/smoke-agent.sh
-- Snapshot object inventory (include_objects) + inventory diff API
-- STS source metrics; docs/STS.md; scripts/runner-netns.sh (Linux unshare)
-- Live GET /v1/drives/{id}/objects (+ versions, version-hint); Retry-After on 429
-- scripts/runner-bwrap.sh; MCP list_objects
-- BYOS version assist: POST objects/presign-get, restore-plan, restore-version (CopyObject, no body proxy)
-- MCP object_presign_get / object_restore_plan / object_restore_version
-- scripts/seccomp/runner-default.json + scripts/runner-seccomp.sh (Linux skeleton)
-- OpenAPI objects paths; scripts/smoke-objects.sh (make smoke-objects)
-- OpenAPI drive snapshots (list/create/get/delete/diff/restore); smoke-agent snapshot coverage
-- In-process Linux seccomp (CGO-free): AI_CLOUDHUB_SECCOMP=1, optional STRICT; elastic/go-seccomp-bpf
-- Multi-vendor S3-compatible AssumeRole: AI_CLOUDHUB_S3_STS + per-vendor flags; session source s3_sts
-- Live MinIO inventory smoke: make smoke-minio (auto-start server; hard-assert include_objects + diff)
-- Aliyun RAM STS (aliyun_sts) + Tencent CAM STS (tencent_sts); pure-Go signing, best-effort
-- Seccomp profiles: AI_CLOUDHUB_SECCOMP_PROFILE=default|strict|netdeny; SECCOMP_NET=deny (AF_UNIX-only sockets)
-- Qiniu/Oracle STS source labels + per-vendor STS endpoint override; generic S3_STS_ENDPOINT
-- docs/SECCOMP.md netdeny arg-filter documentation
-- External JSON policy file (AI_CLOUDHUB_POLICY_FILE); admin GET /v1/admin/policy; docs/POLICY.md
-- Job routes enforce job.run scope + policy CheckAccess; make smoke-policy; OpenAPI admin/policy
-- ClaimNextFiltered + ReleaseToPending: policy/drive deny after claim returns job to pending
-- Jobs track agent_id (creator) and claimed_by_agent_id (claimer); store migrate + audit job.create
-- Audit job.claim / job.complete / job.cancel; smoke-job covers agent trace + durability
-- Provider routes: scope+policy for read/write/health; provider.write implies read
-- GET /v1/jobs filters agent_id and claimed_by_agent_id
-- MCP tools: list_jobs, create_job, claim_next_job, complete_job (job.run)
-- MCP cancel_job + list_providers; make smoke-mcp
-- Bindings: agent scope + drive allowlist filter; devices reject agent tokens
+- Auth/session: bcrypt, refresh tokens, jti/token_version revoke, login lockout, register gate, password policy
+- Quotas, admin audit filters, JWT/master-key strict config, security headers, metrics token, HSTS, Admin CIDRs
+- Runtime: path jail, env filter, seccomp profiles, network deny wrappers; smoke-agent / smoke-policy / smoke-objects / smoke-minio
 
 ### Ops
-- PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`
-- Redis shared rate limit: `AI_CLOUDHUB_REDIS=...`
-- `deploy/docker-compose.prod.yml` (api + postgres + redis; no runner pool)
-- Graceful shutdown, CORS (`AI_CLOUDHUB_CORS_ORIGINS`), `X-Request-ID`
-- Makefile + `deploy/Dockerfile.all`
-- OpenAPI: `docs/openapi.yaml`
+- PostgreSQL store; Redis shared rate limit; `deploy/docker-compose.prod.yml`; graceful shutdown; CORS; Makefile; Dockerfile.all; OpenAPI
 
 ### Admin / audit
-- List users, change password, audit log (auth + provider/drive/binding mutations)
-- Atomic job claim + region filter on pending jobs
+- List users, change password, audit log (auth + provider/drive/binding/job); atomic job claim + region filter
 
 ## v0.1.0 (architecture MVP complete)
 

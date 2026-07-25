@@ -85,31 +85,42 @@ Tenant / User
   ├── Provider[]     云厂商凭证（加密静态存储）
   ├── Drive[]        逻辑盘 = provider + bucket + prefix + 策略
   ├── Binding[]      某 Device/Runner 上的挂载实例（desired / actual）
-  ├── Device[]       本机 hubd 设备身份
-  ├── Job[]          云端 Agent 任务（后续可挂 agent_id）
-  └── Quota / Policy 限流、并发、路径策略、scope
+  ├── Device[]       本机 hubd 设备身份（**仅人/hubd**；agent token 403）
+  ├── Job[]          云端 BYOC 任务（`agent_id` + `claimed_by_agent_id`）
+  └── Quota / Policy 限流、并发、路径策略、scope、可选 policy 文件
 ```
 
 | 概念 | 含义 |
 |------|------|
 | **Provider** | 一把（组）对象存储 API Key + endpoint |
 | **Drive** | 逻辑盘（与「在哪台机器」无关） |
-| **Binding** | Drive 在具体设备上的挂载：`mount_point`、`desired=mounted`、`actual`、错误与延迟 |
-| **Agent** | 用户名下的智能体身份；用 **Capability Token**（`aid` + `scopes`）访问 API，而非裸用用户密码 token |
-| **Runtime** | 执行 desired→actual 的守护进程/容器；**路径 jail** 约束工作区 |
-| **Manifest** | 给 Agent 的机器可读工作区契约（含 allowed_paths） |
+| **Binding** | Drive 在具体设备上的挂载：`mount_point`、`desired=mounted`、`actual`、错误与延迟；agent 经 allowlist + policy |
+| **Agent** | 用户名下的智能体身份；用 **Capability Token**（`aid` + `scopes` + 可选 `allowed_drive_ids`）访问 API，而非裸用用户密码 token |
+| **Runtime** | 执行 desired→actual 的守护进程/容器；**路径 jail** + env 白名单约束工作区 |
+| **Manifest** | 给 Agent 的机器可读工作区契约（v2 permissions read/write prefixes） |
 
 同一 **Drive ID** 可同时：本机 `G:` + 云端 `/workspace`，对象命名空间一致。
 
 ### 3.1 身份分层（1.x→2.0）
 
 ```text
-Human User Token     → 全权限（兼容）；管理 Agent / Provider
-Agent Token          → aid + scopes（最小权限）
+Human User Token     → 全权限（兼容）；管理 Agent / Provider / Devices
+Agent Token          → aid + scopes（最小权限）；Devices 禁止
 STS Session          → 对象存储短时凭证（挂载用，不替代 API 身份）
 ```
 
 演进施工图见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)。**不**默认拆微服务；**不**默认建设平台大规模 Runner 池。
+
+### 3.2 已落地（2.0 收口 · live）
+
+| 能力 | 现状 |
+|------|------|
+| **Agent Identity** | CRUD + `POST /v1/agents/{id}/token`（`aid` + `scopes` + `allowed_drive_ids`） |
+| **Policy 文件** | built-in scope/drive/path + 可选 `AI_CLOUDHUB_POLICY_FILE`；`GET /v1/admin/policy`；**非** OPA/Rego |
+| **Job agent 追溯** | `agent_id`（创建者）/ `claimed_by_agent_id`（领取者）；list 可过滤；审计 job.\* |
+| **MCP jobs** | stdio：`list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job`（`job.run`）+ `list_providers` |
+| **Binding agent 门禁** | create/mutate：`allowAgentDrive`；list 按 allowlist + policy 过滤 |
+| **Devices agent deny** | `/v1/devices*` 对 agent token 一律 403（hubd/人侧） |
 
 ---
 
@@ -381,7 +392,7 @@ S3 兼容统一 Driver；模板差异（endpoint / path-style / region）。
 | **P3** | Job **编排 API**（调度到用户侧/计费 SKU，非免费大池）· MCP · 可观测 · 厂商 C 批 |
 | **1.x→2.0** | **Agent Identity · Capability scopes · Runtime path jail**（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)） |
 
-P0–P3 骨架已基本落地；当前主线是 **ROADMAP 阶段 A/B**，不是继续堆网盘功能。
+P0–P3 与 ROADMAP 阶段 A/B 已收口（见 §3.2）；剩余为 OPA 与 OCI/Qiniu 非 S3 原生 STS，不是继续堆网盘功能。
 
 ---
 

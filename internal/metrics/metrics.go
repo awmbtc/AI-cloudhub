@@ -12,6 +12,8 @@ var (
 	SessionsIssued atomic.Uint64
 	JobsCreated    atomic.Uint64
 	JobsClaimed    atomic.Uint64
+	JobsCompleted  atomic.Uint64
+	JobsCancelled  atomic.Uint64
 	RateLimited    atomic.Uint64
 	// STS source breakdown (best-effort).
 	STSEmbedded atomic.Uint64
@@ -62,6 +64,12 @@ func IncJobCreated() { JobsCreated.Add(1) }
 // IncJobClaimed increments job claim counter.
 func IncJobClaimed() { JobsClaimed.Add(1) }
 
+// IncJobCompleted increments job complete counter.
+func IncJobCompleted() { JobsCompleted.Add(1) }
+
+// IncJobCancelled increments job cancel counter.
+func IncJobCancelled() { JobsCancelled.Add(1) }
+
 // IncRateLimited increments rate-limit counter.
 func IncRateLimited() { RateLimited.Add(1) }
 
@@ -94,6 +102,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_claimed_total BYOC jobs claimed\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_claimed_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_claimed_total %d\n", JobsClaimed.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_completed_total BYOC jobs completed\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_completed_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_completed_total %d\n", JobsCompleted.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_cancelled_total BYOC jobs cancelled\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_cancelled_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_cancelled_total %d\n", JobsCancelled.Load())
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_rate_limited_total Rate limited requests\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_rate_limited_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_rate_limited_total %d\n", RateLimited.Load())

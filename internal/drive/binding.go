@@ -242,11 +242,16 @@ func (s *Service) IssueSessionOpts(userID, driveID, deviceID, mountPoint, mode s
 
 // IssueSessionForBinding issues STS for an existing binding.
 func (s *Service) IssueSessionForBinding(userID, bindingID string) (*SessionBundle, error) {
+	return s.IssueSessionForBindingOpts(userID, bindingID, SessionOpts{})
+}
+
+// IssueSessionForBindingOpts is IssueSessionForBinding with agent permissions for Manifest 2.0.
+func (s *Service) IssueSessionForBindingOpts(userID, bindingID string, opts SessionOpts) (*SessionBundle, error) {
 	b, err := s.GetBinding(userID, bindingID)
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := s.IssueSession(userID, b.DriveID, b.DeviceID, b.MountPoint, b.Mode)
+	bundle, err := s.IssueSessionOpts(userID, b.DriveID, b.DeviceID, b.MountPoint, b.Mode, opts)
 	if err != nil {
 		return nil, err
 	}

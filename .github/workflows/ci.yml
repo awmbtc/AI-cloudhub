@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build cmd/*
+        run: |
+          for d in cmd/*/; do
+            pkg="${d%/}"
+            echo "building ./$pkg"
+            go build -o /dev/null "./$pkg"
+          done

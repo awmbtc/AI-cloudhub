@@ -170,7 +170,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"p0":      []string{"sts", "manifest", "binding", "hubd", "runner"},
 		"p1":      []string{"sqlite", "secretbox", "ratelimit", "write_barrier", "devices", "binding_quota", "drive_quota", "provider_quota"},
 		"p2":      []string{"region", "sync_workspace", "session_refresh", "runtime_check", "jobs_byoc", "minio_sts"},
-		"p3":      []string{"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit", "audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout", "sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user", "agent_identity", "path_jail", "env_filter", "snapshots_v0"},
+		// p3 is additive: never remove keys; smoke scripts may probe membership.
+		"p3": []string{
+			"jobs_durable", "worker", "mcp", "metrics", "rbac", "readyz", "postgres", "redis_limit",
+			"audit", "cors", "graceful_shutdown", "provider_health", "config_validate", "auth_lockout",
+			"sec_headers", "register_gate", "token_revoke", "refresh_token", "admin_create_user",
+			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "seccomp",
+			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
+			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
+		},
+		// features: compact capability flags for newer surface (mirrors recent p3 adds).
+		"features": []string{
+			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "seccomp",
+			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
+			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
+		},
 		"version": version.Version,
 	})
 }
@@ -388,6 +402,7 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		metrics.IncJobCompleted()
 		detail := "ok"
 		if !body.OK {
 			detail = "failed"
@@ -416,6 +431,7 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		metrics.IncJobCancelled()
 		if pr := principalFrom(r); pr != nil {
 			s.auth.AuditAgent(userID, pr.AgentID, "job.cancel", j.ID, driveID)
 		}
@@ -1429,7 +1445,7 @@ func (s *Server) routeBindingsSub(w http.ResponseWriter, r *http.Request, userID
 		if !s.allowAgentDrive(w, r, b0.DriveID) {
 			return
 		}
-		sb, err := s.drives.IssueSessionForBinding(userID, id)
+		sb, err := s.drives.IssueSessionForBindingOpts(userID, id, s.sessionOptsFrom(r))
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
