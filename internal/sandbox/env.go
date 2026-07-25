@@ -51,6 +51,12 @@ var networkEnvKeys = []string{
 	"FTP_PROXY", "ftp_proxy", "SOCKS_PROXY", "socks_proxy",
 }
 
+// libpq keys allowed when PassLibpq is true (host secrets for postgres connector).
+var libpqPassExact = []string{
+	"PGPASSWORD", "PGUSER", "PGHOST", "PGDATABASE", "PGPORT", "PGSSLMODE",
+	"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGPASSFILE",
+}
+
 // EnvFilter filters process environment for Sandbox v1.
 type EnvFilter struct {
 	// AllowPrefixes: if empty, DefaultEnvAllowPrefixes is used.
@@ -59,6 +65,9 @@ type EnvFilter struct {
 	BlockExact []string
 	// PassToken when true allows AI_CLOUDHUB_TOKEN (default false).
 	PassToken bool
+	// PassLibpq when true allows PGPASSWORD and related libpq keys from parent env
+	// (used after postgres connector materialization; secrets stay on runner host).
+	PassLibpq bool
 	// DenyNetwork strips proxy-related env and injects AI_CLOUDHUB_NETWORK=deny.
 	// This is a soft policy for agents; it does not enforce kernel netns.
 	DenyNetwork bool
@@ -81,6 +90,12 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 	}
 	if f.PassToken {
 		delete(blockSet, "AI_CLOUDHUB_TOKEN")
+	}
+	libpqSet := map[string]bool{}
+	if f.PassLibpq {
+		for _, k := range libpqPassExact {
+			libpqSet[strings.ToUpper(k)] = true
+		}
 	}
 	if f.DenyNetwork {
 		for _, k := range networkEnvKeys {
@@ -105,7 +120,7 @@ func FilterEnv(base []string, extra map[string]string, f EnvFilter) []string {
 		if f.DenyNetwork && strings.Contains(uk, "PROXY") {
 			return
 		}
-		if !keyAllowed(key, allow) {
+		if !keyAllowed(key, allow) && !libpqSet[uk] {
 			return
 		}
 		// last write wins

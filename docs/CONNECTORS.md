@@ -62,7 +62,37 @@ Env:
 
 Create-time D-001 / user notes are preserved (`Complete` appends, does not replace). On success the agent child also sees `AI_CLOUDHUB_CLONE_PATH`.
 
-DB/SaaS connectors are **registry only** in this build: agents read config from API and talk to the SaaS/DB from the runner with local credentials.
+## Postgres + runner contract
+
+| Side | Responsibility |
+|------|----------------|
+| API | Store non-secret config: `host`, `port?`, `database`, `user?`, `schema?`, `sslmode?`, `dsn_template?` |
+| Runner | Inject `AI_CLOUDHUB_PG_*` into agent env; host holds `PGPASSWORD` |
+
+```http
+POST /v1/connectors
+{ "type":"postgres", "name":"app-db",
+  "config":{ "host":"db.example.com", "database":"app", "user":"app_ro", "sslmode":"require" } }
+```
+
+Password / full DSN keys are **stripped** on create. `dsn_template` must not embed `user:pass@`.
+
+```bash
+export PGPASSWORD='…'   # host only
+AI_CLOUDHUB_CONNECTOR_ID=<postgres-id> ./.bin/runner -- your-agent
+# or job.connector_id → claim sets the same env
+```
+
+Injected (non-secret):
+
+| Env | Meaning |
+|-----|---------|
+| `AI_CLOUDHUB_PG_HOST` / `_PORT` / `_DATABASE` / `_USER` / `_SCHEMA` / `_SSLMODE` | connection fields |
+| `AI_CLOUDHUB_PG_DSN_TEMPLATE` | password-less DSN or custom template |
+
+When jail is on, parent **`PGPASSWORD`** (and related libpq keys) pass through only if postgres materialization succeeded (`PassLibpq`). Set `AI_CLOUDHUB_PASS_PG=0` to disable. Soft fail note: `pg failed: …`; `AI_CLOUDHUB_PG_STRICT=1` fails the job.
+
+MySQL / SaaS connectors remain **registry only** in this build (same binding API; no runner materializer yet).
 
 ## Security
 

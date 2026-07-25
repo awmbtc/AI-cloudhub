@@ -1,12 +1,30 @@
 # Changelog
 
-## Unreleased
+## v0.2.3
+
+Stage C deepen: MCP tools, Stripe checkout_url, postgres BYOC env, config JSON fix.
 
 ### MCP Stage C tools
 - Tools: `list_marketplace`, `install_marketplace`, `list_memory`, `put_memory`, `search_memory`, `list_graph`, `link_graph`, `list_connectors`, `connectors_catalog`, `list_lineage`, `record_lineage`
 - API tools always require `AI_CLOUDHUB_TOKEN` (local-only: `workspace_env`, `resolve_path`)
 - Agents may install `skill` / `manifest`; `agent_template` remains human-only
-- `make smoke-mcp` covers Stage C tools; docs MCP / MARKETPLACE / KNOWN_LIMITATIONS (remote PDP) / ROADMAP C3b
+- `make smoke-mcp` covers Stage C tools
+
+### Payments
+- Checkout returns `checkout_url` + `session_id` (mock without secret; live Session with `AI_CLOUDHUB_STRIPE_SECRET_KEY`)
+- Optional `AI_CLOUDHUB_STRIPE_SUCCESS_URL` / `CANCEL_URL`
+- Still PCI-free: no card data on control plane; webhook / dev pay complete purchase
+
+### Connectors / Runner
+- Connector `config` marshals as JSON object (`json.RawMessage`), not base64
+- Postgres: expanded catalog fields; strip password/dsn; require host+database
+- Runner materializes postgres → `AI_CLOUDHUB_PG_*` + password-less `DSN_TEMPLATE`
+- Sandbox `PassLibpq` for host `PGPASSWORD` when postgres materializes
+- `AI_CLOUDHUB_PG_STRICT` / `AI_CLOUDHUB_PASS_PG=0`
+- Git materialization refactored into shared `materializeConnector`
+
+### Docs
+- PAYMENTS.md, CONNECTORS.md, STAGE-C.md, KNOWN_LIMITATIONS (remote PDP), ROADMAP C3b
 
 ## v0.2.2
 
@@ -44,10 +62,10 @@ Stage C deepen: marketplace skill/manifest install, install side effects, BYOC g
 - fix: Makefile `.PHONY` line break — missing newline glued `smoke-all` and `all:` targets, causing GNU make "multiple target patterns" and breaking CI `make smoke-all`
 
 ### Docs (ops pack)
-- [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) — OSS / COS / Qiniu / OCI copy-paste runbooks (decision tree, RoleArn env, offline checks)
-- [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) — agent token + MCP + hubd in ~30 minutes (verified on v0.2.1)
-- [docs/METRICS.md](docs/METRICS.md) + [deploy/grafana/](deploy/grafana/) — Prometheus scrape + importable Grafana dashboard
-- `make smoke-quickstart-agent` — regression for the agent quickstart path
+- [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) — OSS / COS / Qiniu / OCI copy-paste runbooks
+- [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) — agent token + MCP + hubd
+- [docs/METRICS.md](docs/METRICS.md) + [deploy/grafana/](deploy/grafana/)
+- `make smoke-quickstart-agent`
 
 ## v0.2.0
 

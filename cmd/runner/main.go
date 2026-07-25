@@ -287,20 +287,30 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 	}
 
-	// Optional Git connector materialization (BYOC): AI_CLOUDHUB_CONNECTOR_ID + type=git.
-	// Control plane only stores non-secret config; clone runs here with user credentials/env.
-	// Soft default: continue agent on clone fail but always surface status in cloneNote.
-	// Strict: AI_CLOUDHUB_CLONE_STRICT=1 → fail runOnce (job ok=false).
-	dest, gerr := maybeGitConnector(api, token, mountPoint)
-	if gerr != nil {
-		cloneNote = "clone failed: " + gerr.Error()
-		log.Printf("git connector: %v (strict=%v)", gerr, cloneStrict())
-		if cloneStrict() {
+	// BYOC connector materialization: git clone and/or postgres env inject.
+	// Control plane stores non-secret config only; host holds secrets (GIT_ASKPASS / PGPASSWORD).
+	// Soft default: continue agent on fail but surface note; CLONE_STRICT / PG_STRICT fail job.
+	mat := materializeConnector(api, token, mountPoint)
+	if mat.Note != "" {
+		cloneNote = mat.Note
+	}
+	if mat.Err != nil {
+		strict := false
+		if strings.HasPrefix(mat.Note, "clone failed") || strings.Contains(mat.Err.Error(), "git") {
+			strict = cloneStrict()
+		}
+		if strings.HasPrefix(mat.Note, "pg failed") || strings.Contains(mat.Err.Error(), "postgres") {
+			strict = strict || pgStrict()
+		}
+		if strings.HasPrefix(mat.Note, "connector failed") {
+			strict = cloneStrict() || pgStrict()
+		}
+		log.Printf("connector: %v (strict=%v)", mat.Err, strict)
+		if strict {
 			return cloneNote, fmt.Errorf("%s", cloneNote)
 		}
-	} else if dest != "" {
-		clonePath = dest
-		cloneNote = "cloned to " + dest
+	} else if mat.ClonePath != "" {
+		clonePath = mat.ClonePath
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -313,6 +323,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 
 	// Sandbox v1: filter parent env; inject only AI_CLOUDHUB_* + safe keys.
 	// Opt-out: AI_CLOUDHUB_JAIL=0. Pass parent API token only if AI_CLOUDHUB_PASS_TOKEN=1.
+	// PassLibpq when postgres connector materializes (host PGPASSWORD).
 	extra := map[string]string{}
 	for k, v := range bundle.Session.Manifest.Env {
 		extra[k] = v
@@ -325,6 +336,13 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if clonePath != "" {
 		extra["AI_CLOUDHUB_CLONE_PATH"] = clonePath
 	}
+	for k, v := range mat.ExtraEnv {
+		extra[k] = v
+	}
+	passLibpq := mat.PassLibpq
+	if env("AI_CLOUDHUB_PASS_PG", "") == "0" || strings.EqualFold(env("AI_CLOUDHUB_PASS_PG", ""), "false") {
+		passLibpq = false
+	}
 	jailOn := env("AI_CLOUDHUB_JAIL", "1") != "0" && env("AI_CLOUDHUB_JAIL", "1") != "false"
 	var childEnv []string
 	if jailOn {
@@ -332,8 +350,8 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		// Soft network policy: AI_CLOUDHUB_NETWORK=deny strips proxy env (not a kernel netns).
 		netDeny := strings.EqualFold(env("AI_CLOUDHUB_NETWORK", ""), "deny") ||
 			env("AI_CLOUDHUB_NETWORK", "") == "0" || env("AI_CLOUDHUB_NETWORK", "") == "off"
-		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok, DenyNetwork: netDeny})
-		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v network_deny=%v)", len(childEnv), passTok, netDeny)
+		childEnv = sandbox.FilterOSEnviron(extra, sandbox.EnvFilter{PassToken: passTok, PassLibpq: passLibpq, DenyNetwork: netDeny})
+		log.Printf("sandbox v1 env filter on (keys=%d pass_token=%v pass_libpq=%v network_deny=%v)", len(childEnv), passTok, passLibpq, netDeny)
 	} else {
 		childEnv = os.Environ()
 		for k, v := range extra {
@@ -421,78 +439,4 @@ func env(k, d string) string {
 		return v
 	}
 	return d
-}
-
-// maybeGitConnector clones a git connector into the workspace when AI_CLOUDHUB_CONNECTOR_ID is set.
-// Config comes from GET /v1/connectors/{id}; secrets (tokens) stay in runner env (e.g. GIT_ASKPASS).
-// Returns dest path when a git workspace is ready (cloned or already present).
-func maybeGitConnector(api, token, mountPoint string) (dest string, err error) {
-	cid := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CONNECTOR_ID"))
-	if cid == "" {
-		return "", nil
-	}
-	req, err := http.NewRequest(http.MethodGet, api+"/v1/connectors/"+cid, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
-	if res.StatusCode >= 300 {
-		return "", fmt.Errorf("GET connector HTTP %d: %s", res.StatusCode, body)
-	}
-	var c struct {
-		Type   string          `json:"type"`
-		Name   string          `json:"name"`
-		Config json.RawMessage `json:"config"`
-	}
-	if err := json.Unmarshal(body, &c); err != nil {
-		return "", err
-	}
-	if !strings.EqualFold(c.Type, "git") {
-		log.Printf("connector %s type=%s (skip git clone)", cid, c.Type)
-		return "", nil
-	}
-	var cfg map[string]interface{}
-	_ = json.Unmarshal(c.Config, &cfg)
-	remote, _ := cfg["remote_url"].(string)
-	if remote == "" {
-		remote, _ = cfg["url"].(string)
-	}
-	if remote == "" {
-		return "", fmt.Errorf("git connector missing remote_url")
-	}
-	branch, _ := cfg["branch"].(string)
-	prefix, _ := cfg["path_prefix"].(string)
-	if prefix != "" {
-		dest = filepath.Join(mountPoint, prefix)
-	} else {
-		dest = filepath.Join(mountPoint, "repo")
-	}
-	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		log.Printf("git connector: already cloned at %s", dest)
-		return dest, nil
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		return "", fmt.Errorf("git not in PATH")
-	}
-	_ = os.MkdirAll(filepath.Dir(dest), 0o755)
-	args := []string{"clone", "--depth", "1"}
-	if branch != "" {
-		args = append(args, "--branch", branch)
-	}
-	args = append(args, remote, dest)
-	log.Printf("git connector: clone %s -> %s", remote, dest)
-	cmd := exec.Command("git", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git clone: %w", err)
-	}
-	return dest, nil
 }

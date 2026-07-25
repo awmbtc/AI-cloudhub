@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.2 已发布；Stage C 切片（marketplace install + BYOC clone notes）
+## 总览：v0.2.3 已发布；Stage C + MCP + checkout_url + postgres BYOC
 
 | 阶段 | 状态 |
 |------|------|
@@ -311,3 +311,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP Stage C 工具 11 个 + `cmd/mcp/stage_c.go`
 - [x] skill/manifest install 允许 agent token；agent_template 仍 human-only
 - [x] `smoke-mcp-jobs` 覆盖 Stage C；docs/MCP.md + CHANGELOG Unreleased
+
+### 本波（v0.2.3 · checkout_url + postgres BYOC）
+
+- [x] Checkout 返回 `checkout_url` / `session_id`（无 secret → mock；有 `AI_CLOUDHUB_STRIPE_SECRET_KEY` → live Session）
+- [x] Connector `config` JSON 对象编码（RawMessage，非 base64）
+- [x] Postgres connector：create strip + host/db 校验；runner `AI_CLOUDHUB_PG_*` + `PassLibpq`
+- [x] `AI_CLOUDHUB_PG_STRICT` / `AI_CLOUDHUB_PASS_PG=0`
+- [x] smoke-stage-c：checkout_url + postgres strip；版本钉 **0.2.3** + tag

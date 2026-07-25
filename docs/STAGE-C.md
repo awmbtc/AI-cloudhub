@@ -54,6 +54,8 @@ curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
 - Paid install → episodic memory + graph edges + lineage (see [MARKETPLACE.md](./MARKETPLACE.md))  
 - Install kinds: `agent_template` (agent) · `skill` / `manifest` (payload + memory, no agent)  
 - Job complete note: `cloned to <path>` or `clone failed: …`; optional `AI_CLOUDHUB_CLONE_STRICT=1`  
+- Checkout returns `checkout_url` (mock or live Stripe Session) — [PAYMENTS.md](./PAYMENTS.md)  
+- Postgres connector: runner injects `AI_CLOUDHUB_PG_*` + optional host `PGPASSWORD` — [CONNECTORS.md](./CONNECTORS.md)  
 - Regression: `make smoke-stage-c`
 
 ## Still out of scope

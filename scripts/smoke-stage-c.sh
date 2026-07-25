@@ -63,7 +63,11 @@ import sys,json; d=json.load(sys.stdin); assert len(d["items"])>=1; print("graph
 
 echo "== connectors =="
 "${CURL[@]}" "$API/v1/connectors/catalog" | python3 -c '
-import sys,json; d=json.load(sys.stdin); assert any(i["type"]=="git" for i in d["items"]); print("catalog ok")
+import sys,json
+d=json.load(sys.stdin)
+assert any(i["type"]=="git" for i in d["items"])
+assert any(i["type"]=="postgres" and "dsn_template" in ",".join(i.get("fields") or []) for i in d["items"])
+print("catalog ok")
 '
 CID=$("${CURL[@]}" -X POST "$API/v1/connectors" "${AUTH[@]}" -H 'Content-Type: application/json' \
   -d '{"type":"git","name":"app","config":{"remote_url":"https://github.com/example/app.git","branch":"main","password":"STRIPME"}}' \
@@ -73,9 +77,24 @@ import sys,json
 d=json.load(sys.stdin)
 assert d["type"]=="git"
 cfg=d.get("config") or {}
+assert isinstance(cfg, dict), type(cfg)
 # password must be stripped
 assert "password" not in cfg and "STRIPME" not in str(cfg)
+assert cfg.get("remote_url")
 print("connector ok", d["id"])
+'
+PGID=$("${CURL[@]}" -X POST "$API/v1/connectors" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"type":"postgres","name":"appdb","config":{"host":"db.example.com","database":"app","user":"ro","password":"NOPENOW","port":"5432"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" "$API/v1/connectors/$PGID" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["type"]=="postgres"
+cfg=d.get("config") or {}
+assert isinstance(cfg, dict), cfg
+assert "password" not in cfg and "NOPENOW" not in str(cfg)
+assert cfg.get("host")=="db.example.com" and cfg.get("database")=="app"
+print("postgres connector ok", d["id"])
 '
 
 echo "== marketplace checkout + stripe webhook =="
@@ -88,7 +107,9 @@ import sys,json
 d=json.load(sys.stdin)
 assert d["status"]=="pending"
 assert d["stripe_metadata"]["purchase_id"]
-print("checkout", d["id"])
+assert d.get("checkout_url") and "checkout.stripe.com" in d["checkout_url"], d
+assert d.get("session_id","").startswith("cs_test_mock_"), d
+print("checkout", d["id"], "url", d["checkout_url"][:48]+"…")
 open("/tmp/aihub-purchase-id","w").write(d["id"])
 open("/tmp/aihub-buyer-id","w").write(d["user_id"])
 '

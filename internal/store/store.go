@@ -233,13 +233,14 @@ type Purchase struct {
 
 // ConnectorBinding is a Git/DB/SaaS connector registration (not full sync engine).
 type ConnectorBinding struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Type      string    `json:"type"` // git|postgres|mysql|notion|slack|…
-	Name      string    `json:"name"`
-	ConfigJSON []byte   `json:"config,omitempty"` // non-secret config
-	Status    string    `json:"status"` // registered|disabled
-	CreatedAt time.Time `json:"created_at"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	Type   string `json:"type"` // git|postgres|mysql|notion|slack|…
+	Name   string `json:"name"`
+	// ConfigJSON is non-secret JSON object (RawMessage so API encodes object, not base64).
+	ConfigJSON json.RawMessage `json:"config,omitempty"`
+	Status     string          `json:"status"` // registered|disabled
+	CreatedAt  time.Time       `json:"created_at"`
 }
 
 // Store is the persistence interface for control-plane CRUD.

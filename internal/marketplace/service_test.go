@@ -132,3 +132,33 @@ func TestInstallSkillWrongKind(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestCheckoutDetailedMockURL(t *testing.T) {
+	// No Stripe secret → mock checkout_url
+	t.Setenv("AI_CLOUDHUB_STRIPE_SECRET_KEY", "")
+	t.Setenv("STRIPE_SECRET_KEY", "")
+	s := New(store.NewMemory())
+	it, err := s.Publish("seller", PublishInput{
+		Name: "paid", Kind: KindSkill, Public: true, PriceCents: 100, Currency: "usd",
+		Payload: map[string]interface{}{"x": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.CheckoutDetailed("buyer", it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "pending" {
+		t.Fatalf("%+v", res)
+	}
+	if res.CheckoutURL == "" || !strings.Contains(res.CheckoutURL, "checkout.stripe.com") {
+		t.Fatalf("checkout_url %q", res.CheckoutURL)
+	}
+	if res.SessionID == "" || !strings.HasPrefix(res.SessionID, "cs_test_mock_") {
+		t.Fatalf("session %q", res.SessionID)
+	}
+	if res.StripeMetadata["purchase_id"] == "" {
+		t.Fatal("metadata")
+	}
+}

@@ -199,11 +199,15 @@ type CheckoutResult struct {
 	*store.Purchase
 	// StripeMetadata should be attached to Checkout Session metadata on the client.
 	StripeMetadata map[string]string `json:"stripe_metadata,omitempty"`
+	// CheckoutURL is a Stripe-hosted Checkout Session URL (or mock when no secret key).
+	CheckoutURL string `json:"checkout_url,omitempty"`
+	// SessionID is the Stripe Checkout Session id (cs_…) or mock id.
+	SessionID string `json:"session_id,omitempty"`
 	// Note explains next steps when using real Stripe.
 	Note string `json:"note,omitempty"`
 }
 
-// CheckoutDetailed returns purchase plus Stripe metadata hints.
+// CheckoutDetailed returns purchase plus Stripe metadata and optional checkout_url.
 func (s *Service) CheckoutDetailed(userID, itemID string) (*CheckoutResult, error) {
 	p, err := s.Checkout(userID, itemID)
 	if err != nil {
@@ -216,7 +220,29 @@ func (s *Service) CheckoutDetailed(userID, itemID string) (*CheckoutResult, erro
 			"user_id":     userID,
 			"item_id":     itemID,
 		}
-		out.Note = "Create Stripe Checkout Session with these metadata fields; webhook POST /v1/webhooks/stripe with AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET"
+		it, _ := s.Get(itemID)
+		name := itemID
+		if it != nil && it.Name != "" {
+			name = it.Name
+		}
+		url, sid, cerr := CreateCheckoutSessionURL(p.AmountCents, p.Currency, name, out.StripeMetadata)
+		if cerr != nil {
+			// Soft: still return metadata so client can create Session itself.
+			out.Note = "checkout_url unavailable: " + cerr.Error() + "; use stripe_metadata client-side or set AI_CLOUDHUB_STRIPE_SECRET_KEY"
+		} else {
+			out.CheckoutURL = url
+			out.SessionID = sid
+			if sid != "" {
+				p.ProviderRef = sid
+				_ = s.st.UpdatePurchase(p)
+				out.Purchase = p
+			}
+			if strings.HasPrefix(sid, "cs_test_mock_") {
+				out.Note = "Mock checkout_url (no AI_CLOUDHUB_STRIPE_SECRET_KEY). Set secret + SUCCESS/CANCEL URLs for live Stripe Session; complete via webhook or POST /v1/purchases/{id}/pay"
+			} else {
+				out.Note = "Redirect buyer to checkout_url; complete via webhook POST /v1/webhooks/stripe"
+			}
+		}
 	}
 	return out, nil
 }

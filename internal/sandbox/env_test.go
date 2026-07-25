@@ -45,6 +45,34 @@ func TestFilterEnvPassToken(t *testing.T) {
 	}
 }
 
+func TestFilterEnvPassLibpq(t *testing.T) {
+	base := []string{"PATH=/bin", "PGPASSWORD=secret", "EVIL=1", "AI_CLOUDHUB_WORKSPACE=/w"}
+	got := FilterEnv(base, map[string]string{"AI_CLOUDHUB_PG_HOST": "db"}, EnvFilter{})
+	m := map[string]string{}
+	for _, e := range got {
+		i := indexEq(e)
+		m[e[:i]] = e[i+1:]
+	}
+	if _, ok := m["PGPASSWORD"]; ok {
+		t.Fatal("PGPASSWORD must be blocked without PassLibpq")
+	}
+	got2 := FilterEnv(base, map[string]string{"AI_CLOUDHUB_PG_HOST": "db"}, EnvFilter{PassLibpq: true})
+	m2 := map[string]string{}
+	for _, e := range got2 {
+		i := indexEq(e)
+		m2[e[:i]] = e[i+1:]
+	}
+	if m2["PGPASSWORD"] != "secret" {
+		t.Fatalf("want PGPASSWORD with PassLibpq, got %v", m2)
+	}
+	if _, ok := m2["EVIL"]; ok {
+		t.Fatal("EVIL should stay blocked")
+	}
+	if m2["AI_CLOUDHUB_PG_HOST"] != "db" {
+		t.Fatalf("%v", m2)
+	}
+}
+
 func TestFilterEnvDenyNetwork(t *testing.T) {
 	base := []string{"PATH=/bin", "HTTP_PROXY=http://proxy:8080", "AI_CLOUDHUB_WORKSPACE=/w"}
 	got := FilterEnv(base, nil, EnvFilter{DenyNetwork: true})
