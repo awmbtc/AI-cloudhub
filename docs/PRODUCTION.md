@@ -11,7 +11,7 @@ Object bytes stay client↔your store. Jobs run only on **user** runners (D-001:
 | Strict mode | `AI_CLOUDHUB_STRICT=1` | Rejects weak JWT / default secrets at boot |
 | Master key | `AI_CLOUDHUB_MASTER_KEY` (e.g. `openssl rand -base64 32`) | Encrypts provider secrets at rest |
 | Close public register | `AI_CLOUDHUB_ALLOW_REGISTER=0` | After bootstrap admin exists |
-| Metrics gate | `AI_CLOUDHUB_METRICS_TOKEN` | Else `/metrics` is open |
+| Metrics gate | `AI_CLOUDHUB_METRICS_TOKEN` | Else `/metrics` is open; see [METRICS.md](./METRICS.md) + [deploy/grafana/](../deploy/grafana/) |
 | Admin IP (optional) | `AI_CLOUDHUB_ADMIN_CIDRS` | e.g. `10.0.0.0/8,127.0.0.1` |
 | Body limit | `AI_CLOUDHUB_MAX_BODY_BYTES` (default 1MiB) | — |
 | HSTS (HTTPS only) | `AI_CLOUDHUB_HSTS=1` | Behind TLS terminator |
@@ -56,6 +56,19 @@ curl -sS http://127.0.0.1:8080/readyz
 Compose enables `STRICT=1`, `ALLOW_REGISTER=0` after first user is created manually (or set register open once, create admin, then set `0` and restart).
 
 **Not included:** hubd/runner fleet, object store, TLS certs. Bring your own.
+
+## Metrics / Prometheus
+
+Lightweight process-local counters at `GET /metrics` (no latency histograms).  
+Set `AI_CLOUDHUB_METRICS_TOKEN` in production; scrape with Bearer auth.
+
+- Metric list, PromQL, scrape notes: [METRICS.md](./METRICS.md)  
+- Importable Grafana dashboard + example Prometheus job: [deploy/grafana/](../deploy/grafana/)
+
+```bash
+curl -sS -H "Authorization: Bearer $AI_CLOUDHUB_METRICS_TOKEN" \
+  http://127.0.0.1:8080/metrics | head
+```
 
 ## TLS / reverse proxy
 

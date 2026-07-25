@@ -1,0 +1,32 @@
+# Example Prometheus scrape config for AI-cloudhub control plane.
+# Copy / merge into your prometheus.yml; adjust targets and token.
+#
+# Metrics doc: docs/METRICS.md
+# Endpoint: GET /metrics  (Prometheus text, process-local counters)
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aicloudhub
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          # Loopback when Prometheus runs on the same host as the API.
+          - "127.0.0.1:8080"
+          # Docker Compose example (service name + port):
+          # - "api:8080"
+        labels:
+          service: aicloudhub-api
+
+    # Required when AI_CLOUDHUB_METRICS_TOKEN is set on the API.
+    # Prefer Bearer over ?token= so secrets stay out of access logs.
+    # authorization:
+    #   type: Bearer
+    #   credentials: "replace-with-AI_CLOUDHUB_METRICS_TOKEN"
+
+    # Avoid unless you must: token appears in scrape URL / some logs.
+    # params:
+    #   token: ["replace-with-AI_CLOUDHUB_METRICS_TOKEN"]
