@@ -1,0 +1,33 @@
+# Caddy reverse proxy for AI-cloudhub API (automatic HTTPS).
+# Docs: https://caddyserver.com/docs/
+#
+#   # edit domain
+#   caddy run --config deploy/Caddyfile.example
+#
+# API on loopback only:
+#   HTTP_ADDR=127.0.0.1:8080 ./.bin/api
+# or docker compose prod (map 8080 to 127.0.0.1:8080 only).
+
+api.example.com {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# Optional private metrics:
+	# @metrics path /metrics
+	# handle @metrics {
+	# 	# remote_ip 10.0.0.0/8
+	# 	reverse_proxy 127.0.0.1:8080
+	# }
+}

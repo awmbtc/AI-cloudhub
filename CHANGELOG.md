@@ -17,6 +17,8 @@
 - Production checklist (`docs/PRODUCTION.md`); prod compose requires `JWT_SECRET` / `MASTER_KEY`, enables STRICT
 - smoke-objects + smoke-mcp cover Qiniu offline `qiniu_download` presign
 - Fix: agent `drive.read` may POST object helpers (`presign-get` / `restore-plan` / `version-hint`); only `restore-version` needs write
+- CI: `make smoke-all` on push/PR; smoke scripts use free ports
+- deploy: nginx + Caddy TLS reverse-proxy examples
 
 ### Close-out
 - 1.x→2.0 mainline closed: P0–P3, hardening waves 1–4, Stage A (Agent Identity + scopes + path jail), Stage B (drive allowlist, Policy Engine + `AI_CLOUDHUB_POLICY_FILE`, Manifest 2.0, audit.agent_id, Snapshot v0, sandbox env filter)

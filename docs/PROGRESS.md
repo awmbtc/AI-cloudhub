@@ -270,3 +270,4 @@ curl -s localhost:8080/v1/runtime/check
 - [x] smoke-policy 覆盖 OPA deny `provider.write`
 - [x] smoke-objects / smoke-mcp：Qiniu offline HMAC presign
 - [x] docs/PRODUCTION.md + docker-compose.prod STRICT / 强制密钥
+- [x] CI `make smoke-all`；nginx/Caddy TLS 反代示例

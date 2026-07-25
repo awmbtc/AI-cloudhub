@@ -2,7 +2,9 @@
 # P0 smoke: provider → drive → binding → STS session (self-starts API)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-API_PORT="${API_PORT:-18080}"
+if [[ -z "${API_PORT:-}" ]]; then
+  API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+fi
 API="http://127.0.0.1:${API_PORT}"
 USER="${USER_NAME:-p0user}"
 PASS="${PASS:-p0passxx}"
@@ -14,18 +16,25 @@ export no_proxy="$NO_PROXY"
 CURL=(curl -sS --noproxy '*')
 
 cd "$ROOT"
+mkdir -p .bin
 go build -o .bin/api ./cmd/api
 DB=$(mktemp /tmp/aihub-p0-XXXXXX.db)
-HTTP_ADDR=":${API_PORT}" AI_CLOUDHUB_DB="$DB" ./.bin/api > /tmp/aihub-p0-api.log 2>&1 &
+HTTP_ADDR=":${API_PORT}" AI_CLOUDHUB_DB="$DB" JWT_SECRET="${JWT_SECRET:-p0-smoke-jwt-secretxx}" \
+  ./.bin/api > /tmp/aihub-p0-api.log 2>&1 &
 APID=$!
-cleanup() { kill "$APID" 2>/dev/null || true; rm -f "$DB"; }
+cleanup() { kill "$APID" 2>/dev/null || true; rm -f "$DB" "${DB}-wal" "${DB}-shm"; }
 trap cleanup EXIT
 # Wait until API accepts connections (cold start / sqlite migrate).
-for i in 1 2 3 4 5 6 7 8 9 10; do
+for i in $(seq 1 50); do
   if "${CURL[@]}" "$API/healthz" >/dev/null 2>&1; then
     break
   fi
-  sleep 0.3
+  if ! kill -0 "$APID" 2>/dev/null; then
+    echo "API exited early:" >&2
+    cat /tmp/aihub-p0-api.log >&2 || true
+    exit 1
+  fi
+  sleep 0.1
 done
 
 echo "== health =="

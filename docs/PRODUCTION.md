@@ -52,6 +52,20 @@ Compose enables `STRICT=1`, `ALLOW_REGISTER=0` after first user is created manua
 
 **Not included:** hubd/runner fleet, object store, TLS certs. Bring your own.
 
+## TLS / reverse proxy
+
+Terminate TLS at the edge; keep the API on **loopback** (`HTTP_ADDR=127.0.0.1:8080` or Docker publish `127.0.0.1:8080:8080`).
+
+| Proxy | Example |
+|-------|---------|
+| **nginx** | [`deploy/nginx.conf.example`](../deploy/nginx.conf.example) |
+| **Caddy** (auto HTTPS) | [`deploy/Caddyfile.example`](../deploy/Caddyfile.example) |
+
+Forward `X-Forwarded-Proto` / `X-Real-IP` so audit and admin CIDR checks see real clients.  
+If nginx/Caddy sets HSTS, leave `AI_CLOUDHUB_HSTS=0` on the API.
+
+Browser CORS is off by default for pure agent/CLI use; enable only if a SPA shares the origin policy you configure at the proxy.
+
 ## Runtime hosts (user side)
 
 - Install **rclone** (+ FUSE / WinFsp on Windows). See [WINDOWS.md](./WINDOWS.md).
@@ -68,6 +82,8 @@ make smoke-all          # policy includes OPA; mcp; jobs; objects (Qiniu offline
 # optional live MinIO:
 # make smoke-minio
 ```
+
+CI (GitHub Actions) runs `go test`, `go build ./cmd/…`, and `make smoke-all` on every push/PR to `main`. Live MinIO (`smoke-minio`) stays optional/local.
 
 ## What we intentionally do not run in “platform production”
 

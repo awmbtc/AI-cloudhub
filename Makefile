@@ -33,6 +33,7 @@ help:
 	@echo "  make smoke-job      Job smoke (scripts/smoke-job.sh)"
 	@echo "  make smoke-mcp      MCP jobs smoke (scripts/smoke-mcp-jobs.sh)"
 	@echo "  make smoke-all      Run all smokes except smoke-minio (smoke + agent + objects + policy + job + mcp)"
+	@echo "  (CI runs test + build + smoke-all on main push/PR)"
 
 smoke: build
 	./scripts/smoke-p0.sh
