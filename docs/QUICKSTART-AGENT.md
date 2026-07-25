@@ -2,7 +2,9 @@
 
 Goal: from a clean clone to **agent token → MCP tools → optional hubd mount hint** in about 30 minutes.
 
-This is the short path. Full tool tables live in [MCP.md](./MCP.md); production hardening in [PRODUCTION.md](./PRODUCTION.md); policy in [POLICY.md](./POLICY.md). Automated regression: `make smoke-agent` / `make smoke-mcp` (`scripts/smoke-agent.sh`, `scripts/smoke-mcp-jobs.sh`).
+This is the short path. Full tool tables live in [MCP.md](./MCP.md); production hardening in [PRODUCTION.md](./PRODUCTION.md); policy in [POLICY.md](./POLICY.md). Automated regression: `make smoke-agent` / `make smoke-mcp` / **`make smoke-quickstart-agent`**.
+
+**Verified on v0.2.1** (local SQLite, free high port, no live MinIO): register → agent token → MCP `whoami` / `list_drives` → create/claim/complete job → `ensure_mounted_hint` → offline Qiniu `object_presign_get` (`method=qiniu_download`).
 
 ---
 
@@ -37,7 +39,8 @@ Do **not** set `AI_CLOUDHUB_STRICT=1` for this walkthrough (STRICT rejects weak 
 ```bash
 mkdir -p data
 export JWT_SECRET=local-dev-jwt-secretxx   # ≥16 chars; not for production
-export AI_CLOUDHUB_DB=./data/ai-cloudhub.db # default is SQLite; omit for in-process default if you prefer
+export AI_CLOUDHUB_DB=./data/ai-cloudhub.db # default is SQLite; or memory for throwaway
+# Prefer a free port if 8080 is busy:
 export HTTP_ADDR=:8080
 # optional: export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"  # encrypts provider secrets
 
@@ -47,10 +50,13 @@ export HTTP_ADDR=:8080
 In another shell:
 
 ```bash
-export API=http://127.0.0.1:8080
-curl -sS "$API/healthz"
-curl -sS "$API/readyz"
+export API=http://127.0.0.1:8080   # match HTTP_ADDR
+export NO_PROXY=127.0.0.1,localhost
+curl -sS --noproxy '*' "$API/healthz"   # expect "version":"0.2.1" (or your build)
+curl -sS --noproxy '*' "$API/readyz"
 ```
+
+Tip: if a proxy hijacks localhost, always use `curl --noproxy '*'` (same as smoke scripts).
 
 | Env | Local default |
 |-----|----------------|
@@ -291,8 +297,15 @@ See [POLICY.md](./POLICY.md). Smoke: `make smoke-policy`.
 | MCP `mount_point jail` / `resolve_path` `allowed: false` | Path escapes `AI_CLOUDHUB_WORKSPACE` (default `/workspace`) | Keep paths under workspace; do not pass `/etc/passwd` etc. |
 | hubd exits: rclone required | No rclone / runtimeenv fail | Install rclone; Windows also WinFsp for mount mode ([WINDOWS.md](./WINDOWS.md)) |
 | hubd never mounts | Binding `device_id` ≠ `AI_CLOUDHUB_DEVICE_ID`, or `desired` not `mounted` | Align device id; set binding desired; check API with human token |
-| `list_objects` / presign fails with 5xx | Dummy credentials / MinIO down | Start real MinIO/S3 or accept metadata failures offline; live inventory smoke: `make smoke-minio` |
+| `list_objects` / MinIO presign fails with 5xx | Dummy credentials / MinIO down | Expected offline; live: `make smoke-minio`. **Qiniu** `presign-get` works offline (HMAC) |
+| Agent cannot see a second drive | Not in `allowed_drive_ids` | Add drive id to allowlist, re-mint token |
 | API refuses to start under STRICT | Weak `JWT_SECRET` / missing master key | Local: leave `AI_CLOUDHUB_STRICT` unset; prod: strong secrets per [PRODUCTION.md](./PRODUCTION.md) |
+
+One-command regression of this doc:
+
+```bash
+make smoke-quickstart-agent
+```
 
 ---
 
@@ -315,9 +328,11 @@ See [POLICY.md](./POLICY.md). Smoke: `make smoke-policy`.
 | [POLICY.md](./POLICY.md) | Scopes, allowlist, JSON, OPA |
 | [PRODUCTION.md](./PRODUCTION.md) | STRICT, keys, compose |
 | [STS.md](./STS.md) | Session / vendor STS |
+| [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md) | OSS/COS/Qiniu/OCI runbooks |
+| `scripts/smoke-quickstart-agent.sh` | End-to-end of this guide |
 | `scripts/smoke-agent.sh` | Agent allowlist + scopes |
 | `scripts/smoke-mcp-jobs.sh` | MCP job + provider tools |
-| `make smoke-agent` / `make smoke-mcp` | One-command regression |
+| `make smoke-quickstart-agent` / `smoke-agent` / `smoke-mcp` | Regression |
 | `cmd/mcp` | Stdio JSON-RPC helper |
 | `cmd/hubd` | Local mount reconciler |
 | OpenAPI | [openapi.yaml](./openapi.yaml) |

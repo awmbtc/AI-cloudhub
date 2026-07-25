@@ -6,9 +6,10 @@
 - fix: Makefile `.PHONY` line break — missing newline glued `smoke-all` and `all:` targets, causing GNU make "multiple target patterns" and breaking CI `make smoke-all`
 
 ### Docs (ops pack)
-- [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) — OSS / COS / Qiniu / OCI copy-paste runbooks
-- [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) — agent token + MCP + hubd in ~30 minutes
+- [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) — OSS / COS / Qiniu / OCI copy-paste runbooks (decision tree, RoleArn env, offline checks)
+- [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) — agent token + MCP + hubd in ~30 minutes (verified on v0.2.1)
 - [docs/METRICS.md](docs/METRICS.md) + [deploy/grafana/](deploy/grafana/) — Prometheus scrape + importable Grafana dashboard
+- `make smoke-quickstart-agent` — regression for the agent quickstart path
 
 ## v0.2.0
 

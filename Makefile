@@ -6,8 +6,8 @@ BINS    := api hubd runner mcp
 
 .PHONY: all build test help clean docker-api docker-all release-binaries \
 	api hubd runner mcp \
-	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp smoke-all
-
+	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp \
+	smoke-quickstart-agent smoke-all
 all: build
 
 build: $(BINS)
@@ -48,6 +48,7 @@ help:
 	@echo "  make smoke-policy   Policy smoke (scripts/smoke-policy.sh)"
 	@echo "  make smoke-job      Job smoke (scripts/smoke-job.sh)"
 	@echo "  make smoke-mcp      MCP jobs smoke (scripts/smoke-mcp-jobs.sh)"
+	@echo "  make smoke-quickstart-agent  QUICKSTART-AGENT.md end-to-end"
 	@echo "  make smoke-all      Run all smokes except smoke-minio"
 	@echo "  (CI: test + smoke-all + smoke-minio + docker image on main push/PR)"
 
@@ -74,8 +75,11 @@ smoke-job: build
 smoke-mcp: build
 	./scripts/smoke-mcp-jobs.sh
 
+smoke-quickstart-agent: build
+	./scripts/smoke-quickstart-agent.sh
+
 # Full local smoke suite without live MinIO (use smoke-minio separately).
-smoke-all: smoke smoke-agent smoke-objects smoke-policy smoke-job smoke-mcp
+smoke-all: smoke smoke-agent smoke-objects smoke-policy smoke-job smoke-mcp smoke-quickstart-agent
 
 clean:
 	rm -rf $(BIN_DIR)

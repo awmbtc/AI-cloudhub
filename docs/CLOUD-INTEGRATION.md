@@ -2,7 +2,7 @@
 
 Copy-paste ops guides for **Aliyun OSS**, **Tencent COS**, **Qiniu Kodo**, and **Oracle OCI**.
 
-Full STS matrix / sources: [STS.md](./STS.md) · Policy: [POLICY.md](./POLICY.md) · Prod secrets: [PRODUCTION.md](./PRODUCTION.md) · Vendor catalog: [VENDORS.md](./VENDORS.md).
+Full STS matrix / sources: [STS.md](./STS.md) · Policy: [POLICY.md](./POLICY.md) · Prod secrets: [PRODUCTION.md](./PRODUCTION.md) · Vendor catalog: [VENDORS.md](./VENDORS.md) · Agent path: [QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md).
 
 **Design contract (do not fight it):**
 
@@ -12,10 +12,51 @@ Full STS matrix / sources: [STS.md](./STS.md) · Policy: [POLICY.md](./POLICY.md
 | Short-lived only | Runtime must refresh before `expires_at` and destroy rclone conf on unmount |
 | BYOS | Control plane never proxies object bytes; client ↔ your store |
 | Secrets at rest | Prefer `AI_CLOUDHUB_MASTER_KEY` so provider AK/SK are envelope-encrypted |
+| RoleArn is **env**, not provider JSON | Native / S3 STS RoleArn comes from `AI_CLOUDHUB_*_STS_ROLE_ARN` (see below) — not a field on `POST /v1/providers` |
 
 Truthy env values: `1` / `true` / `yes`.
 
 Assume API at `http://127.0.0.1:8080` and `$TOKEN` from `POST /v1/auth/login`.
+
+---
+
+## Which path should I use?
+
+```text
+Need mount via rclone/hubd?
+  ├─ Aliyun OSS  → type=oss  + AI_CLOUDHUB_OSS_NATIVE_STS=1 + acs:ram:: RoleArn
+  ├─ Tencent COS → type=cos  + AI_CLOUDHUB_COS_NATIVE_STS=1 + qcs::cam:: RoleArn
+  ├─ Qiniu Kodo  → type=qiniu + (optional) AI_CLOUDHUB_QINIU_STS=1  [S3-compat]
+  └─ Oracle OCI  → type=oracle + Customer Secret Keys on provider
+                   optional AI_CLOUDHUB_ORACLE_STS=1
+                   optional AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 (identity proof only)
+
+Need single-object private download for agents?
+  └─ Qiniu → POST /v1/drives/{id}/objects/presign-get  (method=qiniu_download, no extra env)
+
+Only need to prove OCI API key works?
+  └─ AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 + tenancy/user/fingerprint/PEM  → source=oci_iam
+     (does NOT mint S3 secrets or PARs)
+```
+
+### Endpoint cheat sheet
+
+| Vendor | Example data-plane endpoint | Notes |
+|--------|----------------------------|--------|
+| OSS | `oss-cn-hangzhou.aliyuncs.com` | Virtual-hosted default |
+| COS | `cos.ap-guangzhou.myqcloud.com` | Bucket often `name-appid` |
+| Qiniu S3 | `s3-cn-east-1.qiniucs.com` | Path-style; mount |
+| Qiniu CDN | `xxx.bkt.clouddn.com` / custom | Better for private GET URL signing |
+| OCI S3 | `<ns>.compat.objectstorage.<region>.oraclecloud.com` | Path-style; Customer Secret Key |
+
+### Offline / CI verification (no real cloud)
+
+| Check | Command / behavior |
+|-------|-------------------|
+| Qiniu HMAC presign | `make smoke-objects` → `method=qiniu_download` |
+| MCP Qiniu + jobs | `make smoke-mcp` |
+| Full agent path | `make smoke-quickstart-agent` (this pack) or `make smoke-agent` |
+| STS unit tests | `go test ./internal/sts/ -count=1` |
 
 ---
 
@@ -420,21 +461,44 @@ Honest limits (see [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)): **no** auto 
 
 ## Ops quick reference
 
-| Vendor | Type | Preferred native flag | RoleArn shape | Happy `source` |
-|--------|------|----------------------|---------------|----------------|
-| Aliyun OSS | `oss` | `AI_CLOUDHUB_OSS_NATIVE_STS=1` | `acs:ram::…` | `aliyun_sts` |
-| Tencent COS | `cos` | `AI_CLOUDHUB_COS_NATIVE_STS=1` | `qcs::cam::…` | `tencent_sts` |
-| Qiniu Kodo | `qiniu` | `AI_CLOUDHUB_QINIU_STS=1` + optional `QINIU_DOWNLOAD_TOKEN` | S3 role if any | `qiniu_sts` / `qiniu_download` |
-| Oracle OCI | `oracle` | `AI_CLOUDHUB_ORACLE_STS=1` + optional `ORACLE_NATIVE_IAM` | S3 role if any | `oracle_sts` / `oci_iam` |
+| Vendor | Type | Preferred native flag | RoleArn **env** keys | Happy `source` |
+|--------|------|----------------------|----------------------|----------------|
+| Aliyun OSS | `oss` | `AI_CLOUDHUB_OSS_NATIVE_STS=1` | `AI_CLOUDHUB_OSS_STS_ROLE_ARN` / `AI_CLOUDHUB_ALIYUN_STS_ROLE_ARN` (`acs:ram::…`) | `aliyun_sts` |
+| Tencent COS | `cos` | `AI_CLOUDHUB_COS_NATIVE_STS=1` | `AI_CLOUDHUB_COS_STS_ROLE_ARN` / `AI_CLOUDHUB_TENCENT_STS_ROLE_ARN` (`qcs::cam::…`) | `tencent_sts` |
+| Qiniu Kodo | `qiniu` | `AI_CLOUDHUB_QINIU_STS=1` + optional `QINIU_DOWNLOAD_TOKEN` | `AI_CLOUDHUB_QINIU_STS_ROLE_ARN` (if S3 STS gateway needs it) | `qiniu_sts` / `qiniu_download` |
+| Oracle OCI | `oracle` | `AI_CLOUDHUB_ORACLE_STS=1` + optional `ORACLE_NATIVE_IAM` | `AI_CLOUDHUB_ORACLE_STS_ROLE_ARN` (S3) | `oracle_sts` / `oci_iam` |
+
+### How to read a session (debug loop)
+
+```bash
+curl -sS -X POST "$API/v1/drives/$DID/session" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"mount_point":"/workspace","device_id":"ops-1"}' \
+  | python3 -c 'import sys,json; s=json.load(sys.stdin)["session"];
+print("source =", s.get("source"));
+print("note   =", (s.get("note") or "")[:300]);
+print("exp    =", s.get("expires_at"))'
+```
+
+| Observation | Meaning |
+|-------------|---------|
+| `source=aliyun_sts` / `tencent_sts` / `qiniu_sts` / `oracle_sts` and empty note | Native or S3 STS happy path |
+| `source=embedded` + long note | Flags off or AssumeRole failed — **mount still works** with long-lived AK/SK |
+| `source=qiniu_download` | Download-token assist (or primary when no S3 STS); not a full S3 session mint |
+| `source=oci_iam` | API-key validated; mount still needs Customer Secret Key on provider |
+| `presign-get` → `method=qiniu_download` | Object-level private URL (Qiniu only); independent of session STS |
+
+Metrics: `aicloudhub_sts_source_total{source="…"}` — see [METRICS.md](./METRICS.md).
 
 ### Production checklist (all four)
 
 1. `AI_CLOUDHUB_MASTER_KEY` set before first provider write ([PRODUCTION.md](./PRODUCTION.md)).
-2. Prefer native STS where RoleArn exists; keep long-lived keys off agent hosts.
+2. Prefer native STS where RoleArn env exists; keep long-lived keys off agent hosts.
 3. Confirm `session.source` after Issue; empty success note + expected source = good.
 4. hubd/runner refresh before `expires_at`; never log full `rclone_conf`.
 5. Optional policy gate: [POLICY.md](./POLICY.md) (`drive.session`, `provider.write`).
 6. Prometheus: `aicloudhub_sts_source_total{source="…"}`.
+7. Agent consumers: put drive id in `allowed_drive_ids` ([QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md)).
 
 ### Related code
 

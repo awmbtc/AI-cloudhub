@@ -71,6 +71,9 @@ jobs:
             ## Docs
 
             - [PRODUCTION.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/PRODUCTION.md)
+            - [QUICKSTART-AGENT.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/QUICKSTART-AGENT.md)
+            - [CLOUD-INTEGRATION.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/CLOUD-INTEGRATION.md)
+            - [METRICS.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/METRICS.md)
             - [STS.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/STS.md)
             - [POLICY.md](https://github.com/${{ github.repository }}/blob/${{ steps.ver.outputs.tag }}/docs/POLICY.md)
 
