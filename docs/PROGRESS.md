@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.1 已发布；Stage C 切片启动（远程 PDP + OCI PAR/secret）
+## 总览：v0.2.2 已发布；Stage C 切片（marketplace install + BYOC clone notes）
 
 | 阶段 | 状态 |
 |------|------|
@@ -295,3 +295,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] BYOC runner：`maybeGitConnector` 返回 dest；complete note `cloned to <path>`；env `AI_CLOUDHUB_CLONE_PATH`
 - [x] `smoke-stage-c` 覆盖 install memory/graph/lineage + complete append
 - [x] 文档：MARKETPLACE / CONNECTORS / STAGE-C / CHANGELOG
+
+### Stage C 本波（skill install + clone strict + v0.2.2）
+
+- [x] `InstallSkill` / `InstallManifest`：同一 `POST …/install`，HasPaidAccess，不创建 agent
+- [x] install 副作用对 skill：memory + `user--installed-->item`（无 from_item）
+- [x] Runner：`clone failed: …` 始终进 complete note；`AI_CLOUDHUB_CLONE_STRICT=1` 则 job fail
+- [x] `smoke-stage-c`：free/paid skill、manifest、soft/strict clone-fail notes
+- [x] 版本钉 **0.2.2**（version.go / mcp / openapi / compose）+ tag `v0.2.2`

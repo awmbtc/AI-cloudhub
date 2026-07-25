@@ -190,32 +190,61 @@ func (s *Server) routeMarketplaceSub(w http.ResponseWriter, r *http.Request, use
 		if !s.requireHuman(w, r) {
 			return
 		}
-		if s.agents == nil {
-			writeErr(w, http.StatusBadRequest, "agents not configured")
+		it, err := s.market.Get(id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		res, err := s.market.InstallAgentTemplate(userID, id, func(name, desc string, scopes []string) (string, error) {
-			a, err := s.agents.Create(userID, agent.CreateInput{
-				Name: name, Description: desc, DefaultScopes: scopes,
-			})
-			if err != nil {
-				return "", err
+		var res *marketplace.AgentInstallResult
+		switch it.Kind {
+		case marketplace.KindAgentTemplate:
+			if s.agents == nil {
+				writeErr(w, http.StatusBadRequest, "agents not configured")
+				return
 			}
-			return a.ID, nil
-		})
+			res, err = s.market.InstallAgentTemplate(userID, id, func(name, desc string, scopes []string) (string, error) {
+				a, err := s.agents.Create(userID, agent.CreateInput{
+					Name: name, Description: desc, DefaultScopes: scopes,
+				})
+				if err != nil {
+					return "", err
+				}
+				return a.ID, nil
+			})
+		case marketplace.KindSkill:
+			res, err = s.market.InstallSkill(userID, id)
+		case marketplace.KindManifest:
+			res, err = s.market.InstallManifest(userID, id)
+		default:
+			writeErr(w, http.StatusBadRequest, "install supports agent_template|skill|manifest")
+			return
+		}
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "marketplace.install", id, res.AgentID)
+		auditDetail := res.AgentID
+		if auditDetail == "" {
+			auditDetail = res.Kind
+			if auditDetail == "" {
+				auditDetail = it.Kind
+			}
+		}
+		s.auth.Audit(userID, "marketplace.install", id, auditDetail)
 		// Stage C: auto episodic memory + identity graph + lineage on successful install.
 		side := s.recordMarketplaceInstall(userID, id, res)
 		out := map[string]interface{}{
-			"agent_id": res.AgentID,
-			"name":     res.Name,
-			"scopes":   res.Scopes,
-			"item_id":  res.ItemID,
-			"payload":  res.Extra,
+			"kind":    res.Kind,
+			"item_id": res.ItemID,
+			"name":    res.Name,
+			"payload": res.Extra,
+		}
+		if res.Kind == "" {
+			out["kind"] = it.Kind
+		}
+		if res.AgentID != "" {
+			out["agent_id"] = res.AgentID
+			out["scopes"] = res.Scopes
 		}
 		if side.MemoryID != "" {
 			out["memory_id"] = side.MemoryID

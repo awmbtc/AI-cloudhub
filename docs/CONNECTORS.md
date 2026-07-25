@@ -43,15 +43,24 @@ POST /v1/jobs
 
 When a BYOC runner **claims** the job, it sets `AI_CLOUDHUB_CONNECTOR_ID` from the job field and runs the same git materialization after mount/sync. MCP `create_job` accepts `connector_id` too.
 
-### Job note: clone path
+### Job note: clone path / failure
 
 After materialization, the worker **appends** to the job note on `complete`:
 
-```text
-… | cloned to /workspace/repo
-```
+| Outcome | Note fragment | Job status (default) |
+|---------|---------------|----------------------|
+| Clone OK | `cloned to /workspace/repo` (or `$MOUNT/$path_prefix`) | agent result |
+| Clone fail (soft) | `clone failed: <reason>` | agent may still **succeed** |
+| Clone fail + strict | same note | **failed** |
 
-(or `$MOUNT/$path_prefix`). Create-time D-001 / user notes are preserved (`Complete` appends, does not replace). The agent child also sees `AI_CLOUDHUB_CLONE_PATH` when a git dest was resolved.
+Env:
+
+| Variable | Meaning |
+|----------|---------|
+| `AI_CLOUDHUB_CLONE_STRICT=1` | Fail the job when git connector materialization fails (mirror of `AI_CLOUDHUB_SECCOMP_STRICT`) |
+| unset / `0` | **Default soft:** continue agent; note still records `clone failed: …` |
+
+Create-time D-001 / user notes are preserved (`Complete` appends, does not replace). On success the agent child also sees `AI_CLOUDHUB_CLONE_PATH`.
 
 DB/SaaS connectors are **registry only** in this build: agents read config from API and talk to the SaaS/DB from the runner with local credentials.
 

@@ -182,6 +182,64 @@ assert any(e.get("action")=="marketplace.install" for e in items), d
 print("install lineage ok")
 '
 
+echo "== skill install (free system + paid) =="
+# free system skill → memory/graph, no agent_id
+"${CURL[@]}" -X POST "$API/v1/marketplace/sys.skill.qiniu_presign/install" "${AUTH[@]}" -d '{}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("kind")=="skill", d
+assert d.get("item_id")=="sys.skill.qiniu_presign", d
+assert not d.get("agent_id"), d
+assert d.get("memory_id"), d
+assert (d.get("payload") or {}).get("tool")=="object_presign_get", d
+print("free skill install ok", d["memory_id"])
+'
+# paid skill from earlier checkout section (reuse paid skill if present, else publish)
+SKILL=$("${CURL[@]}" -X POST "$API/v1/marketplace" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"name":"paid-skill-inst","kind":"skill","price_cents":50,"currency":"usd","public":true,"payload":{"tool":"demo","notes":"n"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+CODE=$("${CURL[@]}" -o /tmp/aihub-skinst.json -w '%{http_code}' -X POST "$API/v1/marketplace/$SKILL/install" "${AUTH[@]}" -d '{}')
+test "$CODE" = "400"
+python3 -c 'import json; d=json.load(open("/tmp/aihub-skinst.json")); assert "purchase" in d.get("error","").lower(), d; print("skill install blocked ok")'
+SCHK=$("${CURL[@]}" -X POST "$API/v1/marketplace/$SKILL/checkout" "${AUTH[@]}" -d '{}')
+SPID=$(echo "$SCHK" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+SBUY=$(echo "$SCHK" | python3 -c 'import sys,json; print(json.load(sys.stdin)["user_id"])')
+SPAYLOAD=$(python3 - <<PY
+import json
+print(json.dumps({"type":"checkout.session.completed","data":{"object":{"id":"cs_skill","metadata":{"purchase_id":"$SPID","user_id":"$SBUY","item_id":"$SKILL"}}}}))
+PY
+)
+export SPAYLOAD
+SSIG=$(PAYLOAD="$SPAYLOAD" python3 - <<'PY'
+import hmac,hashlib,time,os
+ts=int(time.time()); p=os.environ["PAYLOAD"].encode()
+print("t=%d,v1=%s"%(ts,hmac.new(b"whsec_smoke",f"{ts}.".encode()+p,hashlib.sha256).hexdigest()))
+PY
+)
+"${CURL[@]}" -X POST "$API/v1/webhooks/stripe" -H "Stripe-Signature: $SSIG" -H "Content-Type: application/json" -d "$SPAYLOAD" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/marketplace/$SKILL/install" "${AUTH[@]}" -d '{}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("kind")=="skill" and d.get("memory_id") and not d.get("agent_id"), d
+print("paid skill install ok", d["item_id"])
+'
+"${CURL[@]}" "$API/v1/graph?object=item:$SKILL&limit=10" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+items=d.get("items") or []
+assert any(e.get("relation")=="installed" for e in items), d
+# no from_item for skill (no agent)
+assert not any(e.get("relation")=="from_item" for e in items), d
+print("skill graph installed-only ok")
+'
+# manifest install free
+"${CURL[@]}" -X POST "$API/v1/marketplace/sys.manifest.workspace_v2/install" "${AUTH[@]}" -d '{}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("kind")=="manifest" and d.get("memory_id") and not d.get("agent_id"), d
+print("manifest install ok")
+'
+
 echo "== job connector_id field =="
 # need a drive for job
 PIDR=$("${CURL[@]}" -X POST "$API/v1/providers" "${AUTH[@]}" -H 'Content-Type: application/json' \
@@ -205,6 +263,33 @@ assert "BYOC only" in n, d
 assert "cloned to /workspace/repo" in n, d
 assert "seed" in n, d
 print("job complete append clone path ok")
+'
+# second job: soft clone-fail note style (API-level; runner unit-tested separately)
+J2=$("${CURL[@]}" -X POST "$API/v1/jobs" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"connector_id\":\"$CID\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$J2/claim" "${AUTH[@]}" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/jobs/$J2/complete" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"ok":true,"note":"clone failed: git not in PATH"}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+n=d.get("note") or ""
+assert "clone failed:" in n, d
+assert d.get("status")=="succeeded", d
+print("job soft clone-fail note append ok")
+'
+# strict-style: complete as failed with clone failed note
+J3=$("${CURL[@]}" -X POST "$API/v1/jobs" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"connector_id\":\"$CID\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$J3/claim" "${AUTH[@]}" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/jobs/$J3/complete" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"ok":false,"note":"clone failed: git clone: exit status 128"}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("status")=="failed", d
+assert "clone failed:" in (d.get("note") or ""), d
+print("job strict clone-fail status ok")
 '
 echo "job connector ok $J"
 

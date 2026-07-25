@@ -1,6 +1,6 @@
 # Agent Marketplace v0 (Stage C)
 
-Catalog of **templates and skills** — not payments, not third-party hosting of binaries.
+Catalog of **templates and skills** — not a full PCI storefront. Checkout/pay is webhook-stubbed; install is control-plane materialization.
 
 ## System catalog
 
@@ -18,14 +18,21 @@ Built-in items (id prefix `sys.`):
 ```http
 GET /v1/marketplace
 GET /v1/marketplace/{id}
-POST /v1/marketplace          # human: publish
-POST /v1/marketplace/{id}/install   # human: install agent_template → creates agent
+POST /v1/marketplace          # human: publish (agent_template|skill|manifest)
+POST /v1/marketplace/{id}/install   # human: install by kind
+POST /v1/marketplace/{id}/checkout  # purchase pending|paid (free → paid)
 DELETE /v1/marketplace/{id}   # human: unpublish own item
 ```
 
-Install only supports `kind=agent_template` and creates a user-owned agent via existing Agent Identity APIs.
+### Install by kind
 
-**Paid gate:** listings with `price_cents > 0` require a purchase with `status=paid` (checkout + Stripe webhook or pay stub) before install succeeds.
+| Kind | Behavior | Response highlights |
+|------|----------|---------------------|
+| `agent_template` | Creates user-owned agent via Agent Identity APIs | `agent_id`, `scopes`, `memory_id` |
+| `skill` | Payload-only (tool hints / docs); **no agent** | `kind=skill`, `payload`, `memory_id` |
+| `manifest` | Payload-only workspace skeleton; **no agent** | `kind=manifest`, `payload`, `memory_id` |
+
+**Paid gate:** listings with `price_cents > 0` require a purchase with `status=paid` (checkout + Stripe webhook or pay stub) before any install succeeds (`HasPaidAccess`).
 
 ### Side effects on successful install
 
@@ -33,14 +40,14 @@ Best-effort (install still succeeds if any side effect fails):
 
 | Side effect | Detail |
 |-------------|--------|
-| Episodic memory | `key=marketplace.install.<item_id>`, content notes agent materialization; response includes `memory_id` |
-| Identity graph | `user:… --installed--> item:…`, `agent:… --from_item--> item:…`, `user:… --owns_agent--> agent:…` |
-| Lineage | `action=marketplace.install`, `entity=item:<id>`, parent `agent:<id>` |
+| Episodic memory | `key=marketplace.install.<item_id>`; response includes `memory_id`; meta includes `kind` + payload |
+| Identity graph | Always `user:… --installed--> item:…`. Agent kinds also get `agent --from_item--> item` and `user --owns_agent--> agent` |
+| Lineage | `action=marketplace.install`, `entity=item:<id>` |
 | Audit | `marketplace.install` |
 
 ## Limits
 
 - No signing / review workflow
-- Skill/manifest kinds are publishable + checkoutable but **install** materializes only `agent_template`
+- Skill/manifest install is metadata into memory/graph, not binary distribution
 - No full PCI Stripe storefront (webhook signature + purchase status only)
 - System items cannot be deleted

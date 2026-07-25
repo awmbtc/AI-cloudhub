@@ -273,9 +273,11 @@ func (s *Service) Delete(userID, id string) error {
 	return s.st.DeleteMarketplaceItem(userID, id)
 }
 
-// AgentInstallResult is the outcome of installing an agent_template.
+// AgentInstallResult is the outcome of installing a marketplace item.
+// For agent_template, AgentID is set. For skill/manifest, AgentID is empty (payload-only install).
 type AgentInstallResult struct {
-	AgentID string                 `json:"agent_id"`
+	Kind    string                 `json:"kind,omitempty"`
+	AgentID string                 `json:"agent_id,omitempty"`
 	Name    string                 `json:"name"`
 	Scopes  []string               `json:"scopes,omitempty"`
 	ItemID  string                 `json:"item_id"`
@@ -303,6 +305,17 @@ func (s *Service) HasPaidAccess(userID, itemID string) (bool, error) {
 	return false, nil
 }
 
+func (s *Service) requirePaid(userID, itemID string) error {
+	ok, err := s.HasPaidAccess(userID, itemID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("purchase required: POST /v1/marketplace/%s/checkout then complete payment (status=paid)", itemID)
+	}
+	return nil
+}
+
 // InstallAgentTemplate materializes an agent from a marketplace agent_template.
 // Paid listings require a purchase with status=paid for this user.
 func (s *Service) InstallAgentTemplate(userID, itemID string, createAgent func(name, desc string, scopes []string) (agentID string, err error)) (*AgentInstallResult, error) {
@@ -313,12 +326,8 @@ func (s *Service) InstallAgentTemplate(userID, itemID string, createAgent func(n
 	if it.Kind != KindAgentTemplate {
 		return nil, fmt.Errorf("item kind is %s, need agent_template", it.Kind)
 	}
-	ok, err := s.HasPaidAccess(userID, itemID)
-	if err != nil {
+	if err := s.requirePaid(userID, itemID); err != nil {
 		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("purchase required: POST /v1/marketplace/%s/checkout then complete payment (status=paid)", itemID)
 	}
 	var payload map[string]interface{}
 	_ = json.Unmarshal(it.PayloadJSON, &payload)
@@ -345,5 +354,46 @@ func (s *Service) InstallAgentTemplate(userID, itemID string, createAgent func(n
 	if err != nil {
 		return nil, err
 	}
-	return &AgentInstallResult{AgentID: aid, Name: name, Scopes: scopes, ItemID: itemID, Extra: payload}, nil
+	return &AgentInstallResult{Kind: KindAgentTemplate, AgentID: aid, Name: name, Scopes: scopes, ItemID: itemID, Extra: payload}, nil
+}
+
+// InstallSkill grants access to a skill catalog item (metadata/docs/hints).
+// Does not create an agent — payload is returned for client/memory materialization.
+// Paid listings require purchase status=paid (same gate as agent_template).
+func (s *Service) InstallSkill(userID, itemID string) (*AgentInstallResult, error) {
+	return s.installPayloadItem(userID, itemID, KindSkill)
+}
+
+// InstallManifest grants access to a manifest catalog item (workspace skeleton payload).
+// Same paid gate and no agent create as InstallSkill.
+func (s *Service) InstallManifest(userID, itemID string) (*AgentInstallResult, error) {
+	return s.installPayloadItem(userID, itemID, KindManifest)
+}
+
+func (s *Service) installPayloadItem(userID, itemID, wantKind string) (*AgentInstallResult, error) {
+	it, err := s.Get(itemID)
+	if err != nil {
+		return nil, err
+	}
+	if it.Kind != wantKind {
+		return nil, fmt.Errorf("item kind is %s, need %s", it.Kind, wantKind)
+	}
+	if err := s.requirePaid(userID, itemID); err != nil {
+		return nil, err
+	}
+	var payload map[string]interface{}
+	_ = json.Unmarshal(it.PayloadJSON, &payload)
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	name, _ := payload["name"].(string)
+	if name == "" {
+		name = it.Name
+	}
+	return &AgentInstallResult{
+		Kind:   wantKind,
+		Name:   name,
+		ItemID: itemID,
+		Extra:  payload,
+	}, nil
 }

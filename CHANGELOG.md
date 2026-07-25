@@ -1,39 +1,34 @@
 # Changelog
 
-## Unreleased (Stage C)
+## v0.2.2
 
-### Policy
-- Remote PDP: `AI_CLOUDHUB_PDP_URL` HTTP POST `{input}` → `{allow,reason}`; observe/strict/timeout; after OPA in evaluate chain
+Stage C deepen: marketplace skill/manifest install, install side effects, BYOC git clone notes.
 
-### OCI / STS
-- `AI_CLOUDHUB_OCI_CREATE_SECRET=1`: best-effort Customer Secret Key mint via Identity API (`source=oci_secret`)
-- `AI_CLOUDHUB_OCI_PAR=1` + `OCI_NAMESPACE` + `OCI_PAR_BUCKET`: ObjectRead PAR sample in session.note (`source=oci_par`)
-- Metrics: `oci_par`, `oci_secret` STS sources
+### Marketplace
+- `POST /v1/marketplace/{id}/install` supports `agent_template` | `skill` | `manifest`
+- `InstallSkill` / `InstallManifest`: paid gate via `HasPaidAccess`; no agent create; returns payload + `memory_id`
+- Install side effects: episodic memory, identity graph, lineage (agent edges only for templates)
+- Paid install still requires purchase `status=paid`
 
-### Memory / Marketplace / modules
-- Memory Kernel v0: `POST/GET/DELETE /v1/memory` (working|episodic|semantic)
-- Vector search: `embedding` on put + `POST /v1/memory/search` (client vectors, cosine)
-- Marketplace v0: system catalog + publish + install + `price_cents` checkout/pay stub
-- `GET /v1/modules` logical module registry (monolith default; D-002)
+### Jobs / Runner (BYOC)
+- Job `Complete` **appends** notes (preserves D-001 create trail; cap 2000)
+- Jobs: `connector_id`; runner claim sets `AI_CLOUDHUB_CONNECTOR_ID`
+- Git clone success → note `cloned to <path>` + env `AI_CLOUDHUB_CLONE_PATH`
+- Git clone fail → note `clone failed: …` (always recorded)
+- `AI_CLOUDHUB_CLONE_STRICT=1|true|yes` → fail job on clone error (default soft continue)
 
-### Lineage / Graph / Connectors / deploy
-- Data Lineage v0: `/v1/lineage`
-- Identity Graph v0: `/v1/graph`
-- Connectors: Git/DB/SaaS catalog + bindings (`/v1/connectors*`)
-- `deploy/docker-compose.modular.yml` multi-api replicas + edge (not a runner pool)
+### Payments / Stripe
+- Webhook signature verify (`AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET`)
+- Checkout returns `stripe_metadata` for Checkout Session
+
+### Stage C foundations (carried from Unreleased)
+- Remote PDP, OCI PAR/secret STS sources
+- Memory Kernel + vector search; Identity Graph; Data Lineage
+- Connectors catalog; modular compose (api replicas, not runner pool)
+- `make smoke-stage-c`
 
 ### Docs
-- STAGE-C.md honesty table; ROADMAP C3e–h; D-001 reaffirmed
-
-### Stage C follow-up
-- Stripe webhook signature verify (`/v1/webhooks/stripe`, `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET`)
-- Checkout returns `stripe_metadata` for Checkout Session
-- Runner: `AI_CLOUDHUB_CONNECTOR_ID` git shallow clone (BYOC)
-- Paid marketplace `install` requires purchase status=paid
-- Jobs: `connector_id` field; runner claim applies it; MCP create_job support
-- `make smoke-stage-c`; CONNECTORS.md + PAYMENTS.md
-- Install side effects: episodic memory + identity graph + lineage; response `memory_id`
-- Job `Complete` **appends** note (preserves D-001); runner writes `cloned to <path>` + `AI_CLOUDHUB_CLONE_PATH`
+- MARKETPLACE.md, CONNECTORS.md, STAGE-C.md, PAYMENTS.md, PROGRESS.md
 
 ## v0.2.1
 
@@ -49,44 +44,3 @@
 ## v0.2.0
 
 2.0 control-plane close-out: agent identity, policy (JSON + optional OPA), multi-vendor STS, BYOS objects, production ops, multi-arch releases.
-
-### STS / Policy
-- Qiniu native private download tokens (`AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN`, source `qiniu_download`)
-- Qiniu object-level signed GET via `POST …/objects/presign-get` (`method=qiniu_download`)
-- OCI API-key IAM validation (`AI_CLOUDHUB_ORACLE_NATIVE_IAM` + private key env, source `oci_iam`) with short Identity cache
-- Optional OPA/Rego (`AI_CLOUDHUB_OPA_POLICY_FILE`, query `data.aicloudhub.authz.allow`); smoke-policy covers OPA
-- Multi-vendor STS best-effort: MinIO/AWS/S3-compat, Aliyun RAM, Tencent CAM, Qiniu/Oracle labels
-- Fix: agent `drive.read` may POST object helpers (`presign-get` / `restore-plan` / `version-hint`); only `restore-version` needs write
-
-### Agent / Jobs / MCP
-- Stage A/B: Agent Identity + scopes + path jail; drive allowlist; Policy Engine + `AI_CLOUDHUB_POLICY_FILE`; Manifest 2.0; audit.agent_id; Snapshot v0
-- Jobs: `agent_id` / `claimed_by_agent_id`, claim release on policy deny, list filters, job.* audit
-- MCP: `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` + `list_providers` + object tools
-- Binding agent gates; Devices API rejects agent tokens
-
-### Security / Hardening
-- Auth: bcrypt, refresh tokens, jti/token_version revoke, login lockout, register gate, password policy
-- Quotas, admin audit filters, JWT/master-key strict config, security headers, metrics token, HSTS, Admin CIDRs
-- Runtime: path jail, env filter, seccomp profiles, network deny wrappers
-
-### Ops / CI / Release
-- docs/PRODUCTION.md; prod compose requires `JWT_SECRET` / `MASTER_KEY`, STRICT; postgres/redis/api healthchecks
-- Distroless API image (`-s -w`); alpine multi-binary; `.dockerignore`; nginx + Caddy TLS examples
-- `api healthcheck` subcommand for distroless probes
-- CI: `make smoke-all`, live MinIO smoke, Docker image healthz
-- Multi-arch release on `v*` tags (`scripts/release-build.sh` / `make release-binaries`)
-
-### Storage / Objects
-- Objects inventory, presign-get, restore-plan/version; snapshots + diff
-- PostgreSQL store; Redis shared rate limit; OpenAPI 0.2
-
-## v0.1.1
-
-### Security
-- User passwords hashed with `golang.org/x/crypto/bcrypt` on register
-- Login uses `bcrypt.CompareHashAndPassword`
-- Legacy plaintext passwords upgraded to bcrypt on next successful login (`UpdateUserPassword`)
-
-## v0.1.0 (architecture MVP complete)
-
-- P0 STS/manifest/binding/hubd/runner; P1 sqlite/secretbox/ratelimit; vendor A/B/C templates

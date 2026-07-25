@@ -52,6 +52,28 @@ func main() {
 	}
 }
 
+// cloneStrict fails the job when git connector materialization fails.
+// AI_CLOUDHUB_CLONE_STRICT=1|true|yes (default soft: continue agent, note still recorded).
+func cloneStrict() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CLONE_STRICT")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// joinJobNote joins non-empty segments with " | ", skipping exact duplicates.
+func joinJobNote(parts ...string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return strings.Join(out, " | ")
+}
+
 func runWorker(api, token, mountPoint string) {
 	interval := 10 * time.Second
 	if v := os.Getenv("AI_CLOUDHUB_POLL"); v != "" {
@@ -86,17 +108,11 @@ func runWorker(api, token, mountPoint string) {
 			if j.ConnectorID != "" {
 				_ = os.Setenv("AI_CLOUDHUB_CONNECTOR_ID", j.ConnectorID)
 			}
-			clonePath, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
+			cloneNote, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
 			ok := err == nil
-			note := ""
-			if clonePath != "" {
-				note = "cloned to " + clonePath
-			}
+			note := cloneNote
 			if err != nil {
-				if note != "" {
-					note += " | "
-				}
-				note += err.Error()
+				note = joinJobNote(cloneNote, err.Error())
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
 			_ = completeJob(api, token, j.ID, ok, note)
@@ -149,9 +165,11 @@ func completeJob(api, token, id string, ok bool, note string) error {
 }
 
 // runOnce prepares workspace and runs the agent command.
-// clonePath is non-empty when a git connector was resolved (cloned or already present).
-func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (clonePath string, err error) {
+// cloneNote is "cloned to <path>" or "clone failed: …" when a connector was attempted; empty otherwise.
+// With AI_CLOUDHUB_CLONE_STRICT, clone failures return as err (job fails); default soft-continues.
+func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (cloneNote string, err error) {
 	log.Printf("AI-cloudhub runner (BYOC) api=%s mount=%s job=%s", api, mountPoint, jobID)
+	var clonePath string
 
 	var sessURL string
 	var body []byte
@@ -271,11 +289,18 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 
 	// Optional Git connector materialization (BYOC): AI_CLOUDHUB_CONNECTOR_ID + type=git.
 	// Control plane only stores non-secret config; clone runs here with user credentials/env.
+	// Soft default: continue agent on clone fail but always surface status in cloneNote.
+	// Strict: AI_CLOUDHUB_CLONE_STRICT=1 → fail runOnce (job ok=false).
 	dest, gerr := maybeGitConnector(api, token, mountPoint)
 	if gerr != nil {
-		log.Printf("git connector: %v (continuing)", gerr)
-	} else {
+		cloneNote = "clone failed: " + gerr.Error()
+		log.Printf("git connector: %v (strict=%v)", gerr, cloneStrict())
+		if cloneStrict() {
+			return cloneNote, fmt.Errorf("%s", cloneNote)
+		}
+	} else if dest != "" {
 		clonePath = dest
+		cloneNote = "cloned to " + dest
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -317,16 +342,16 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	if len(args) == 0 {
-		log.Printf("ready mode=%s path=%s clone=%s (no command); waiting signal", mode, mountPoint, clonePath)
+		log.Printf("ready mode=%s path=%s clone_note=%s (no command); waiting signal", mode, mountPoint, cloneNote)
 		<-sig
-		return clonePath, nil
+		return cloneNote, nil
 	}
 
 	// Path jail: reject command args that resolve outside workspace.
 	if jailOn {
 		jail := sandbox.NewPathJail(mountPoint)
 		if err := jail.Allow(mountPoint); err != nil {
-			return clonePath, fmt.Errorf("jail mount: %w", err)
+			return cloneNote, fmt.Errorf("jail mount: %w", err)
 		}
 		for _, a := range args[1:] {
 			// only check path-looking args (absolute or containing / or ..)
@@ -334,7 +359,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 				continue
 			}
 			if err := jail.Allow(a); err != nil {
-				return clonePath, fmt.Errorf("path jail: arg %q: %w", a, err)
+				return cloneNote, fmt.Errorf("path jail: arg %q: %w", a, err)
 			}
 		}
 	}
@@ -345,7 +370,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if sandbox.Enabled() {
 		if err := sandbox.ApplyRunnerDefault(); err != nil {
 			if sandbox.Strict() {
-				return clonePath, fmt.Errorf("seccomp: %w", err)
+				return cloneNote, fmt.Errorf("seccomp: %w", err)
 			}
 			log.Printf("seccomp: apply failed (continuing): %v", err)
 		} else {
@@ -360,9 +385,9 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	agent.Stderr = os.Stderr
 	agent.Stdin = os.Stdin
 	if err := agent.Run(); err != nil {
-		return clonePath, fmt.Errorf("agent: %w", err)
+		return cloneNote, fmt.Errorf("agent: %w", err)
 	}
-	return clonePath, nil
+	return cloneNote, nil
 }
 
 func postJSON(url, token string, payload interface{}) ([]byte, error) {

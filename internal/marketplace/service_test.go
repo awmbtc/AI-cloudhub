@@ -71,3 +71,64 @@ func TestPublish(t *testing.T) {
 		t.Fatal(err, got)
 	}
 }
+
+func TestInstallSkillFreeAndPaid(t *testing.T) {
+	st := store.NewMemory()
+	s := New(st)
+	// system skill is free
+	res, err := s.InstallSkill("u1", "sys.skill.qiniu_presign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.AgentID != "" || res.Kind != KindSkill || res.ItemID != "sys.skill.qiniu_presign" {
+		t.Fatalf("%+v", res)
+	}
+	if res.Extra["tool"] != "object_presign_get" {
+		t.Fatalf("payload %+v", res.Extra)
+	}
+	// paid skill gate
+	it, err := s.Publish("seller", PublishInput{
+		Name: "paid-skill", Kind: KindSkill, Public: true, PriceCents: 100, Currency: "usd",
+		Payload: map[string]interface{}{"tool": "x", "name": "paid-skill"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InstallSkill("buyer", it.ID)
+	if err == nil || !strings.Contains(err.Error(), "purchase required") {
+		t.Fatalf("want purchase required, got %v", err)
+	}
+	p, err := s.Checkout("buyer", it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WebhookPaid("buyer", p.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	res, err = s.InstallSkill("buyer", it.ID)
+	if err != nil || res.AgentID != "" || res.Name != "paid-skill" {
+		t.Fatalf("%v %+v", err, res)
+	}
+}
+
+func TestInstallManifest(t *testing.T) {
+	s := New(store.NewMemory())
+	res, err := s.InstallManifest("u1", "sys.manifest.workspace_v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != KindManifest || res.AgentID != "" {
+		t.Fatalf("%+v", res)
+	}
+	if res.Extra["version"] == nil {
+		t.Fatalf("payload %+v", res.Extra)
+	}
+}
+
+func TestInstallSkillWrongKind(t *testing.T) {
+	s := New(store.NewMemory())
+	_, err := s.InstallSkill("u1", "sys.agent.readonly")
+	if err == nil || !strings.Contains(err.Error(), "need skill") {
+		t.Fatalf("got %v", err)
+	}
+}
