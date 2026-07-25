@@ -340,3 +340,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `scripts/prod-preflight.sh` + `make prod-preflight`
 - [x] PRODUCTION.md：Stage C/Stripe/PDP、BYOC 表、cutover checklist；纠偏「无远程 PDP」
 - [x] 版本钉 **0.2.5** + tag；AGENTS.md smoke 表同步
+
+### 本波（STS 联调 + Windows hubd + 可观测性）
+
+- [x] `make smoke-sts`：offline STS path + unit + qiniu_download metrics
+- [x] hubd Windows：WinFsp 预检拒绝 mount、盘符不 MkdirAll、rclone 路径探测、即死检测
+- [x] `install-deps.ps1 -CheckOnly` + `smoke-windows.ps1` + WINDOWS.md checklist
+- [x] Stage C metrics（install/checkout/paid/connector/memory/jobs+connector）+ Grafana 行 + METRICS.md

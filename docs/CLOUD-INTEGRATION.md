@@ -57,6 +57,7 @@ Stage C (optional, best-effort, requires IAM rights):
 | Check | Command / behavior |
 |-------|-------------------|
 | Qiniu HMAC presign | `make smoke-objects` → `method=qiniu_download` |
+| STS path selection (offline) | `make smoke-sts` — unit + flags-off `source=embedded` + metrics; live opt-in `AI_CLOUDHUB_SMOKE_STS_LIVE=1` |
 | MCP Qiniu + jobs | `make smoke-mcp` |
 | Full agent path | `make smoke-quickstart-agent` (this pack) or `make smoke-agent` |
 | STS unit tests | `go test ./internal/sts/ -count=1` |

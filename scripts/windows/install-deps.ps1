@@ -4,7 +4,14 @@
 #
 # Usage (PowerShell as Admin recommended for WinFsp):
 #   powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1 -CheckOnly
 # Or double-click install-deps.bat
+#
+# Exit codes: 0 = rclone ready (WinFsp optional warn); 1 = rclone missing
+
+param(
+    [switch]$CheckOnly
+)
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -194,10 +201,13 @@ if (Test-WinFspInstalled) {
     $winfspOk = $true
 } else {
     Write-Info "未检测到 WinFsp" "WinFsp not detected"
-    $winfspOk = Install-WinFsp
-    if (-not $winfspOk) {
-        # re-check after install
-        $winfspOk = Test-WinFspInstalled
+    if ($CheckOnly) {
+        $winfspOk = $false
+    } else {
+        $winfspOk = Install-WinFsp
+        if (-not $winfspOk) {
+            $winfspOk = Test-WinFspInstalled
+        }
     }
 }
 
@@ -206,14 +216,19 @@ if (Test-RcloneInstalled) {
     $rcloneOk = $true
 } else {
     Write-Info "未检测到 rclone" "rclone not detected"
-    $rcloneOk = Install-Rclone
-    if (-not $rcloneOk) {
-        $rcloneOk = Test-RcloneInstalled
+    if ($CheckOnly) {
+        $rcloneOk = $false
+    } else {
+        $rcloneOk = Install-Rclone
+        if (-not $rcloneOk) {
+            $rcloneOk = Test-RcloneInstalled
+        }
     }
 }
 
 Write-Host ""
 Write-Host "=== 结果 / Summary ===" -ForegroundColor Magenta
+Write-Host ("RCLONE_OK={0} WINFSP_OK={1} CHECK_ONLY={2}" -f $(if ($rcloneOk) {1} else {0}), $(if ($winfspOk) {1} else {0}), $(if ($CheckOnly) {1} else {0}))
 if ($winfspOk) {
     Write-Ok "WinFsp: 就绪（FUSE 挂载可用）" "WinFsp: ready (mount mode available)"
 } else {
@@ -227,7 +242,11 @@ if ($rcloneOk) {
 
 if ($rcloneOk -and $winfspOk) {
     Write-Host ""
-    Write-Ok "全部依赖已就绪。请重新打开终端后运行 hubd。" "All deps ready. Open a new terminal, then run hubd."
+    if ($CheckOnly) {
+        Write-Ok "检查通过：依赖已就绪。" "Check-only: deps ready."
+    } else {
+        Write-Ok "全部依赖已就绪。请重新打开终端后运行 hubd。" "All deps ready. Open a new terminal, then run hubd."
+    }
     exit 0
 } elseif ($rcloneOk) {
     Write-Host ""
@@ -236,6 +255,10 @@ if ($rcloneOk -and $winfspOk) {
     exit 0
 } else {
     Write-Host ""
-    Write-Fail "安装未完成。请查看上方错误并重试（建议管理员 PowerShell）。" "Install incomplete. Review errors above and retry (Admin PowerShell recommended)."
+    if ($CheckOnly) {
+        Write-Fail "检查失败：缺少 rclone。" "Check-only failed: rclone missing."
+    } else {
+        Write-Fail "安装未完成。请查看上方错误并重试（建议管理员 PowerShell）。" "Install incomplete. Review errors above and retry (Admin PowerShell recommended)."
+    }
     exit 1
 }

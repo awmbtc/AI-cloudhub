@@ -83,8 +83,32 @@ A: Binding / session 使用 `mode=sync_workspace`（rclone sync 而非 mount）�
 **Q: 杀软拦截挂载？**  
 A: 将工作目录与 rclone 加入白名单；见 `docs/RISK-COST.md` FUSE/WinFsp 风险说明。
 
+## Production checklist（Windows 本机 hubd）
+
+- [ ] 管理员跑一次：`install-deps.ps1`（WinFsp 驱动）
+- [ ] **新开终端**：`rclone version`（PATH 刷新）
+- [ ] `hubd` 启动无 rclone fatal；WinFsp 缺失时仅警告
+- [ ] Binding：`mount_point=G:` 需要 WinFsp；无 WinFsp 用 `mode=sync_workspace` + **目录路径**（不可用盘符）
+- [ ] hubd 对 `mode=mount` 且无 WinFsp：**拒绝挂载**并提示 install-deps / sync_workspace
+- [ ] 注意：`GET /v1/runtime/check` 是 **API 进程所在主机**，不一定是本机 — 以 hubd 启动日志为准
+- [ ] soft refresh 后打开的句柄仍可能需 remount
+- [ ] 杀软白名单：state 目录 + rclone
+
+### Dry-check smoke
+
+```powershell
+# 仅检测，不安装
+powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1 -CheckOnly
+
+# 完整 dry-check（依赖 + runtimeenv 单测 + hubd 无 token 退出）
+powershell -ExecutionPolicy Bypass -File scripts\windows\smoke-windows.ps1
+```
+
+机器可读行：`RCLONE_OK=1 WINFSP_OK=0 CHECK_ONLY=1`
+
 ## 相关
 
-- 安装脚本：`scripts/windows/install-deps.ps1`  
-- 运行时检查：`internal/runtimeenv/check.go`  
+- 安装脚本：`scripts/windows/install-deps.ps1`（`-CheckOnly`）  
+- Dry smoke：`scripts/windows/smoke-windows.ps1`  
+- 运行时检查：`internal/runtimeenv/check.go`（Windows 下会搜常见 rclone 安装路径）  
 - 架构：`docs/ARCHITECTURE.md`

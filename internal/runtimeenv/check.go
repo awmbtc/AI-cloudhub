@@ -31,12 +31,12 @@ func Check() Report {
 		OS:   runtime.GOOS,
 		Arch: runtime.GOARCH,
 	}
-	path, err := exec.LookPath("rclone")
-	if err != nil {
+	path, err := findRclone()
+	if err != nil || path == "" {
 		r.Errors = append(r.Errors, "rclone not found in PATH — install https://rclone.org/downloads/")
 		if runtime.GOOS == "windows" {
 			r.InstallHint = windowsInstallHint()
-			r.Errors = append(r.Errors, "Windows: run scripts\\windows\\install-deps.ps1 (or install-deps.bat) to install rclone + WinFsp")
+			r.Errors = append(r.Errors, "Windows: run scripts\\windows\\install-deps.ps1 (or install-deps.bat) to install rclone + WinFsp; open a NEW terminal after install")
 		}
 	} else {
 		r.RcloneOK = true
@@ -83,7 +83,58 @@ func Check() Report {
 
 // windowsInstallHint points users at the repo installer scripts.
 func windowsInstallHint() string {
-	return "Install deps: powershell -ExecutionPolicy Bypass -File scripts\\windows\\install-deps.ps1  (or double-click scripts\\windows\\install-deps.bat). See docs/WINDOWS.md"
+	return "Install deps: powershell -ExecutionPolicy Bypass -File scripts\\windows\\install-deps.ps1  (or double-click scripts\\windows\\install-deps.bat). Check-only: install-deps.ps1 -CheckOnly. See docs/WINDOWS.md"
+}
+
+// findRclone locates rclone binary: PATH first, then common Windows install locations.
+func findRclone() (string, error) {
+	if path, err := exec.LookPath("rclone"); err == nil {
+		return path, nil
+	}
+	if runtime.GOOS == "windows" {
+		for _, c := range windowsRcloneCandidates() {
+			if st, err := os.Stat(c); err == nil && !st.IsDir() {
+				return c, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("rclone not found")
+}
+
+// windowsRcloneCandidates returns well-known Windows paths (post winget/install-deps).
+func windowsRcloneCandidates() []string {
+	var out []string
+	local := os.Getenv("LOCALAPPDATA")
+	if local != "" {
+		out = append(out,
+			filepath.Join(local, "rclone", "rclone.exe"),
+			filepath.Join(local, "Microsoft", "WinGet", "Links", "rclone.exe"),
+		)
+	}
+	for _, root := range []string{os.Getenv("ProgramFiles"), `C:\Program Files`} {
+		if root == "" {
+			continue
+		}
+		out = append(out, filepath.Join(root, "rclone", "rclone.exe"))
+	}
+	return out
+}
+
+// IsWindowsDriveLetter reports "G:" / "G:\" style mount points (WinFsp volume, not a directory).
+func IsWindowsDriveLetter(mp string) bool {
+	mp = strings.TrimSpace(mp)
+	if len(mp) < 2 {
+		return false
+	}
+	c0 := mp[0]
+	if !((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z')) {
+		return false
+	}
+	if mp[1] != ':' {
+		return false
+	}
+	rest := mp[2:]
+	return rest == "" || rest == `\` || rest == `/`
 }
 
 // detectWinFsp best-effort: common install paths + optional registry via reg.exe.

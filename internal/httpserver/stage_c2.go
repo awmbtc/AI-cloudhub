@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/awmbtc/AI-cloudhub/internal/connector"
+	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 )
 
 func (s *Server) routeLineage(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
@@ -120,6 +121,7 @@ func (s *Server) routeConnectorsRoot(w http.ResponseWriter, r *http.Request, use
 		if s.lineage != nil {
 			_, _ = s.lineage.Record(userID, "user:"+userID, "connector.register", "connector:"+c.ID, "", c.Type)
 		}
+		metrics.IncConnectorCreated()
 		writeJSON(w, http.StatusCreated, c)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -190,6 +192,7 @@ func (s *Server) routeMemorySearch(w http.ResponseWriter, r *http.Request, userI
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	metrics.IncMemorySearch()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"hits": hits})
 }
 
@@ -213,6 +216,7 @@ func (s *Server) routeMarketplaceCheckout(w http.ResponseWriter, r *http.Request
 	if s.lineage != nil {
 		_, _ = s.lineage.Record(userID, "user:"+userID, "marketplace.checkout", "item:"+itemID, "purchase:"+p.ID, p.Status)
 	}
+	metrics.IncMarketplaceCheckout()
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -239,6 +243,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if s.lineage != nil {
 		_, _ = s.lineage.Record(p.UserID, "stripe", "marketplace.paid", "purchase:"+p.ID, "item:"+p.ItemID, p.ProviderRef)
 	}
+	metrics.IncMarketplacePaid()
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -281,6 +286,7 @@ func (s *Server) routePurchaseWebhook(w http.ResponseWriter, r *http.Request, us
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	metrics.IncMarketplacePaid()
 	writeJSON(w, http.StatusOK, p)
 }
 

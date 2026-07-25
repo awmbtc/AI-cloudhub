@@ -107,8 +107,20 @@ Truthy: `1` / `true` / `yes`.
 ## Metrics
 
 ```text
-aicloudhub_sts_source_total{source="…|qiniu_download|oci_iam|…"}
+aicloudhub_sts_source_total{source="…|qiniu_download|oci_iam|oci_par|oci_secret|…"}
 ```
+
+See [METRICS.md](./METRICS.md).
+
+## Offline smoke / 联调
+
+```bash
+make smoke-sts
+# = go test ./internal/sts + API flags-off source=embedded + qiniu_download + metrics
+# Live (optional): AI_CLOUDHUB_SMOKE_STS_LIVE=1  (+ vendor creds; default SKIP)
+```
+
+Also: [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md) offline table.
 
 ## Production guidance
 

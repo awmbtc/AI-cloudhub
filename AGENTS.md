@@ -32,9 +32,11 @@ When tempted to add â€œplatform pool / free cloud agents / body streaming proxyâ
 | `make smoke-mcp` | `scripts/smoke-mcp-jobs.sh` (jobs + Stage C MCP tools) |
 | `make smoke-stage-c` | marketplace / memory / graph / connectors |
 | `make smoke-byoc` | local git clone + postgres/mysql env materialize (`MATERIALIZE_ONLY`) |
+| `make smoke-sts` | offline multi-cloud STS path + `go test ./internal/sts` |
 | `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
 | `make prod-preflight` | production env checklist (no API required) |
-| `make smoke-all` | above smokes **including** stage-c + byoc (**not** minio) |
+| `make smoke-all` | above smokes **including** stage-c + byoc + sts (**not** minio) |
+| Windows dry-check | `scripts/windows/smoke-windows.ps1` + `install-deps.ps1 -CheckOnly` |
 
 Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as `make` aliases).
 

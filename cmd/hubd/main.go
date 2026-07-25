@@ -69,12 +69,17 @@ func main() {
 		log.Fatalf("runtimeenv: %v", rep.Errors)
 	}
 	if runtime.GOOS == "windows" && !rep.WinFspOK {
-		log.Printf("warning: WinFsp not detected — FUSE mount may fail")
+		log.Printf("warning: WinFsp not detected — mount mode will be refused until WinFsp is installed")
 		log.Printf("install WinFsp+rclone: powershell -ExecutionPolicy Bypass -File scripts\\windows\\install-deps.ps1")
 		log.Printf("docs: docs/WINDOWS.md — or use mode=sync_workspace without WinFsp")
 	}
+	rcloneBin := "rclone"
+	if rep.RclonePath != "" {
+		rcloneBin = rep.RclonePath
+	}
+	winFspOK := rep.WinFspOK
 
-	log.Printf("AI-cloudhub hubd starting api=%s device=%s", api, device)
+	log.Printf("AI-cloudhub hubd starting api=%s device=%s rclone=%s", api, device, rcloneBin)
 
 	// active: bindingID -> mount process + session expiry
 	active := map[string]*mountProc{}
@@ -97,7 +102,7 @@ func main() {
 			_ = reportActual(api, token, id, "error", err.Error())
 			return
 		}
-		mp, err := startMount(stateDir, id, sess)
+		mp, err := startMount(stateDir, id, sess, rcloneBin, winFspOK)
 		if err != nil {
 			log.Printf("mount %s: %v", id, err)
 			_ = reportActual(api, token, id, "error", err.Error())
@@ -235,29 +240,49 @@ type mountProc struct {
 	remotePath   string
 	mountPoint   string
 	sessionToken string
+	rcloneBin    string
+	waitCh       <-chan error // set when Wait runs in background after Start
 }
 
 func (m *mountProc) stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	rcloneBin := m.rcloneBin
+	if rcloneBin == "" {
+		rcloneBin = "rclone"
+	}
 	// sync_workspace: push local changes back before release
 	if m.mode == "sync_workspace" && m.confPath != "" && m.remotePath != "" && m.mountPoint != "" {
 		log.Printf("sync_workspace push %s -> %s", m.mountPoint, m.remotePath)
-		c := exec.Command("rclone", "sync", m.mountPoint, m.remotePath, "--config", m.confPath, "--create-empty-src-dirs")
+		c := exec.Command(rcloneBin, "sync", m.mountPoint, m.remotePath, "--config", m.confPath, "--create-empty-src-dirs")
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		_ = c.Run()
 	}
 	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Signal(syscall.SIGTERM)
-		_, _ = m.cmd.Process.Wait()
+		if m.cmd.ProcessState == nil {
+			if err := m.cmd.Process.Signal(syscall.SIGTERM); err != nil && runtime.GOOS == "windows" {
+				_ = m.cmd.Process.Kill()
+			}
+			if m.waitCh != nil {
+				<-m.waitCh
+			} else {
+				_, _ = m.cmd.Process.Wait()
+			}
+		}
 	}
 }
 
-func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, error) {
-	if _, err := exec.LookPath("rclone"); err != nil {
-		return nil, fmt.Errorf("rclone not found in PATH")
+func startMount(stateDir, bindingID string, sess *sessionBundle, rcloneBin string, winFspOK bool) (*mountProc, error) {
+	if rcloneBin == "" {
+		rcloneBin = "rclone"
+	}
+	if _, err := exec.LookPath(rcloneBin); err != nil {
+		// LookPath may fail for absolute Windows paths; Stat absolute instead.
+		if st, e2 := os.Stat(rcloneBin); e2 != nil || st.IsDir() {
+			return nil, fmt.Errorf("rclone not found (%s) — install https://rclone.org/downloads/ or scripts\\windows\\install-deps.ps1", rcloneBin)
+		}
 	}
 	dir := filepath.Join(stateDir, bindingID)
 	_ = os.MkdirAll(dir, 0o700)
@@ -282,7 +307,6 @@ func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, er
 	if mp == "" {
 		return nil, fmt.Errorf("empty mount_point")
 	}
-	_ = os.MkdirAll(mp, 0o755)
 
 	mode := "mount"
 	if sess.Session.Manifest.Env != nil {
@@ -290,9 +314,24 @@ func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, er
 			mode = m
 		}
 	}
-	// also check top-level mode field if present in JSON via session
 	if mode == "" {
 		mode = "mount"
+	}
+
+	// Windows: drive letters are volume mounts — do not MkdirAll.
+	if runtimeenv.IsWindowsDriveLetter(mp) {
+		if mode == "sync_workspace" {
+			return nil, fmt.Errorf("sync_workspace requires a directory mount_point, not drive letter %q — use e.g. C:\\Users\\…\\aihub-ws", mp)
+		}
+	} else {
+		if err := os.MkdirAll(mp, 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir mount_point %q: %w", mp, err)
+		}
+	}
+
+	// Windows mount mode requires WinFsp (fail fast with install hint).
+	if mode == "mount" && runtime.GOOS == "windows" && !winFspOK {
+		return nil, fmt.Errorf("mount mode requires WinFsp — run scripts\\windows\\install-deps.ps1 (admin) or set binding mode=sync_workspace; see docs/WINDOWS.md")
 	}
 
 	mpProc := &mountProc{
@@ -300,12 +339,13 @@ func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, er
 		confPath:   confPath,
 		remotePath: spec.RemotePath,
 		mountPoint: mp,
+		rcloneBin:  rcloneBin,
 	}
 
 	if mode == "sync_workspace" {
 		// pull remote -> local once; agent works on real local SSD
 		log.Printf("sync_workspace pull %s -> %s", spec.RemotePath, mp)
-		pull := exec.Command("rclone", "sync", spec.RemotePath, mp, "--config", confPath, "--create-empty-src-dirs")
+		pull := exec.Command(rcloneBin, "sync", spec.RemotePath, mp, "--config", confPath, "--create-empty-src-dirs")
 		pull.Stdout = os.Stdout
 		pull.Stderr = os.Stderr
 		if err := pull.Run(); err != nil {
@@ -315,7 +355,7 @@ func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, er
 		return mpProc, nil
 	}
 
-	cmd := exec.Command("rclone", "mount", spec.RemotePath, mp,
+	cmd := exec.Command(rcloneBin, "mount", spec.RemotePath, mp,
 		"--config", confPath,
 		"--vfs-cache-mode", "full",
 		"--dir-cache-time", "10s",
@@ -323,7 +363,23 @@ func startMount(stateDir, bindingID string, sess *sessionBundle) (*mountProc, er
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rclone mount start: %w (WinFsp required on Windows; install-deps.ps1)", err)
+	}
+	// Fail fast if rclone dies immediately (common when WinFsp missing).
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			hint := ""
+			if runtime.GOOS == "windows" {
+				hint = " — check WinFsp (scripts\\windows\\install-deps.ps1) or use mode=sync_workspace"
+			}
+			return nil, fmt.Errorf("rclone mount exited: %w%s", err, hint)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		// still running — keep waitCh for stop()
+		mpProc.waitCh = done
 	}
 	mpProc.cmd = cmd
 	mpProc.cancel = func() {}

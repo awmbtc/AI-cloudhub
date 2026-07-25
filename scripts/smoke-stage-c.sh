@@ -328,4 +328,23 @@ print("job strict clone-fail status ok")
 '
 echo "job connector ok $J"
 
+echo "== stage-c metrics counters =="
+"${CURL[@]}" "$API/metrics" | python3 -c '
+import sys,re
+m=sys.stdin.read()
+for name in [
+  "aicloudhub_marketplace_installs_total",
+  "aicloudhub_marketplace_checkouts_total",
+  "aicloudhub_marketplace_paid_total",
+  "aicloudhub_connectors_created_total",
+  "aicloudhub_memory_puts_total",
+  "aicloudhub_memory_searches_total",
+  "aicloudhub_jobs_with_connector_created_total",
+]:
+  assert re.search(rf"^{name} \d+", m, re.M), name
+  val=int(re.search(rf"^{name} (\d+)", m, re.M).group(1))
+  assert val>=1, (name, val)
+print("stage-c metrics ok")
+'
+
 echo "OK smoke-stage-c"

@@ -60,8 +60,16 @@ All series are **counters** (monotonic within a process lifetime).
 | `aicloudhub_jobs_claimed_total` | — | BYOC jobs claimed by a user runner |
 | `aicloudhub_jobs_completed_total` | — | BYOC jobs completed |
 | `aicloudhub_jobs_cancelled_total` | — | BYOC jobs cancelled |
+| `aicloudhub_jobs_with_connector_created_total` | — | Jobs created with non-empty `connector_id` |
+| `aicloudhub_jobs_completed_with_connector_total` | — | Completions for jobs that had `connector_id` |
 | `aicloudhub_rate_limited_total` | — | Requests rejected by rate limiting |
 | `aicloudhub_snapshots_created_total` | — | Metadata snapshots created |
+| `aicloudhub_marketplace_installs_total` | — | Successful marketplace installs |
+| `aicloudhub_marketplace_checkouts_total` | — | Successful checkouts |
+| `aicloudhub_marketplace_paid_total` | — | Purchases marked paid (pay stub or Stripe webhook) |
+| `aicloudhub_connectors_created_total` | — | Connector bindings registered |
+| `aicloudhub_memory_puts_total` | — | Memory Kernel puts via API |
+| `aicloudhub_memory_searches_total` | — | Vector memory searches |
 
 ### `aicloudhub_sts_source_total` label values
 
@@ -78,6 +86,10 @@ All series are **counters** (monotonic within a process lifetime).
 | `oracle_sts` | Oracle S3-compat STS |
 | `qiniu_download` | Qiniu native HMAC download token assist |
 | `oci_iam` | OCI API-key IAM validate path |
+| `oci_par` | OCI ObjectRead PAR sample assist |
+| `oci_secret` | OCI Customer Secret Key mint assist |
+
+Offline STS path smoke: `make smoke-sts` (`scripts/smoke-sts.sh`).
 
 Every known source series is always emitted (value may be `0`). Unknown sources increment `embedded`.
 

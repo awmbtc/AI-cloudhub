@@ -10,6 +10,7 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/agent"
 	"github.com/awmbtc/AI-cloudhub/internal/marketplace"
 	"github.com/awmbtc/AI-cloudhub/internal/memkernel"
+	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 	"github.com/awmbtc/AI-cloudhub/internal/modules"
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 )
@@ -82,6 +83,7 @@ func (s *Server) routeMemoryRoot(w http.ResponseWriter, r *http.Request, userID,
 		if s.idgraph != nil && e.AgentID != "" {
 			_, _ = s.idgraph.Link(userID, "agent:"+e.AgentID, "wrote_memory", "memory:"+e.ID, nil)
 		}
+		metrics.IncMemoryPut()
 		writeJSON(w, http.StatusCreated, e)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -250,6 +252,7 @@ func (s *Server) routeMarketplaceSub(w http.ResponseWriter, r *http.Request, use
 		if side.MemoryID != "" {
 			out["memory_id"] = side.MemoryID
 		}
+		metrics.IncMarketplaceInstall()
 		writeJSON(w, http.StatusCreated, out)
 		return
 	}

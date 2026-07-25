@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### STS 联调
+- `make smoke-sts` / `scripts/smoke-sts.sh` — offline path selection + unit gate + optional live SKIP
+- Docs: STS.md, CLOUD-INTEGRATION.md offline table
+
+### hubd Windows
+- WinFsp missing → refuse `mode=mount` with install/sync_workspace hint
+- Drive-letter mount points: no MkdirAll; sync_workspace requires directory path
+- rclone discovery under common Windows install paths
+- rclone mount fail-fast if process exits immediately
+- `install-deps.ps1 -CheckOnly`, `scripts/windows/smoke-windows.ps1`, WINDOWS.md checklist
+
+### Observability
+- Counters: marketplace install/checkout/paid, connectors created, memory put/search, jobs with connector
+- Grafana Stage C row; METRICS.md + STS labels `oci_par`/`oci_secret`
+
 ## v0.2.5
 
 Ops: BYOC connector 联调 smoke + production preflight.

@@ -305,6 +305,9 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			return
 		}
 		metrics.IncJobCreated()
+		if j.ConnectorID != "" {
+			metrics.IncJobWithConnector()
+		}
 		if pr := principalFrom(r); pr != nil {
 			s.auth.AuditAgent(userID, pr.AgentID, "job.create", j.ID, in.DriveID)
 		} else {
@@ -462,6 +465,9 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			return
 		}
 		metrics.IncJobCompleted()
+		if j.ConnectorID != "" {
+			metrics.IncJobCompletedWithConnector()
+		}
 		detail := "ok"
 		if !body.OK {
 			detail = "failed"
