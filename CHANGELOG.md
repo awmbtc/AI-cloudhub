@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### hubd
+- Mode resolution: binding.mode → session.mode → AI_CLOUDHUB_MODE → mount
+- Detect dead rclone mount process → report actual=error and remount
+- Remount when binding.mode changes while active
+- Unit tests: `go test ./cmd/hubd`
+
 ## v0.2.6
 
 STS offline 联调 smoke, Windows hubd hardening, Stage C observability counters.

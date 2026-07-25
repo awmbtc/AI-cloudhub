@@ -50,8 +50,10 @@
 
 - 依赖 **rclone**；挂盘还要 FUSE / **WinFsp** / macFUSE。
 - Windows：运行 `scripts\windows\install-deps.ps1`（或 `.bat`）安装 WinFsp + rclone；详见 [WINDOWS.md](./WINDOWS.md)。
-- soft refresh 只更新 conf，已打开的 FUSE 句柄仍可能需 remount。
-- `mode=sync_workspace` 可在无 FUSE 时兜底。
+- soft refresh 只更新 conf，已打开的 FUSE 句柄仍可能持旧凭证、需 remount（hubd 不会对“打开文件”做强制踢出）。
+- hubd 会检测 **rclone 进程退出** 并 `actual=error` + 自动 remount；无法检测“进程存活但 FUSE 假死”。
+- Mode 优先级：binding.mode → session.mode → manifest env → `mount`（hubd v0.2.7+）。
+- `mode=sync_workspace` 可在无 FUSE / 无 WinFsp 时兜底。
 
 ## 控制面
 

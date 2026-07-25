@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -95,14 +96,15 @@ func main() {
 			old.stop()
 			delete(active, id)
 		}
-		log.Printf("mount binding %s -> %s", id, b.MountPoint)
+		log.Printf("mount binding %s -> %s mode=%s", id, b.MountPoint, strings.TrimSpace(b.Mode))
 		sess, err := issueSession(api, token, id)
 		if err != nil {
 			log.Printf("session %s: %v", id, err)
 			_ = reportActual(api, token, id, "error", err.Error())
 			return
 		}
-		mp, err := startMount(stateDir, id, sess, rcloneBin, winFspOK)
+		mode := resolveMode(b.Mode, sess)
+		mp, err := startMount(stateDir, id, sess, mode, rcloneBin, winFspOK)
 		if err != nil {
 			log.Printf("mount %s: %v", id, err)
 			_ = reportActual(api, token, id, "error", err.Error())
@@ -111,9 +113,11 @@ func main() {
 		mp.expiresAt = sess.Session.ExpiresAt
 		mp.sessionToken = sess.Session.Token
 		mp.driveID = b.DriveID
+		mp.bindingMode = strings.TrimSpace(b.Mode)
 		active[id] = mp
 		_ = reportActual(api, token, id, "mounted", "")
-		log.Printf("mounted %s drive=%s workspace=%s expires=%s", id, b.DriveID, sess.workspace(), sess.Session.ExpiresAt.Format(time.RFC3339))
+		log.Printf("mounted %s drive=%s mode=%s workspace=%s expires=%s",
+			id, b.DriveID, mp.mode, sess.workspace(), sess.Session.ExpiresAt.Format(time.RFC3339))
 	}
 
 	reconcile := func() {
@@ -138,10 +142,26 @@ func main() {
 				_ = reportActual(api, token, id, "unmounted", "")
 			}
 		}
-		// mount new or soft-refresh sessions expiring within 5 minutes
+		// mount new, detect dead rclone, mode change, or soft-refresh expiring sessions
 		for id, b := range want {
 			mp, ok := active[id]
 			if !ok {
+				remount(id, b)
+				continue
+			}
+			// binding.mode changed while active → full remount
+			if strings.TrimSpace(b.Mode) != "" && strings.TrimSpace(b.Mode) != mp.bindingMode &&
+				strings.TrimSpace(b.Mode) != mp.mode {
+				log.Printf("mode change binding %s %s -> %s; remounting", id, mp.mode, b.Mode)
+				remount(id, b)
+				continue
+			}
+			// rclone mount process died after we reported mounted
+			if mountDead(mp) {
+				log.Printf("mount process dead for binding %s; reporting error and remounting", id)
+				_ = reportActual(api, token, id, "error", "rclone mount process exited")
+				mp.stop()
+				delete(active, id)
 				remount(id, b)
 				continue
 			}
@@ -154,6 +174,12 @@ func main() {
 							if err := os.WriteFile(mp.confPath, []byte(spec.RcloneConf), 0o600); err == nil {
 								mp.expiresAt = nb.Session.ExpiresAt
 								mp.sessionToken = nb.Session.Token
+								// soft-refresh may leave open FUSE handles on old creds (documented)
+								if mountDead(mp) {
+									log.Printf("mount dead after soft-refresh %s; remounting", id)
+									remount(id, b)
+									continue
+								}
 								log.Printf("soft-refreshed binding %s expires=%s", id, mp.expiresAt.Format(time.RFC3339))
 								continue
 							}
@@ -199,6 +225,7 @@ type sessionBundle struct {
 		ID        string    `json:"id"`
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
+		Mode      string    `json:"mode"`
 		Spec      mountSpec `json:"spec"`
 		Manifest  struct {
 			Env map[string]string `json:"env"`
@@ -206,6 +233,51 @@ type sessionBundle struct {
 	} `json:"session"`
 	Manifest json.RawMessage `json:"manifest"`
 	Spec     mountSpec       `json:"spec"`
+}
+
+// resolveMode picks mount vs sync_workspace.
+// Precedence: binding.mode → session.mode → session.manifest.env AI_CLOUDHUB_MODE → "mount".
+func resolveMode(bindingMode string, sess *sessionBundle) string {
+	if m := strings.TrimSpace(bindingMode); m != "" {
+		return m
+	}
+	if sess != nil {
+		if m := strings.TrimSpace(sess.Session.Mode); m != "" {
+			return m
+		}
+		if sess.Session.Manifest.Env != nil {
+			if m := strings.TrimSpace(sess.Session.Manifest.Env["AI_CLOUDHUB_MODE"]); m != "" {
+				return m
+			}
+		}
+	}
+	return "mount"
+}
+
+// mountDead reports whether a mount-mode rclone process has exited.
+func mountDead(mp *mountProc) bool {
+	if mp == nil || mp.mode == "sync_workspace" {
+		return false
+	}
+	if mp.cmd == nil || mp.cmd.Process == nil {
+		return false
+	}
+	if mp.cmd.ProcessState != nil {
+		return true
+	}
+	// Non-blocking peek via waitCh (filled by Wait goroutine after Start).
+	if mp.waitCh != nil {
+		select {
+		case err, ok := <-mp.waitCh:
+			if ok {
+				// drain stored; process is dead
+				_ = err
+				return true
+			}
+		default:
+		}
+	}
+	return false
 }
 
 type mountSpec struct {
@@ -236,6 +308,7 @@ type mountProc struct {
 	expiresAt    time.Time
 	driveID      string
 	mode         string
+	bindingMode  string // last binding.mode used for change detection
 	confPath     string
 	remotePath   string
 	mountPoint   string
@@ -274,7 +347,7 @@ func (m *mountProc) stop() {
 	}
 }
 
-func startMount(stateDir, bindingID string, sess *sessionBundle, rcloneBin string, winFspOK bool) (*mountProc, error) {
+func startMount(stateDir, bindingID string, sess *sessionBundle, mode, rcloneBin string, winFspOK bool) (*mountProc, error) {
 	if rcloneBin == "" {
 		rcloneBin = "rclone"
 	}
@@ -308,14 +381,9 @@ func startMount(stateDir, bindingID string, sess *sessionBundle, rcloneBin strin
 		return nil, fmt.Errorf("empty mount_point")
 	}
 
-	mode := "mount"
-	if sess.Session.Manifest.Env != nil {
-		if m := sess.Session.Manifest.Env["AI_CLOUDHUB_MODE"]; m != "" {
-			mode = m
-		}
-	}
+	mode = strings.TrimSpace(mode)
 	if mode == "" {
-		mode = "mount"
+		mode = resolveMode("", sess)
 	}
 
 	// Windows: drive letters are volume mounts — do not MkdirAll.

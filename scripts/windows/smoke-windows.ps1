@@ -69,8 +69,22 @@ Write-Host "Checklist:" -ForegroundColor Cyan
 Write-Host "  [ ] Admin once: install-deps.ps1 (WinFsp driver)"
 Write-Host "  [ ] New terminal: rclone version"
 Write-Host "  [ ] mount_point G: needs WinFsp; else mode=sync_workspace + directory path"
+Write-Host "  [ ] Mode: binding.mode > session.mode > AI_CLOUDHUB_MODE > mount"
+Write-Host "  [ ] Dead rclone process: hubd reports actual=error and remounts"
 Write-Host "  [ ] GET /v1/runtime/check is API host — trust hubd local logs"
 Write-Host "  See docs/WINDOWS.md"
+
+# hubd pure unit tests (mode + dead mount helpers)
+if (Get-Command go -ErrorAction SilentlyContinue) {
+    Write-Host "-- go test ./cmd/hubd --"
+    go test ./cmd/hubd/ -count=1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[FAIL] hubd tests" -ForegroundColor Red
+        $fail = 1
+    } else {
+        Write-Host "[OK] hubd tests" -ForegroundColor Green
+    }
+}
 
 if ($fail -ne 0) {
     Write-Host "RESULT: FAIL" -ForegroundColor Red

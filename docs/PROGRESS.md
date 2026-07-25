@@ -348,3 +348,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `install-deps.ps1 -CheckOnly` + `smoke-windows.ps1` + WINDOWS.md checklist
 - [x] Stage C metrics（install/checkout/paid/connector/memory/jobs+connector）+ Grafana 行 + METRICS.md
 - [x] 版本钉 **0.2.6** + tag
+
+### 本波（hubd mode + 挂载存活）
+
+- [x] Mode 优先级：binding → session.mode → manifest env → mount
+- [x] rclone 进程退出 → actual=error + remount；binding.mode 变更 → remount
+- [x] `cmd/hubd` 单测；WINDOWS / KNOWN_LIMITATIONS 同步
