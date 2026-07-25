@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.2.5
 
-### Ops / BYOC
-- Runner `AI_CLOUDHUB_MATERIALIZE_ONLY=1`: connector materialize without rclone (JSON report)
-- `make smoke-byoc` — local bare git clone + postgres/mysql env inject
-- `make prod-preflight` — production env checklist script
-- PRODUCTION.md: Stage C/Stripe/PDP, BYOC cutover checklist
+Ops: BYOC connector 联调 smoke + production preflight.
+
+### Runner / BYOC
+- `AI_CLOUDHUB_MATERIALIZE_ONLY=1` — materialize git/postgres/mysql without rclone
+- Optional `AI_CLOUDHUB_MATERIALIZE_REPORT` JSON path
+- `make smoke-byoc` — local bare git clone + PG/MySQL env inject + job `connector_id`
+
+### Production
+- `make prod-preflight` / `scripts/prod-preflight.sh` — JWT/STRICT/MASTER_KEY checklist
+- PRODUCTION.md: Stage C, Stripe, remote PDP, BYOC table, cutover checklist
+- AGENTS.md smoke targets updated
 
 ## v0.2.4
 
@@ -33,36 +39,14 @@ Stage C contract + MCP write surface for connectors; MySQL BYOC.
 
 Stage C deepen: MCP tools, Stripe checkout_url, postgres BYOC env, config JSON fix.
 
-### MCP Stage C tools
-- Tools: `list_marketplace`, `install_marketplace`, `list_memory`, `put_memory`, `search_memory`, `list_graph`, `link_graph`, `list_connectors`, `connectors_catalog`, `list_lineage`, `record_lineage`
-- API tools always require `AI_CLOUDHUB_TOKEN` (local-only: `workspace_env`, `resolve_path`)
-- Agents may install `skill` / `manifest`; `agent_template` remains human-only
-- `make smoke-mcp` covers Stage C tools
-
-### Payments
-- Checkout returns `checkout_url` + `session_id` (mock without secret; live Session with `AI_CLOUDHUB_STRIPE_SECRET_KEY`)
-- Optional `AI_CLOUDHUB_STRIPE_SUCCESS_URL` / `CANCEL_URL`
-- Still PCI-free: no card data on control plane; webhook / dev pay complete purchase
-
-### Connectors / Runner
-- Connector `config` marshals as JSON object (`json.RawMessage`), not base64
-- Postgres: expanded catalog fields; strip password/dsn; require host+database
-- Runner materializes postgres → `AI_CLOUDHUB_PG_*` + password-less `DSN_TEMPLATE`
-- Sandbox `PassLibpq` for host `PGPASSWORD` when postgres materializes
-- `AI_CLOUDHUB_PG_STRICT` / `AI_CLOUDHUB_PASS_PG=0`
-- Git materialization refactored into shared `materializeConnector`
-
-### Docs
-- PAYMENTS.md, CONNECTORS.md, STAGE-C.md, KNOWN_LIMITATIONS (remote PDP), ROADMAP C3b
-
 ## v0.2.2
 
-Stage C deepen: marketplace skill/manifest install, install side effects, BYOC git clone notes.
+Marketplace skill/manifest install, install side effects, BYOC git clone notes.
 
 ## v0.2.1
 
-Makefile `.PHONY` fix + ops docs pack (CLOUD-INTEGRATION, QUICKSTART-AGENT, METRICS).
+Makefile `.PHONY` fix + ops docs pack.
 
 ## v0.2.0
 
-2.0 control-plane close-out: agent identity, policy, multi-vendor STS, BYOS objects, production ops.
+2.0 control-plane close-out.

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.4 已发布；MCP connectors + mysql/OpenAPI Stage C
+## 总览：v0.2.5 已发布；BYOC 联调 smoke + 生产 preflight
 
 | 阶段 | 状态 |
 |------|------|
@@ -339,3 +339,4 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `scripts/smoke-byoc-connectors.sh` + `make smoke-byoc`（本地 bare git + DB env）
 - [x] `scripts/prod-preflight.sh` + `make prod-preflight`
 - [x] PRODUCTION.md：Stage C/Stripe/PDP、BYOC 表、cutover checklist；纠偏「无远程 PDP」
+- [x] 版本钉 **0.2.5** + tag；AGENTS.md smoke 表同步

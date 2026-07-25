@@ -29,8 +29,12 @@ When tempted to add “platform pool / free cloud agents / body streaming proxy�
 | `make smoke-minio` | live MinIO inventory/snapshot; soft-skip unless `AI_CLOUDHUB_SMOKE_MINIO_REQUIRE=1` |
 | `make smoke-policy` | `scripts/smoke-policy.sh` |
 | `make smoke-job` | `scripts/smoke-job.sh` (BYOC jobs) |
-| `make smoke-mcp` | `scripts/smoke-mcp-jobs.sh` |
-| `make smoke-all` | smoke + agent + objects + policy + job + mcp (not minio) |
+| `make smoke-mcp` | `scripts/smoke-mcp-jobs.sh` (jobs + Stage C MCP tools) |
+| `make smoke-stage-c` | marketplace / memory / graph / connectors |
+| `make smoke-byoc` | local git clone + postgres/mysql env materialize (`MATERIALIZE_ONLY`) |
+| `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
+| `make prod-preflight` | production env checklist (no API required) |
+| `make smoke-all` | above smokes **including** stage-c + byoc (**not** minio) |
 
 Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as `make` aliases).
 
@@ -50,15 +54,20 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 | `internal/provider` | Provider catalog + encrypted credentials |
 | `internal/auth` | API keys, sessions, scopes |
 | `internal/store` | memory / sqlite / postgres |
-| `internal/sandbox` | path jail, seccomp helpers |
+| `internal/sandbox` | path jail, seccomp helpers, PassLibpq/PassMysql |
 | `internal/mountlib` | rclone mount integration |
+| `internal/marketplace` | catalog, install, checkout_url, Stripe webhook |
+| `internal/memkernel` | Memory Kernel layers |
+| `internal/connector` | Git/DB/SaaS bindings (non-secret config) |
 
 ## Docs map
 
 - Architecture: `docs/ARCHITECTURE.md`
 - Decisions (D-001…): `docs/DECISIONS.md`
 - Limits: `docs/KNOWN_LIMITATIONS.md`
-- OpenAPI: `docs/openapi.yaml`
+- Production cutover: `docs/PRODUCTION.md` + `make prod-preflight`
+- Stage C: `docs/STAGE-C.md` · connectors: `docs/CONNECTORS.md`
+- OpenAPI: `docs/openapi.yaml` (includes Stage C paths)
 - MCP tools: `docs/MCP.md`
 
 ## Agent hygiene
