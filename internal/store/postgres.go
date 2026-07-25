@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS memory_entries (
   key TEXT,
   content TEXT NOT NULL,
   meta_json TEXT,
+  embedding_json TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ
 );
@@ -185,9 +186,28 @@ CREATE TABLE IF NOT EXISTS marketplace_items (
   version TEXT,
   payload_json TEXT NOT NULL,
   public BOOLEAN NOT NULL DEFAULT TRUE,
+  price_cents BIGINT NOT NULL DEFAULT 0,
+  currency TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id);
+CREATE TABLE IF NOT EXISTS lineage_events (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, actor_id TEXT, action TEXT NOT NULL,
+  entity TEXT NOT NULL, parent TEXT, detail TEXT, created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineage_user ON lineage_events(user_id, created_at);
+CREATE TABLE IF NOT EXISTS graph_edges (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, subject TEXT NOT NULL, relation TEXT NOT NULL,
+  object TEXT NOT NULL, meta_json TEXT, created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS purchases (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, item_id TEXT NOT NULL, amount_cents BIGINT NOT NULL,
+  currency TEXT, status TEXT NOT NULL, provider TEXT, provider_ref TEXT, created_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS connectors (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL,
+  config_json TEXT, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL
+);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -201,6 +221,9 @@ CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id
 	_, _ = p.db.Exec(`ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS agent_id TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS agent_id TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_by_agent_id TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS embedding_json TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE marketplace_items ADD COLUMN IF NOT EXISTS price_cents BIGINT NOT NULL DEFAULT 0`)
+	_, _ = p.db.Exec(`ALTER TABLE marketplace_items ADD COLUMN IF NOT EXISTS currency TEXT`)
 	return nil
 }
 
@@ -983,16 +1006,16 @@ func (p *Postgres) CreateMemory(e *MemoryEntry) error {
 		exp = e.ExpiresAt.UTC()
 	}
 	_, err := p.db.Exec(
-		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON), e.CreatedAt.UTC(), exp,
+		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, embedding_json, created_at, expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON), string(e.EmbeddingJSON), e.CreatedAt.UTC(), exp,
 	)
 	return err
 }
 
 func (p *Postgres) GetMemory(userID, id string) (*MemoryEntry, error) {
 	row := p.db.QueryRow(
-		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, COALESCE(embedding_json,''), created_at, expires_at
 		 FROM memory_entries WHERE id=$1 AND user_id=$2`, id, userID)
 	return scanMemoryPG(row)
 }
@@ -1002,7 +1025,7 @@ func (p *Postgres) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
 		f.Limit = 100
 	}
 	rows, err := p.db.Query(
-		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, COALESCE(embedding_json,''), created_at, expires_at
 		 FROM memory_entries WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, f.UserID, f.Limit*3)
 	if err != nil {
 		return nil, err
@@ -1052,15 +1075,18 @@ func (p *Postgres) DeleteMemory(userID, id string) error {
 
 func scanMemoryPG(row interface{ Scan(dest ...any) error }) (*MemoryEntry, error) {
 	var e MemoryEntry
-	var meta string
+	var meta, emb string
 	var exp *time.Time
-	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &e.CreatedAt, &exp); err != nil {
+	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &emb, &e.CreatedAt, &exp); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("memory not found")
 		}
 		return nil, err
 	}
 	e.MetaJSON = []byte(meta)
+	if emb != "" {
+		e.EmbeddingJSON = []byte(emb)
+	}
 	if exp != nil {
 		e.ExpiresAt = *exp
 	}
@@ -1069,23 +1095,23 @@ func scanMemoryPG(row interface{ Scan(dest ...any) error }) (*MemoryEntry, error
 
 func (p *Postgres) CreateMarketplaceItem(m *MarketplaceItem) error {
 	_, err := p.db.Exec(
-		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), m.Public, m.CreatedAt.UTC(),
+		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, price_cents, currency, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), m.Public, m.PriceCents, m.Currency, m.CreatedAt.UTC(),
 	)
 	return err
 }
 
 func (p *Postgres) GetMarketplaceItem(id string) (*MarketplaceItem, error) {
 	row := p.db.QueryRow(
-		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, COALESCE(price_cents,0), COALESCE(currency,''), created_at
 		 FROM marketplace_items WHERE id=$1`, id)
 	return scanMarketPG(row)
 }
 
 func (p *Postgres) ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error) {
 	rows, err := p.db.Query(
-		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, COALESCE(price_cents,0), COALESCE(currency,''), created_at
 		 FROM marketplace_items ORDER BY created_at DESC LIMIT 500`)
 	if err != nil {
 		return nil, err
@@ -1123,7 +1149,7 @@ func (p *Postgres) DeleteMarketplaceItem(publisherUserID, id string) error {
 func scanMarketPG(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, error) {
 	var m MarketplaceItem
 	var payload string
-	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &m.Public, &m.CreatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &m.Public, &m.PriceCents, &m.Currency, &m.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("marketplace item not found")
 		}
@@ -1131,6 +1157,191 @@ func scanMarketPG(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, e
 	}
 	m.PayloadJSON = []byte(payload)
 	return &m, nil
+}
+
+func (p *Postgres) AppendLineage(e *LineageEvent) error {
+	_, err := p.db.Exec(
+		`INSERT INTO lineage_events (id, user_id, actor_id, action, entity, parent, detail, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		e.ID, e.UserID, e.ActorID, e.Action, e.Entity, e.Parent, e.Detail, e.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) ListLineage(userID, entity string, limit int) ([]*LineageEvent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := p.db.Query(
+		`SELECT id, user_id, actor_id, action, entity, parent, detail, created_at FROM lineage_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`,
+		userID, limit*2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*LineageEvent
+	for rows.Next() {
+		var e LineageEvent
+		if err := rows.Scan(&e.ID, &e.UserID, &e.ActorID, &e.Action, &e.Entity, &e.Parent, &e.Detail, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		if entity != "" && e.Entity != entity && e.Parent != entity {
+			continue
+		}
+		out = append(out, &e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) UpsertGraphEdge(e *GraphEdge) error {
+	_, err := p.db.Exec(
+		`INSERT INTO graph_edges (id, user_id, subject, relation, object, meta_json, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		 ON CONFLICT (id) DO UPDATE SET subject=EXCLUDED.subject, relation=EXCLUDED.relation, object=EXCLUDED.object, meta_json=EXCLUDED.meta_json`,
+		e.ID, e.UserID, e.Subject, e.Relation, e.Object, string(e.MetaJSON), e.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) ListGraphEdges(userID, subject, object string, limit int) ([]*GraphEdge, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := p.db.Query(
+		`SELECT id, user_id, subject, relation, object, meta_json, created_at FROM graph_edges WHERE user_id=$1 LIMIT $2`, userID, limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*GraphEdge
+	for rows.Next() {
+		var e GraphEdge
+		var meta string
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Subject, &e.Relation, &e.Object, &meta, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.MetaJSON = []byte(meta)
+		if subject != "" && e.Subject != subject {
+			continue
+		}
+		if object != "" && e.Object != object {
+			continue
+		}
+		out = append(out, &e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) CreatePurchase(pu *Purchase) error {
+	_, err := p.db.Exec(
+		`INSERT INTO purchases (id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		pu.ID, pu.UserID, pu.ItemID, pu.AmountCents, pu.Currency, pu.Status, pu.Provider, pu.ProviderRef, pu.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) GetPurchase(userID, id string) (*Purchase, error) {
+	row := p.db.QueryRow(
+		`SELECT id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at FROM purchases WHERE id=$1 AND user_id=$2`, id, userID)
+	var pu Purchase
+	if err := row.Scan(&pu.ID, &pu.UserID, &pu.ItemID, &pu.AmountCents, &pu.Currency, &pu.Status, &pu.Provider, &pu.ProviderRef, &pu.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("purchase not found")
+		}
+		return nil, err
+	}
+	return &pu, nil
+}
+
+func (p *Postgres) ListPurchases(userID string, limit int) ([]*Purchase, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := p.db.Query(
+		`SELECT id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at FROM purchases WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Purchase
+	for rows.Next() {
+		var pu Purchase
+		if err := rows.Scan(&pu.ID, &pu.UserID, &pu.ItemID, &pu.AmountCents, &pu.Currency, &pu.Status, &pu.Provider, &pu.ProviderRef, &pu.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &pu)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) UpdatePurchase(pu *Purchase) error {
+	res, err := p.db.Exec(`UPDATE purchases SET status=$1, provider=$2, provider_ref=$3 WHERE id=$4 AND user_id=$5`,
+		pu.Status, pu.Provider, pu.ProviderRef, pu.ID, pu.UserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("purchase not found")
+	}
+	return nil
+}
+
+func (p *Postgres) CreateConnector(c *ConnectorBinding) error {
+	_, err := p.db.Exec(
+		`INSERT INTO connectors (id, user_id, type, name, config_json, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		c.ID, c.UserID, c.Type, c.Name, string(c.ConfigJSON), c.Status, c.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) GetConnector(userID, id string) (*ConnectorBinding, error) {
+	row := p.db.QueryRow(`SELECT id, user_id, type, name, config_json, status, created_at FROM connectors WHERE id=$1 AND user_id=$2`, id, userID)
+	var c ConnectorBinding
+	var cfg string
+	if err := row.Scan(&c.ID, &c.UserID, &c.Type, &c.Name, &cfg, &c.Status, &c.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("connector not found")
+		}
+		return nil, err
+	}
+	c.ConfigJSON = []byte(cfg)
+	return &c, nil
+}
+
+func (p *Postgres) ListConnectors(userID string) ([]*ConnectorBinding, error) {
+	rows, err := p.db.Query(`SELECT id, user_id, type, name, config_json, status, created_at FROM connectors WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ConnectorBinding
+	for rows.Next() {
+		var c ConnectorBinding
+		var cfg string
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Type, &c.Name, &cfg, &c.Status, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		c.ConfigJSON = []byte(cfg)
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteConnector(userID, id string) error {
+	res, err := p.db.Exec(`DELETE FROM connectors WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("connector not found")
+	}
+	return nil
 }
 
 // IsPostgresDSN reports whether path is a postgres URL.

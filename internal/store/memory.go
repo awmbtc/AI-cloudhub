@@ -22,6 +22,10 @@ type Memory struct {
 	snapshots  map[string]*Snapshot     // id -> snapshot
 	memories   map[string]*MemoryEntry  // id -> memory
 	market     map[string]*MarketplaceItem
+	lineage    []*LineageEvent
+	graph      map[string]*GraphEdge
+	purchases  map[string]*Purchase
+	connectors map[string]*ConnectorBinding
 }
 
 // NewMemory returns an empty in-memory store.
@@ -40,6 +44,10 @@ func NewMemory() *Memory {
 		snapshots:  make(map[string]*Snapshot),
 		memories:   make(map[string]*MemoryEntry),
 		market:     make(map[string]*MarketplaceItem),
+		lineage:    nil,
+		graph:      make(map[string]*GraphEdge),
+		purchases:  make(map[string]*Purchase),
+		connectors: make(map[string]*ConnectorBinding),
 	}
 }
 
@@ -694,6 +702,9 @@ func (m *Memory) CreateMemory(e *MemoryEntry) error {
 	if e.MetaJSON != nil {
 		cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
 	}
+	if e.EmbeddingJSON != nil {
+		cp.EmbeddingJSON = append([]byte(nil), e.EmbeddingJSON...)
+	}
 	m.memories[e.ID] = &cp
 	return nil
 }
@@ -708,6 +719,9 @@ func (m *Memory) GetMemory(userID, id string) (*MemoryEntry, error) {
 	cp := *e
 	if e.MetaJSON != nil {
 		cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+	}
+	if e.EmbeddingJSON != nil {
+		cp.EmbeddingJSON = append([]byte(nil), e.EmbeddingJSON...)
 	}
 	return &cp, nil
 }
@@ -742,6 +756,9 @@ func (m *Memory) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
 		cp := *e
 		if e.MetaJSON != nil {
 			cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+		}
+		if e.EmbeddingJSON != nil {
+			cp.EmbeddingJSON = append([]byte(nil), e.EmbeddingJSON...)
 		}
 		out = append(out, &cp)
 	}
@@ -826,5 +843,195 @@ func (m *Memory) DeleteMarketplaceItem(publisherUserID, id string) error {
 		return fmt.Errorf("marketplace item not found")
 	}
 	delete(m.market, id)
+	return nil
+}
+
+func (m *Memory) AppendLineage(e *LineageEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e == nil || e.ID == "" {
+		return fmt.Errorf("lineage id required")
+	}
+	cp := *e
+	m.lineage = append(m.lineage, &cp)
+	return nil
+}
+
+func (m *Memory) ListLineage(userID, entity string, limit int) ([]*LineageEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var out []*LineageEvent
+	for i := len(m.lineage) - 1; i >= 0; i-- {
+		e := m.lineage[i]
+		if e.UserID != userID {
+			continue
+		}
+		if entity != "" && e.Entity != entity && e.Parent != entity {
+			continue
+		}
+		cp := *e
+		out = append(out, &cp)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) UpsertGraphEdge(e *GraphEdge) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e == nil || e.ID == "" {
+		return fmt.Errorf("edge id required")
+	}
+	cp := *e
+	if e.MetaJSON != nil {
+		cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+	}
+	m.graph[e.ID] = &cp
+	return nil
+}
+
+func (m *Memory) ListGraphEdges(userID, subject, object string, limit int) ([]*GraphEdge, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var out []*GraphEdge
+	for _, e := range m.graph {
+		if e.UserID != userID {
+			continue
+		}
+		if subject != "" && e.Subject != subject {
+			continue
+		}
+		if object != "" && e.Object != object {
+			continue
+		}
+		cp := *e
+		if e.MetaJSON != nil {
+			cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+		}
+		out = append(out, &cp)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) CreatePurchase(p *Purchase) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p == nil || p.ID == "" {
+		return fmt.Errorf("purchase id required")
+	}
+	cp := *p
+	m.purchases[p.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetPurchase(userID, id string) (*Purchase, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.purchases[id]
+	if !ok || p.UserID != userID {
+		return nil, fmt.Errorf("purchase not found")
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (m *Memory) ListPurchases(userID string, limit int) ([]*Purchase, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var out []*Purchase
+	for _, p := range m.purchases {
+		if p.UserID != userID {
+			continue
+		}
+		cp := *p
+		out = append(out, &cp)
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) UpdatePurchase(p *Purchase) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p == nil || p.ID == "" {
+		return fmt.Errorf("purchase id required")
+	}
+	if _, ok := m.purchases[p.ID]; !ok {
+		return fmt.Errorf("purchase not found")
+	}
+	cp := *p
+	m.purchases[p.ID] = &cp
+	return nil
+}
+
+func (m *Memory) CreateConnector(c *ConnectorBinding) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c == nil || c.ID == "" {
+		return fmt.Errorf("connector id required")
+	}
+	cp := *c
+	if c.ConfigJSON != nil {
+		cp.ConfigJSON = append([]byte(nil), c.ConfigJSON...)
+	}
+	m.connectors[c.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetConnector(userID, id string) (*ConnectorBinding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.connectors[id]
+	if !ok || c.UserID != userID {
+		return nil, fmt.Errorf("connector not found")
+	}
+	cp := *c
+	if c.ConfigJSON != nil {
+		cp.ConfigJSON = append([]byte(nil), c.ConfigJSON...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) ListConnectors(userID string) ([]*ConnectorBinding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*ConnectorBinding
+	for _, c := range m.connectors {
+		if c.UserID != userID {
+			continue
+		}
+		cp := *c
+		if c.ConfigJSON != nil {
+			cp.ConfigJSON = append([]byte(nil), c.ConfigJSON...)
+		}
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (m *Memory) DeleteConnector(userID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.connectors[id]
+	if !ok || c.UserID != userID {
+		return fmt.Errorf("connector not found")
+	}
+	delete(m.connectors, id)
 	return nil
 }

@@ -15,7 +15,10 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/config"
 	"github.com/awmbtc/AI-cloudhub/internal/device"
 	"github.com/awmbtc/AI-cloudhub/internal/drive"
+	"github.com/awmbtc/AI-cloudhub/internal/connector"
+	"github.com/awmbtc/AI-cloudhub/internal/idgraph"
 	"github.com/awmbtc/AI-cloudhub/internal/job"
+	"github.com/awmbtc/AI-cloudhub/internal/lineage"
 	"github.com/awmbtc/AI-cloudhub/internal/marketplace"
 	"github.com/awmbtc/AI-cloudhub/internal/memkernel"
 	"github.com/awmbtc/AI-cloudhub/internal/metrics"
@@ -41,28 +44,34 @@ type Server struct {
 	devices   *device.Service
 	jobs      *job.Service
 	agents    *agent.Service
-	memory    *memkernel.Service
-	market    *marketplace.Service
-	limit     policy.RateLimiter
-	authLim   *policy.AuthLimiter
-	authFail  *policy.FailureTracker
-	store     store.Store
+	memory     *memkernel.Service
+	market     *marketplace.Service
+	lineage    *lineage.Service
+	idgraph    *idgraph.Service
+	connectors *connector.Service
+	limit      policy.RateLimiter
+	authLim    *policy.AuthLimiter
+	authFail   *policy.FailureTracker
+	store      store.Store
 }
 
 // Deps wires services into the HTTP layer.
 type Deps struct {
-	Config    config.Config
-	Auth      *auth.Service
-	Workspace *workspace.Service // may be nil
-	Providers *provider.Service
-	Drives    *drive.Service
-	Devices   *device.Service // may be nil (devices routes omitted)
-	Jobs      *job.Service
-	Agents    *agent.Service
-	Memory    *memkernel.Service
-	Market    *marketplace.Service
-	Limiter   policy.RateLimiter
-	Store     store.Store
+	Config     config.Config
+	Auth       *auth.Service
+	Workspace  *workspace.Service // may be nil
+	Providers  *provider.Service
+	Drives     *drive.Service
+	Devices    *device.Service // may be nil (devices routes omitted)
+	Jobs       *job.Service
+	Agents     *agent.Service
+	Memory     *memkernel.Service
+	Market     *marketplace.Service
+	Lineage    *lineage.Service
+	IDGraph    *idgraph.Service
+	Connectors *connector.Service
+	Limiter    policy.RateLimiter
+	Store      store.Store
 }
 
 // New builds an HTTP handler.
@@ -96,9 +105,12 @@ func New(d Deps) http.Handler {
 		devices:   d.Devices,
 		jobs:      d.Jobs,
 		agents:    agentsSvc,
-		memory:    d.Memory,
-		market:    d.Market,
-		limit:     lim,
+		memory:     d.Memory,
+		market:     d.Market,
+		lineage:    d.Lineage,
+		idgraph:    d.IDGraph,
+		connectors: d.Connectors,
+		limit:      lim,
 		authLim:   policy.NewAuthLimiter(authRate, 5),
 		authFail:  policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
 		store:     d.Store,
@@ -126,14 +138,36 @@ func New(d Deps) http.Handler {
 		mux.HandleFunc("/v1/agents/", s.withAuth(s.routeAgentsSub))
 	}
 
-	// Stage C: Memory Kernel + Marketplace (logical modules; still embedded in api)
+	// Stage C: Memory / Marketplace / Lineage / Graph / Connectors (embedded modules)
 	if s.memory != nil {
 		mux.HandleFunc("/v1/memory", s.withAuth(s.routeMemoryRoot))
+		mux.HandleFunc("/v1/memory/search", s.withAuth(s.routeMemorySearch))
 		mux.HandleFunc("/v1/memory/", s.withAuth(s.routeMemorySub))
 	}
 	if s.market != nil {
 		mux.HandleFunc("/v1/marketplace", s.withAuth(s.routeMarketplaceRoot))
 		mux.HandleFunc("/v1/marketplace/", s.withAuth(s.routeMarketplaceSub))
+		mux.HandleFunc("/v1/purchases", s.withAuth(s.routePurchases))
+		mux.HandleFunc("/v1/purchases/", s.withAuth(func(w http.ResponseWriter, r *http.Request, userID, a, b string) {
+			path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/purchases/"), "/")
+			parts := strings.Split(path, "/")
+			if len(parts) == 2 && parts[1] == "pay" {
+				s.routePurchaseWebhook(w, r, userID, parts[0])
+				return
+			}
+			writeErr(w, http.StatusNotFound, "not found")
+		}))
+	}
+	if s.lineage != nil {
+		mux.HandleFunc("/v1/lineage", s.withAuth(s.routeLineage))
+	}
+	if s.idgraph != nil {
+		mux.HandleFunc("/v1/graph", s.withAuth(s.routeGraph))
+	}
+	if s.connectors != nil {
+		mux.HandleFunc("/v1/connectors/catalog", s.method(http.MethodGet, s.handleConnectorCatalog))
+		mux.HandleFunc("/v1/connectors", s.withAuth(s.routeConnectorsRoot))
+		mux.HandleFunc("/v1/connectors/", s.withAuth(s.routeConnectorsSub))
 	}
 
 	// Batch A: vendor catalog + provider bindings + drive maps
@@ -204,6 +238,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
 			"qiniu_download", "oci_iam", "oci_par", "oci_secret", "remote_pdp",
 			"memory_kernel_v0", "marketplace_v0", "modules_registry",
+			"data_lineage_v0", "identity_graph_v0", "vector_memory_v0",
+			"connectors_catalog", "marketplace_checkout",
 			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
 		},
 		"version": version.Version,

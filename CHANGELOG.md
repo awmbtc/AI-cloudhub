@@ -12,11 +12,18 @@
 
 ### Memory / Marketplace / modules
 - Memory Kernel v0: `POST/GET/DELETE /v1/memory` (working|episodic|semantic)
-- Marketplace v0: system catalog + publish + `POST …/install` agent templates
+- Vector search: `embedding` on put + `POST /v1/memory/search` (client vectors, cosine)
+- Marketplace v0: system catalog + publish + install + `price_cents` checkout/pay stub
 - `GET /v1/modules` logical module registry (monolith default; D-002)
 
+### Lineage / Graph / Connectors / deploy
+- Data Lineage v0: `/v1/lineage`
+- Identity Graph v0: `/v1/graph`
+- Connectors: Git/DB/SaaS catalog + bindings (`/v1/connectors*`)
+- `deploy/docker-compose.modular.yml` multi-api replicas + edge (not a runner pool)
+
 ### Docs
-- MEMORY.md, MARKETPLACE.md, MODULES.md; ROADMAP C3a–c; D-001 reaffirmed
+- STAGE-C.md honesty table; ROADMAP C3e–h; D-001 reaffirmed
 
 ## v0.2.1
 

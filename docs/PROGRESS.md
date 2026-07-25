@@ -265,7 +265,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] **Memory Kernel v0**：`/v1/memory*` · [MEMORY.md](./MEMORY.md)
 - [x] **Marketplace v0**：`/v1/marketplace*` · [MARKETPLACE.md](./MARKETPLACE.md)
 - [x] **模块注册表**：`GET /v1/modules` · [MODULES.md](./MODULES.md)（逻辑边界，非强拆进程）
-- **仍禁止：** 平台大规模 Runner 池（D-001）；默认不强制微服务
+- [x] **Data Lineage v0** `/v1/lineage` · **Identity Graph** `/v1/graph`
+- [x] **Connectors catalog** Git/DB/SaaS · **vector memory search** · **marketplace checkout stub**
+- [x] **modular compose** 双 api 副本（非 runner 池）· [STAGE-C.md](./STAGE-C.md)
+- **仍禁止：** 平台大规模 Runner 池（D-001）；默认不强制领域微服务
 
 ### 剩余诚实边界
 

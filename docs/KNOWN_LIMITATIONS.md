@@ -68,4 +68,4 @@
 
 - 非完整网盘 UI。
 - 控制面不捆绑 MinIO 服务（非魔改 MinIO）。
-- 2.0 主线已收口；Stage C：远程 PDP、OCI PAR/secret、**Memory v0**、**Marketplace v0**、**逻辑模块注册表**已落地。默认仍 monorepo 单 `api` 进程（非强拆微服务）。**仍禁止**平台大规模 Runner 池（D-001）。
+- 2.0 主线已收口；Stage C 扩展：Lineage / Graph / Connectors / 向量记忆搜索 / 支付骨架 / 可选多副本 compose。默认仍 monorepo `api`。详见 [STAGE-C.md](./STAGE-C.md)。**仍禁止**平台大规模 Runner 池（D-001）。

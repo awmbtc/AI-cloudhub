@@ -105,6 +105,8 @@ type PublishInput struct {
 	Version     string
 	Payload     map[string]interface{}
 	Public      bool
+	PriceCents  int64
+	Currency    string
 }
 
 // Publish creates a user listing.
@@ -137,6 +139,10 @@ func (s *Service) Publish(userID string, in PublishInput) (*store.MarketplaceIte
 	if err != nil {
 		return nil, err
 	}
+	cur := strings.TrimSpace(in.Currency)
+	if in.PriceCents > 0 && cur == "" {
+		cur = "usd"
+	}
 	it := &store.MarketplaceItem{
 		ID:              uuid.NewString(),
 		PublisherUserID: userID,
@@ -146,12 +152,65 @@ func (s *Service) Publish(userID string, in PublishInput) (*store.MarketplaceIte
 		Version:         ver,
 		PayloadJSON:     b,
 		Public:          in.Public,
+		PriceCents:      in.PriceCents,
+		Currency:        cur,
 		CreatedAt:       time.Now().UTC(),
 	}
 	if err := s.st.CreateMarketplaceItem(it); err != nil {
 		return nil, err
 	}
 	return it, nil
+}
+
+// Checkout creates a pending purchase (payment-grade skeleton).
+// Free items (price 0) are marked paid immediately.
+// Paid items return status=pending with provider=stripe_stub — complete via WebhookPaid.
+func (s *Service) Checkout(userID, itemID string) (*store.Purchase, error) {
+	it, err := s.Get(itemID)
+	if err != nil {
+		return nil, err
+	}
+	p := &store.Purchase{
+		ID: uuid.NewString(), UserID: userID, ItemID: itemID,
+		AmountCents: it.PriceCents, Currency: it.Currency,
+		Provider: "stripe_stub", CreatedAt: time.Now().UTC(),
+	}
+	if it.PriceCents <= 0 {
+		p.Status = "paid"
+		p.Provider = "free"
+		p.ProviderRef = "free"
+	} else {
+		p.Status = "pending"
+		p.ProviderRef = "stub_" + p.ID
+		if p.Currency == "" {
+			p.Currency = "usd"
+		}
+	}
+	if err := s.st.CreatePurchase(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// WebhookPaid marks a purchase paid (called by payment provider webhook stub).
+func (s *Service) WebhookPaid(userID, purchaseID, providerRef string) (*store.Purchase, error) {
+	p, err := s.st.GetPurchase(userID, purchaseID)
+	if err != nil {
+		return nil, err
+	}
+	p.Status = "paid"
+	if providerRef != "" {
+		p.ProviderRef = providerRef
+	}
+	if err := s.st.UpdatePurchase(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// ListPurchases returns user purchases.
+func (s *Service) ListPurchases(userID string, limit int) ([]*store.Purchase, error) {
+	return s.st.ListPurchases(userID, limit)
 }
 
 // Delete removes a user-published item.

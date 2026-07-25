@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS memory_entries (
   key TEXT,
   content TEXT NOT NULL,
   meta_json TEXT,
+  embedding_json TEXT,
   created_at TEXT NOT NULL,
   expires_at TEXT
 );
@@ -199,9 +200,58 @@ CREATE TABLE IF NOT EXISTS marketplace_items (
   version TEXT,
   payload_json TEXT NOT NULL,
   public INTEGER NOT NULL DEFAULT 1,
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id);
+
+CREATE TABLE IF NOT EXISTS lineage_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  actor_id TEXT,
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  parent TEXT,
+  detail TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineage_user ON lineage_events(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  object TEXT NOT NULL,
+  meta_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_graph_user ON graph_edges(user_id);
+
+CREATE TABLE IF NOT EXISTS purchases (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  currency TEXT,
+  status TEXT NOT NULL,
+  provider TEXT,
+  provider_ref TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS connectors (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  config_json TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -217,6 +267,9 @@ CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id
 		`ALTER TABLE audit_events ADD COLUMN agent_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN agent_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN claimed_by_agent_id TEXT`,
+		`ALTER TABLE memory_entries ADD COLUMN embedding_json TEXT`,
+		`ALTER TABLE marketplace_items ADD COLUMN price_cents INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE marketplace_items ADD COLUMN currency TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1107,9 +1160,9 @@ func (s *SQLite) CreateMemory(e *MemoryEntry) error {
 		exp = e.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON),
+		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, embedding_json, created_at, expires_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON), string(e.EmbeddingJSON),
 		e.CreatedAt.UTC().Format(time.RFC3339Nano), exp,
 	)
 	return err
@@ -1117,7 +1170,7 @@ func (s *SQLite) CreateMemory(e *MemoryEntry) error {
 
 func (s *SQLite) GetMemory(userID, id string) (*MemoryEntry, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, COALESCE(embedding_json,''), created_at, expires_at
 		 FROM memory_entries WHERE id=? AND user_id=?`, id, userID)
 	return scanMemory(row)
 }
@@ -1127,7 +1180,7 @@ func (s *SQLite) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
 		f.Limit = 100
 	}
 	rows, err := s.db.Query(
-		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, COALESCE(embedding_json,''), created_at, expires_at
 		 FROM memory_entries WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, f.UserID, f.Limit*3)
 	if err != nil {
 		return nil, err
@@ -1177,14 +1230,17 @@ func (s *SQLite) DeleteMemory(userID, id string) error {
 
 func scanMemory(row interface{ Scan(dest ...any) error }) (*MemoryEntry, error) {
 	var e MemoryEntry
-	var meta, created, exp string
-	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &created, &exp); err != nil {
+	var meta, emb, created, exp string
+	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &emb, &created, &exp); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("memory not found")
 		}
 		return nil, err
 	}
 	e.MetaJSON = []byte(meta)
+	if emb != "" {
+		e.EmbeddingJSON = []byte(emb)
+	}
 	e.CreatedAt = parseTime(created)
 	if exp != "" {
 		e.ExpiresAt = parseTime(exp)
@@ -1198,9 +1254,9 @@ func (s *SQLite) CreateMarketplaceItem(m *MarketplaceItem) error {
 		pub = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), pub,
+		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, price_cents, currency, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), pub, m.PriceCents, m.Currency,
 		m.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
@@ -1208,14 +1264,14 @@ func (s *SQLite) CreateMarketplaceItem(m *MarketplaceItem) error {
 
 func (s *SQLite) GetMarketplaceItem(id string) (*MarketplaceItem, error) {
 	row := s.db.QueryRow(
-		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, COALESCE(price_cents,0), COALESCE(currency,''), created_at
 		 FROM marketplace_items WHERE id=?`, id)
 	return scanMarket(row)
 }
 
 func (s *SQLite) ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, COALESCE(price_cents,0), COALESCE(currency,''), created_at
 		 FROM marketplace_items ORDER BY created_at DESC LIMIT 500`)
 	if err != nil {
 		return nil, err
@@ -1252,9 +1308,9 @@ func (s *SQLite) DeleteMarketplaceItem(publisherUserID, id string) error {
 
 func scanMarket(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, error) {
 	var m MarketplaceItem
-	var payload, created string
+	var payload, created, cur string
 	var pub int
-	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &pub, &created); err != nil {
+	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &pub, &m.PriceCents, &cur, &created); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("marketplace item not found")
 		}
@@ -1262,8 +1318,209 @@ func scanMarket(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, err
 	}
 	m.PayloadJSON = []byte(payload)
 	m.Public = pub != 0
+	m.Currency = cur
 	m.CreatedAt = parseTime(created)
 	return &m, nil
+}
+
+func (s *SQLite) AppendLineage(e *LineageEvent) error {
+	_, err := s.db.Exec(
+		`INSERT INTO lineage_events (id, user_id, actor_id, action, entity, parent, detail, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		e.ID, e.UserID, e.ActorID, e.Action, e.Entity, e.Parent, e.Detail, e.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) ListLineage(userID, entity string, limit int) ([]*LineageEvent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, actor_id, action, entity, parent, detail, created_at FROM lineage_events
+		 WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, userID, limit*2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*LineageEvent
+	for rows.Next() {
+		var e LineageEvent
+		var created string
+		if err := rows.Scan(&e.ID, &e.UserID, &e.ActorID, &e.Action, &e.Entity, &e.Parent, &e.Detail, &created); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = parseTime(created)
+		if entity != "" && e.Entity != entity && e.Parent != entity {
+			continue
+		}
+		out = append(out, &e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) UpsertGraphEdge(e *GraphEdge) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO graph_edges (id, user_id, subject, relation, object, meta_json, created_at) VALUES (?,?,?,?,?,?,?)`,
+		e.ID, e.UserID, e.Subject, e.Relation, e.Object, string(e.MetaJSON), e.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) ListGraphEdges(userID, subject, object string, limit int) ([]*GraphEdge, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, subject, relation, object, meta_json, created_at FROM graph_edges WHERE user_id=? LIMIT ?`,
+		userID, limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*GraphEdge
+	for rows.Next() {
+		var e GraphEdge
+		var meta, created string
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Subject, &e.Relation, &e.Object, &meta, &created); err != nil {
+			return nil, err
+		}
+		e.MetaJSON = []byte(meta)
+		e.CreatedAt = parseTime(created)
+		if subject != "" && e.Subject != subject {
+			continue
+		}
+		if object != "" && e.Object != object {
+			continue
+		}
+		out = append(out, &e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) CreatePurchase(p *Purchase) error {
+	_, err := s.db.Exec(
+		`INSERT INTO purchases (id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.UserID, p.ItemID, p.AmountCents, p.Currency, p.Status, p.Provider, p.ProviderRef, p.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) GetPurchase(userID, id string) (*Purchase, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at FROM purchases WHERE id=? AND user_id=?`,
+		id, userID)
+	var p Purchase
+	var created string
+	if err := row.Scan(&p.ID, &p.UserID, &p.ItemID, &p.AmountCents, &p.Currency, &p.Status, &p.Provider, &p.ProviderRef, &created); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("purchase not found")
+		}
+		return nil, err
+	}
+	p.CreatedAt = parseTime(created)
+	return &p, nil
+}
+
+func (s *SQLite) ListPurchases(userID string, limit int) ([]*Purchase, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, item_id, amount_cents, currency, status, provider, provider_ref, created_at FROM purchases WHERE user_id=? ORDER BY created_at DESC LIMIT ?`,
+		userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Purchase
+	for rows.Next() {
+		var p Purchase
+		var created string
+		if err := rows.Scan(&p.ID, &p.UserID, &p.ItemID, &p.AmountCents, &p.Currency, &p.Status, &p.Provider, &p.ProviderRef, &created); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = parseTime(created)
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) UpdatePurchase(p *Purchase) error {
+	res, err := s.db.Exec(
+		`UPDATE purchases SET status=?, provider=?, provider_ref=? WHERE id=? AND user_id=?`,
+		p.Status, p.Provider, p.ProviderRef, p.ID, p.UserID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("purchase not found")
+	}
+	return nil
+}
+
+func (s *SQLite) CreateConnector(c *ConnectorBinding) error {
+	_, err := s.db.Exec(
+		`INSERT INTO connectors (id, user_id, type, name, config_json, status, created_at) VALUES (?,?,?,?,?,?,?)`,
+		c.ID, c.UserID, c.Type, c.Name, string(c.ConfigJSON), c.Status, c.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) GetConnector(userID, id string) (*ConnectorBinding, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, type, name, config_json, status, created_at FROM connectors WHERE id=? AND user_id=?`, id, userID)
+	var c ConnectorBinding
+	var cfg, created string
+	if err := row.Scan(&c.ID, &c.UserID, &c.Type, &c.Name, &cfg, &c.Status, &created); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("connector not found")
+		}
+		return nil, err
+	}
+	c.ConfigJSON = []byte(cfg)
+	c.CreatedAt = parseTime(created)
+	return &c, nil
+}
+
+func (s *SQLite) ListConnectors(userID string) ([]*ConnectorBinding, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, type, name, config_json, status, created_at FROM connectors WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ConnectorBinding
+	for rows.Next() {
+		var c ConnectorBinding
+		var cfg, created string
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Type, &c.Name, &cfg, &c.Status, &created); err != nil {
+			return nil, err
+		}
+		c.ConfigJSON = []byte(cfg)
+		c.CreatedAt = parseTime(created)
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteConnector(userID, id string) error {
+	res, err := s.db.Exec(`DELETE FROM connectors WHERE id=? AND user_id=?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("connector not found")
+	}
+	return nil
 }
 
 func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {

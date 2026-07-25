@@ -149,7 +149,7 @@ type Snapshot struct {
 	CreatedAt    time.Time
 }
 
-// MemoryEntry is Stage C Memory Kernel v0 (metadata + small text; not vector DB).
+// MemoryEntry is Stage C Memory Kernel v0 (metadata + small text; optional embedding).
 // Layer: working | episodic | semantic
 type MemoryEntry struct {
 	ID        string    `json:"id"`
@@ -160,8 +160,10 @@ type MemoryEntry struct {
 	Key       string    `json:"key,omitempty"`
 	Content   string    `json:"content"`
 	MetaJSON  []byte    `json:"meta,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// EmbeddingJSON is optional float32 vector as JSON array for vector search v0.
+	EmbeddingJSON []byte    `json:"embedding,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
 }
 
 // MemoryFilter selects memory rows.
@@ -185,7 +187,57 @@ type MarketplaceItem struct {
 	Version         string    `json:"version,omitempty"`
 	PayloadJSON     []byte    `json:"payload,omitempty"`
 	Public          bool      `json:"public"`
+	// PriceCents / Currency: payment-grade listing (0 = free). Checkout is webhook-stubbed.
+	PriceCents int64  `json:"price_cents"`
+	Currency   string `json:"currency,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// LineageEvent is Data Lineage v0 (append-only activity edge).
+type LineageEvent struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	ActorID   string    `json:"actor_id,omitempty"` // user or agent
+	Action    string    `json:"action"`
+	Entity    string    `json:"entity"` // type:id e.g. drive:uuid
+	Parent    string    `json:"parent,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// GraphEdge is Identity Graph v0 (subject --rel--> object).
+type GraphEdge struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Subject   string    `json:"subject"` // e.g. agent:uuid
+	Relation  string    `json:"relation"`
+	Object    string    `json:"object"`
+	MetaJSON  []byte    `json:"meta,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Purchase is a marketplace purchase record (payment-grade skeleton).
+type Purchase struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"user_id"`
+	ItemID          string    `json:"item_id"`
+	AmountCents     int64     `json:"amount_cents"`
+	Currency        string    `json:"currency"`
+	Status          string    `json:"status"` // pending|paid|failed|refunded
+	Provider        string    `json:"provider,omitempty"` // stripe_stub|manual
+	ProviderRef     string    `json:"provider_ref,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ConnectorBinding is a Git/DB/SaaS connector registration (not full sync engine).
+type ConnectorBinding struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Type      string    `json:"type"` // git|postgres|mysql|notion|slack|…
+	Name      string    `json:"name"`
+	ConfigJSON []byte   `json:"config,omitempty"` // non-secret config
+	Status    string    `json:"status"` // registered|disabled
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Store is the persistence interface for control-plane CRUD.
@@ -288,6 +340,26 @@ type Store interface {
 	GetMarketplaceItem(id string) (*MarketplaceItem, error)
 	ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error)
 	DeleteMarketplaceItem(publisherUserID, id string) error
+
+	// Lineage v0
+	AppendLineage(e *LineageEvent) error
+	ListLineage(userID, entity string, limit int) ([]*LineageEvent, error)
+
+	// Identity Graph v0
+	UpsertGraphEdge(e *GraphEdge) error
+	ListGraphEdges(userID, subject, object string, limit int) ([]*GraphEdge, error)
+
+	// Purchases (marketplace payment skeleton)
+	CreatePurchase(p *Purchase) error
+	GetPurchase(userID, id string) (*Purchase, error)
+	ListPurchases(userID string, limit int) ([]*Purchase, error)
+	UpdatePurchase(p *Purchase) error
+
+	// Connectors (Git/DB/SaaS registry)
+	CreateConnector(c *ConnectorBinding) error
+	GetConnector(userID, id string) (*ConnectorBinding, error)
+	ListConnectors(userID string) ([]*ConnectorBinding, error)
+	DeleteConnector(userID, id string) error
 
 	Close() error
 }

@@ -18,7 +18,10 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/device"
 	"github.com/awmbtc/AI-cloudhub/internal/drive"
 	"github.com/awmbtc/AI-cloudhub/internal/httpserver"
+	"github.com/awmbtc/AI-cloudhub/internal/connector"
+	"github.com/awmbtc/AI-cloudhub/internal/idgraph"
 	"github.com/awmbtc/AI-cloudhub/internal/job"
+	"github.com/awmbtc/AI-cloudhub/internal/lineage"
 	"github.com/awmbtc/AI-cloudhub/internal/marketplace"
 	"github.com/awmbtc/AI-cloudhub/internal/memkernel"
 	"github.com/awmbtc/AI-cloudhub/internal/policy"
@@ -125,20 +128,26 @@ func main() {
 	agentSvc := agent.NewServiceWithEngine(st, policyEng)
 	memSvc := memkernel.New(st)
 	mktSvc := marketplace.New(st)
+	linSvc := lineage.New(st)
+	graphSvc := idgraph.New(st)
+	connSvc := connector.New(st)
 
 	handler := httpserver.New(httpserver.Deps{
-		Config:    cfg,
-		Auth:      authSvc,
-		Workspace: wsSvc,
-		Providers: provSvc,
-		Drives:    driveSvc,
-		Devices:   deviceSvc,
-		Jobs:      jobSvc,
-		Agents:    agentSvc,
-		Memory:    memSvc,
-		Market:    mktSvc,
-		Limiter:   lim,
-		Store:     st,
+		Config:     cfg,
+		Auth:       authSvc,
+		Workspace:  wsSvc,
+		Providers:  provSvc,
+		Drives:     driveSvc,
+		Devices:    deviceSvc,
+		Jobs:       jobSvc,
+		Agents:     agentSvc,
+		Memory:     memSvc,
+		Market:     mktSvc,
+		Lineage:    linSvc,
+		IDGraph:    graphSvc,
+		Connectors: connSvc,
+		Limiter:    lim,
+		Store:      st,
 	})
 
 	srv := &http.Server{

@@ -82,15 +82,20 @@ User
 | C3a | Memory Kernel v0 | **done** | `internal/memkernel` + `/v1/memory*`（working/episodic/semantic） |
 | C3b | Agent Marketplace v0 | **done** | `internal/marketplace` + `/v1/marketplace*` + install template |
 | C3c | 模块边界 / 逻辑微服务 | **done** | `GET /v1/modules` + [MODULES.md](./MODULES.md)；**默认仍 monorepo 单进程** |
-| C3d | 真·多进程微服务拆分 | **not started** | 需独立扩缩才拆；非默认 |
+| C3d | 多进程部署形态 | **done (replicas)** | `docker-compose.modular.yml` 双 api + edge；非默认强拆领域服务 |
+| C3e | Data Lineage v0 | **done** | `/v1/lineage` |
+| C3f | Git/DB/SaaS 连接器目录 | **done** | `/v1/connectors*` 注册表（同步在 BYOC） |
+| C3g | 向量 Memory + Identity Graph v0 | **done** | embedding 搜索 + `/v1/graph` |
+| C3h | 支付级 Marketplace 骨架 | **done** | price_cents + checkout + pay stub |
 | — | 自建大规模 Runner 池 | **禁止 (D-001)** | 永不作为默认；算力 BYOC |
 
-蓝图剩余：
+蓝图剩余（仍非产品默认）：
 
-- Data Lineage / EDA  
-- Git / DB / SaaS Connector（对象存储做深之后）  
-- 完整 Memory（向量 / Identity Graph）产品化  
-- 支付级 Marketplace  
+- OpenLineage 级数据仓库血缘  
+- 连接器侧完整 OAuth / 双向同步引擎  
+- 托管 embedding 模型  
+- PCI 合规支付与真实 Stripe 账号集成  
+- 按领域默认拆 identity/policy 微服务  
 
 ---
 

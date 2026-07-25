@@ -43,13 +43,14 @@ func (s *Server) routeMemoryRoot(w http.ResponseWriter, r *http.Request, userID,
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 	case http.MethodPost:
 		var body struct {
-			AgentID string          `json:"agent_id"`
-			DriveID string          `json:"drive_id"`
-			Layer   string          `json:"layer"`
-			Key     string          `json:"key"`
-			Content string          `json:"content"`
-			Meta    json.RawMessage `json:"meta"`
-			TTLSec  int             `json:"ttl_sec"`
+			AgentID   string          `json:"agent_id"`
+			DriveID   string          `json:"drive_id"`
+			Layer     string          `json:"layer"`
+			Key       string          `json:"key"`
+			Content   string          `json:"content"`
+			Meta      json.RawMessage `json:"meta"`
+			Embedding []float32       `json:"embedding"`
+			TTLSec    int             `json:"ttl_sec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid json")
@@ -60,7 +61,7 @@ func (s *Server) routeMemoryRoot(w http.ResponseWriter, r *http.Request, userID,
 		}
 		in := memkernel.PutInput{
 			AgentID: body.AgentID, DriveID: body.DriveID, Layer: body.Layer,
-			Key: body.Key, Content: body.Content, MetaJSON: body.Meta,
+			Key: body.Key, Content: body.Content, MetaJSON: body.Meta, Embedding: body.Embedding,
 		}
 		if body.TTLSec > 0 {
 			in.TTL = time.Duration(body.TTLSec) * time.Second
@@ -136,6 +137,8 @@ func (s *Server) routeMarketplaceRoot(w http.ResponseWriter, r *http.Request, us
 			Version     string                 `json:"version"`
 			Payload     map[string]interface{} `json:"payload"`
 			Public      *bool                  `json:"public"`
+			PriceCents  int64                  `json:"price_cents"`
+			Currency    string                 `json:"currency"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid json")
@@ -148,6 +151,7 @@ func (s *Server) routeMarketplaceRoot(w http.ResponseWriter, r *http.Request, us
 		it, err := s.market.Publish(userID, marketplace.PublishInput{
 			Name: body.Name, Description: body.Description, Kind: body.Kind,
 			Version: body.Version, Payload: body.Payload, Public: pub,
+			PriceCents: body.PriceCents, Currency: body.Currency,
 		})
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -195,6 +199,10 @@ func (s *Server) routeMarketplaceSub(w http.ResponseWriter, r *http.Request, use
 		}
 		s.auth.Audit(userID, "marketplace.install", id, res.AgentID)
 		writeJSON(w, http.StatusCreated, res)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "checkout" {
+		s.routeMarketplaceCheckout(w, r, userID, id)
 		return
 	}
 	switch r.Method {
