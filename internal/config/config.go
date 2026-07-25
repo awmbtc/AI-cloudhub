@@ -86,6 +86,9 @@ type Config struct {
 	// OPAPolicyFile is optional Rego module path (AI_CLOUDHUB_OPA_POLICY_FILE).
 	// Query: data.aicloudhub.authz.allow — see protocols/aicloudhub.rego.example.
 	OPAPolicyFile string
+	// PDPURL is optional remote Policy Decision Point (AI_CLOUDHUB_PDP_URL). Stage C.
+	// Empty = disabled. See docs/POLICY.md.
+	PDPURL string
 }
 
 // Load reads configuration from the environment with safe defaults for local docker-compose.
@@ -128,6 +131,7 @@ func Load() Config {
 		PolicyFile:        getenv("AI_CLOUDHUB_POLICY_FILE", ""),
 		PolicyReloadSec:   getenvInt("AI_CLOUDHUB_POLICY_RELOAD_SEC", 0),
 		OPAPolicyFile:     getenv("AI_CLOUDHUB_OPA_POLICY_FILE", ""),
+		PDPURL:            getenv("AI_CLOUDHUB_PDP_URL", ""),
 	}
 }
 

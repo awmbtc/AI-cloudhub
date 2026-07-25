@@ -73,7 +73,16 @@ User
 | B5 | Audit 关联 `agent_id` | **done** | 字段 + `?agent_id=` 过滤 |
 | B6 | Snapshot v0 | **done** | 元数据快照 API；非对象级 Git FS |
 
-### 阶段 C · 3.0 蓝图（有客户与规模后再做）
+### 阶段 C · 3.0 启动切片（进行中）
+
+| # | 落脚点 | 状态 | 说明 |
+|---|--------|------|------|
+| C1 | 远程 PDP | **done (v0.3 slice)** | `AI_CLOUDHUB_PDP_URL` HTTP POST；fail-open / observe / strict |
+| C2 | OCI PAR + Customer Secret 铸造 | **done (best-effort)** | `AI_CLOUDHUB_OCI_PAR` / `OCI_CREATE_SECRET`；非平台持有密钥 |
+| C3 | 完整 Memory / Marketplace / 微服务拆分 | **not started** | 仍需客户与规模 |
+| — | 自建大规模 Runner 池 | **禁止 (D-001)** | 永不作为默认；算力 BYOC |
+
+蓝图剩余：
 
 - Kernel 化命名与**模块边界**清晰后再谈服务拆分  
 - Data Lineage / EDA  
@@ -85,14 +94,13 @@ User
 
 ## 3. 明确 Not in Scope（写进评审）
 
-**2.0 初版不做：**
+**2.0 初版不做（Stage C 已部分开放 PDP / OCI PAR）：**
 
-- 微服务拆分（identity-service / policy-service …）  
+- 微服务拆分（identity-service / policy-service 作为默认部署形态）  
 - MCP Tool Marketplace  
 - 企业级 Memory 三层产品  
 - 默认支持 Git/DB/SaaS 作为一等存储（对象存储优先）  
-- 远程 PDP / OPA 微服务拆分（本地 `.rego` 已可选）  
-- 自建大规模 Runner 池  
+- **自建大规模 Runner 池（D-001，仍禁止）**  
 
 ---
 

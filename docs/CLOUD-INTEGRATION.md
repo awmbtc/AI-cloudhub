@@ -36,7 +36,10 @@ Need single-object private download for agents?
 
 Only need to prove OCI API key works?
   └─ AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 + tenancy/user/fingerprint/PEM  → source=oci_iam
-     (does NOT mint S3 secrets or PARs)
+
+Stage C (optional, best-effort, requires IAM rights):
+  ├─ AI_CLOUDHUB_OCI_CREATE_SECRET=1  → mint Customer Secret when provider AK empty (oci_secret)
+  └─ AI_CLOUDHUB_OCI_PAR=1 + NAMESPACE + PAR_BUCKET → ObjectRead PAR sample in session.note
 ```
 
 ### Endpoint cheat sheet

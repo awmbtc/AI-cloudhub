@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (Stage C slice)
+
+### Policy
+- Remote PDP: `AI_CLOUDHUB_PDP_URL` HTTP POST `{input}` → `{allow,reason}`; observe/strict/timeout; after OPA in evaluate chain
+
+### OCI / STS
+- `AI_CLOUDHUB_OCI_CREATE_SECRET=1`: best-effort Customer Secret Key mint via Identity API (`source=oci_secret`)
+- `AI_CLOUDHUB_OCI_PAR=1` + `OCI_NAMESPACE` + `OCI_PAR_BUCKET`: ObjectRead PAR sample in session.note (`source=oci_par`)
+- Metrics: `oci_par`, `oci_secret` STS sources
+
+### Docs
+- ROADMAP Stage C C1/C2 marked started; D-001 runner-pool ban reaffirmed
+
 ## v0.2.1
 
 ### Fixes

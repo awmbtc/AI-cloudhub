@@ -17,6 +17,8 @@ AI-cloudhub issues **short-lived mount sessions** for rclone/FUSE. Native / S3-c
 | `qiniu_download` | **Native Qiniu private download token** (HMAC URL, not S3 session) | `AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1` |
 | `oracle_sts` | Oracle S3-compat AssumeRole | `AI_CLOUDHUB_ORACLE_STS=1` |
 | `oci_iam` | **OCI API-key (RSA private key) identity validation** | `AI_CLOUDHUB_ORACLE_NATIVE_IAM=1` + OCI key env |
+| `oci_secret` | **OCI Customer Secret Key mint** (Identity API, best-effort) | `AI_CLOUDHUB_OCI_CREATE_SECRET=1` + native IAM env |
+| `oci_par` | **OCI ObjectRead PAR sample** (object storage API) | `AI_CLOUDHUB_OCI_PAR=1` + `OCI_NAMESPACE` + `OCI_PAR_BUCKET` |
 
 ## Qiniu private download token
 
@@ -64,6 +66,25 @@ Best-effort: signs `GET /20160918/users/{userId}` to **validate** API-key materi
 Does **not** auto-mint S3 customer secret keys or PARs in this build. Mount still prefers provider S3 AK/SK / S3-compat STS when present.
 
 Successful Identity lookups are **cached** briefly (`AI_CLOUDHUB_OCI_IAM_CACHE_SEC`, default `300`; `0` disables) so session Issue does not call OCI on every request.
+
+### Stage C: Customer Secret mint + PAR
+
+```bash
+export AI_CLOUDHUB_ORACLE_NATIVE_IAM=1
+# … tenancy / user / fingerprint / private key env (same as above) …
+
+# When provider has no S3 AK/SK, optionally mint Customer Secret Key (shown once by OCI):
+export AI_CLOUDHUB_OCI_CREATE_SECRET=1
+
+# Optional ObjectRead PAR sample (not a mount session replacement):
+export AI_CLOUDHUB_OCI_PAR=1
+export AI_CLOUDHUB_OCI_NAMESPACE=mytenancynamespace
+export AI_CLOUDHUB_OCI_PAR_BUCKET=my-bucket
+# optional object name (default __sample_key__):
+# export AI_CLOUDHUB_OCI_PAR_OBJECT=path/to/obj
+```
+
+Notes land in `session.note`. Minted secrets are returned only at create time by OCI — treat conf as highly sensitive. PAR is **ObjectRead** URL assist for agents, not a substitute for rclone S3 mount.
 
 ## Env matrix (summary)
 

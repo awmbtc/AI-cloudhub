@@ -45,7 +45,7 @@ type Decision struct {
 	Reason string
 }
 
-// Engine is Policy v0 built-ins + optional external JSON file (v1) + optional OPA/Rego.
+// Engine is Policy v0 built-ins + optional JSON file + optional OPA/Rego + optional remote PDP (Stage C).
 type Engine struct {
 	mu          sync.RWMutex
 	doc         *Document
@@ -54,9 +54,10 @@ type Engine struct {
 	reloadEvery time.Duration
 	lastCheck   time.Time
 	opa         *OPAEvaluator
+	pdp         *RemotePDP
 }
 
-// EngineOptions configures optional file-backed rules and OPA.
+// EngineOptions configures optional file-backed rules, OPA, and remote PDP.
 type EngineOptions struct {
 	// FilePath is AI_CLOUDHUB_POLICY_FILE (empty = built-ins only).
 	FilePath string
@@ -64,12 +65,15 @@ type EngineOptions struct {
 	ReloadEvery time.Duration
 	// OPAPath is AI_CLOUDHUB_OPA_POLICY_FILE (.rego module). Empty = OPA off.
 	OPAPath string
+	// PDPURL is AI_CLOUDHUB_PDP_URL (HTTP POST decision point). Empty = off.
+	// If empty, LoadRemotePDPFromEnv is still consulted.
+	PDPURL string
 }
 
 // NewEngine returns Policy Engine with built-ins only.
 func NewEngine() *Engine { return &Engine{doc: &Document{Version: 1, Mode: "enforce"}} }
 
-// NewEngineWithOptions loads optional external policy file and/or OPA module.
+// NewEngineWithOptions loads optional external policy file and/or OPA module and/or remote PDP.
 func NewEngineWithOptions(opts EngineOptions) (*Engine, error) {
 	e := NewEngine()
 	e.filePath = strings.TrimSpace(opts.FilePath)
@@ -85,6 +89,11 @@ func NewEngineWithOptions(opts EngineOptions) (*Engine, error) {
 			return nil, err
 		}
 		e.opa = opa
+	}
+	if u := strings.TrimSpace(opts.PDPURL); u != "" {
+		e.pdp = NewRemotePDP(u, 0, envTruthyPolicy("AI_CLOUDHUB_PDP_STRICT"), envTruthyPolicy("AI_CLOUDHUB_PDP_OBSERVE"))
+	} else {
+		e.pdp = LoadRemotePDPFromEnv()
 	}
 	return e, nil
 }
@@ -161,6 +170,8 @@ type Status struct {
 	ModTime     string `json:"mod_time,omitempty"`
 	OPAEnabled  bool   `json:"opa_enabled"`
 	OPAPath     string `json:"opa_path,omitempty"`
+	PDPEnabled  bool   `json:"pdp_enabled"`
+	PDPURL      string `json:"pdp_url,omitempty"`
 }
 
 // Status returns current file policy diagnostics.
@@ -188,6 +199,10 @@ func (e *Engine) Status() Status {
 	if e.opa != nil {
 		st.OPAEnabled = true
 		st.OPAPath = e.opa.Path()
+	}
+	if e.pdp != nil && e.pdp.Enabled() {
+		st.PDPEnabled = true
+		st.PDPURL = e.pdp.URL
 	}
 	return st
 }
@@ -254,6 +269,18 @@ func (e *Engine) Evaluate(req Request) Decision {
 		if reason != "" && reason != "opa:allow" && reason != "opa:no-result" {
 			// Keep file reason if ok; surface OPA note when informative.
 			if d.Reason == "ok" || d.Reason == "human" {
+				d.Reason = reason
+			}
+		}
+	}
+	// Remote PDP last (Stage C): further deny / observe / fail-open.
+	if e != nil && e.pdp != nil && e.pdp.Enabled() {
+		allow, reason, _ := e.pdp.Evaluate(req)
+		if !allow {
+			return Decision{Allow: false, Reason: reason}
+		}
+		if reason != "" && reason != "pdp:allow" {
+			if d.Reason == "ok" || d.Reason == "human" || d.Reason == "opa:allow" {
 				d.Reason = reason
 			}
 		}

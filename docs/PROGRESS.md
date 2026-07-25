@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.1 已发布（patch：CI Makefile）；v0.2.0 = 2.0 控制面收口
+## 总览：v0.2.1 已发布；Stage C 切片启动（远程 PDP + OCI PAR/secret）
 
 | 阶段 | 状态 |
 |------|------|
@@ -257,11 +257,18 @@ curl -s localhost:8080/v1/runtime/check
 
 **结论：** 1.x 收尾 + ROADMAP 2.0 最小企业可用主线 + 可选三件套（Qiniu 下载 token / OCI IAM / OPA）已落地；文档与代码口径对齐（见 [ROADMAP-2.0.md](./ROADMAP-2.0.md)、[STS.md](./STS.md)、[POLICY.md](./POLICY.md)、[KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)）。
 
-### 剩余诚实边界（非“未做”）
+### Stage C 切片（已启动）
 
-- **远程 PDP** / 每请求外部策略网络调用：刻意不做
-- **OCI PAR / S3 secret 自动铸造**：`oci_iam` 仅校验 API-key（短缓存），挂盘仍靠 S3-compat AK/SK
+- [x] **远程 PDP**：`AI_CLOUDHUB_PDP_URL`（POST allow/reason；fail-open / observe / strict）
+- [x] **OCI Customer Secret 铸造**：`AI_CLOUDHUB_OCI_CREATE_SECRET=1` → `source=oci_secret`（best-effort）
+- [x] **OCI ObjectRead PAR sample**：`AI_CLOUDHUB_OCI_PAR=1` + NAMESPACE + PAR_BUCKET → note / `oci_par`
+- [ ] Memory Kernel / Marketplace / 微服务拆分（仍后置）
+- **仍禁止：** 平台大规模 Runner 池（D-001）
+
+### 剩余诚实边界
+
 - **Qiniu versioned 原生下载**：无 `version_id` 时 `presign-get` → `qiniu_download`；带 version 仍 S3 presign
+- OCI mint/PAR 依赖租户 IAM 权限；失败回退 embedded，不阻断 Issue
 
 ### 本波补强（三件套之后）
 

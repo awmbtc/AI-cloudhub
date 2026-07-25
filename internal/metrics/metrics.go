@@ -27,6 +27,8 @@ var (
 	STSOracle        atomic.Uint64 // oracle_sts (S3-compat)
 	STSQiniuDownload atomic.Uint64 // qiniu_download (native HMAC token)
 	STSOCIIAM        atomic.Uint64 // oci_iam (API-key validate)
+	STSOCIPAR        atomic.Uint64 // oci_par (Pre-Authenticated Request assist)
+	STSOCISecret     atomic.Uint64 // oci_secret (Customer Secret Key mint)
 	Snapshots        atomic.Uint64
 )
 
@@ -57,6 +59,10 @@ func IncSTSSource(source string) {
 		STSQiniuDownload.Add(1)
 	case "oci_iam":
 		STSOCIIAM.Add(1)
+	case "oci_par":
+		STSOCIPAR.Add(1)
+	case "oci_secret":
+		STSOCISecret.Add(1)
 	case "refresh":
 		STSRefresh.Add(1)
 	default:
@@ -104,6 +110,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"oracle_sts\"} %d\n", STSOracle.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"qiniu_download\"} %d\n", STSQiniuDownload.Load())
 	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"oci_iam\"} %d\n", STSOCIIAM.Load())
+	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"oci_par\"} %d\n", STSOCIPAR.Load())
+	_, _ = fmt.Fprintf(w, "aicloudhub_sts_source_total{source=\"oci_secret\"} %d\n", STSOCISecret.Load())
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_created_total BYOC jobs created\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_created_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_created_total %d\n", JobsCreated.Load())

@@ -98,21 +98,27 @@ func main() {
 
 	var policyEng *policy.Engine
 	reload := time.Duration(cfg.PolicyReloadSec) * time.Second
-	if strings.TrimSpace(cfg.PolicyFile) != "" || strings.TrimSpace(cfg.OPAPolicyFile) != "" {
+	if strings.TrimSpace(cfg.PolicyFile) != "" || strings.TrimSpace(cfg.OPAPolicyFile) != "" || strings.TrimSpace(cfg.PDPURL) != "" {
 		var err error
 		policyEng, err = policy.NewEngineWithOptions(policy.EngineOptions{
 			FilePath:    cfg.PolicyFile,
 			ReloadEvery: reload,
 			OPAPath:     cfg.OPAPolicyFile,
+			PDPURL:      cfg.PDPURL,
 		})
 		if err != nil {
 			log.Fatalf("policy: %v", err)
 		}
 		st := policyEng.Status()
-		log.Printf("policy loaded json=%s rules=%d mode=%s opa=%v opa_path=%s reload=%s",
-			cfg.PolicyFile, st.RuleCount, st.Mode, st.OPAEnabled, st.OPAPath, reload)
+		log.Printf("policy loaded json=%s rules=%d mode=%s opa=%v opa_path=%s pdp=%v pdp_url=%s reload=%s",
+			cfg.PolicyFile, st.RuleCount, st.Mode, st.OPAEnabled, st.OPAPath, st.PDPEnabled, st.PDPURL, reload)
 	} else {
-		policyEng = policy.NewEngine()
+		// Still pick up PDP from env if only PDP_URL is set via process env (LoadRemotePDPFromEnv).
+		var err error
+		policyEng, err = policy.NewEngineWithOptions(policy.EngineOptions{})
+		if err != nil {
+			log.Fatalf("policy: %v", err)
+		}
 	}
 	agentSvc := agent.NewServiceWithEngine(st, policyEng)
 

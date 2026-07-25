@@ -13,7 +13,7 @@ const (
 	noteOSS    = "Aliyun OSS: set AI_CLOUDHUB_OSS_NATIVE_STS=1 + RoleArn (acs:ram::…) for RAM STS, or AI_CLOUDHUB_OSS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
 	noteCOS    = "Tencent COS: set AI_CLOUDHUB_COS_NATIVE_STS=1 + RoleArn (qcs::cam::…) for CAM STS, or AI_CLOUDHUB_COS_STS=1 / AI_CLOUDHUB_S3_STS=1 for S3-compat AssumeRole"
 	noteQiniu  = "Qiniu Kodo: set AI_CLOUDHUB_QINIU_STS=1 for S3-compat AssumeRole, and/or AI_CLOUDHUB_QINIU_DOWNLOAD_TOKEN=1 for native private download tokens"
-	noteOracle = "Oracle OCI: set AI_CLOUDHUB_ORACLE_STS=1 for S3-compat AssumeRole, and/or AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 with OCI API-key env (tenancy/user/fingerprint/private_key)"
+	noteOracle = "Oracle OCI: set AI_CLOUDHUB_ORACLE_STS=1 for S3-compat AssumeRole; AI_CLOUDHUB_ORACLE_NATIVE_IAM=1 + API-key env; Stage C: AI_CLOUDHUB_OCI_CREATE_SECRET=1 / AI_CLOUDHUB_OCI_PAR=1 + NAMESPACE/PAR_BUCKET"
 )
 
 // applyOptionalSTS is the multi-vendor best-effort STS entry used by Issue/Refresh.

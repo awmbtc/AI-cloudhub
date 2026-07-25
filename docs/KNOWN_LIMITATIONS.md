@@ -41,8 +41,10 @@
 
   **诚实边界（已落地但仍有限）：**
   - **Qiniu：** `POST …/objects/presign-get` 对 type=qiniu 返回原生 HMAC 私有下载 URL（`method=qiniu_download`）；session 侧可另开 note assist。**不**替代挂盘 S3 session；versioned GET 仍走 S3 presign。
-  - **OCI `oci_iam`：** RSA API-key 校验 user 身份（短缓存默认 5m）；**不**自动铸造 S3 customer secret / PAR。
-  - 见 [STS.md](./STS.md)。
+  - **OCI：** `oci_iam` 校验 API-key；Stage C 可选 `AI_CLOUDHUB_OCI_CREATE_SECRET=1` 铸造 Customer Secret、`AI_CLOUDHUB_OCI_PAR=1` 生成 ObjectRead PAR sample（需 namespace/bucket 与 IAM 权限）。失败不阻断 Issue。
+  - **远程 PDP：** `AI_CLOUDHUB_PDP_URL` 可选；默认 fail-open；**不**替客户托管 PDP。
+  - **D-001：** 禁止平台大规模 Runner 池（算力 BYOC）。
+  - 见 [STS.md](./STS.md) · [POLICY.md](./POLICY.md) · [DECISIONS.md](./DECISIONS.md)。
 
 ## Runtime
 
@@ -66,4 +68,4 @@
 
 - 非完整网盘 UI。
 - 控制面不捆绑 MinIO 服务（非魔改 MinIO）。
-- 2.0 主线 + 可选三件套（Qiniu 下载 token / OCI API-key IAM / OPA）已落地；后续为运维与产品体验，非架构缺口。
+- 2.0 主线已收口；Stage C 切片（远程 PDP + OCI PAR/secret 铸造）已启动。**仍禁止**平台大规模 Runner 池（D-001）。Marketplace / Memory / 微服务拆分未做。

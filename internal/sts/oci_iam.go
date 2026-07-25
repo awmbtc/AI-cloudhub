@@ -286,20 +286,24 @@ func applyOptionalOracleSTS(resolved *provider.Resolved, duration time.Duration,
 			return resolved, fallbackSource, msg
 		}
 		name, _ := user["name"].(string)
-		msg := fmt.Sprintf("OCI IAM API-key validated (user=%s region=%s); mount still uses S3-compat AK/SK when present; PAR minting not automated in this build", name, key.Region)
+		msg := fmt.Sprintf("OCI IAM API-key validated (user=%s region=%s); mount uses S3-compat AK/SK when present", name, key.Region)
+		var base *provider.Resolved
+		var baseSrc string
 		if s3out != nil && (s3source == SourceOracleSTS || s3source == SourceS3STS) {
+			base, baseSrc = s3out, s3source
 			if s3note != "" {
-				s3note += " | "
+				msg = s3note + " | " + msg
 			}
-			return s3out, s3source, s3note + msg
+		} else {
+			cp := *resolved
+			base = &cp
+			baseSrc = SourceOCIIAM
+			if base.AccessKey == "" {
+				msg += "; no S3 access_key on provider — enable AI_CLOUDHUB_OCI_CREATE_SECRET=1 to mint Customer Secret Key (best-effort)"
+			}
 		}
-		// No S3 STS: return embedded S3 keys with oci_iam source marker when AK present.
-		cp := *resolved
-		src := SourceOCIIAM
-		if cp.AccessKey == "" {
-			msg += "; no S3 access_key on provider — rclone mount may need customer secret keys"
-		}
-		return &cp, src, msg
+		// Stage C: optional Customer Secret mint + Object PAR assist.
+		return applyOCIStageCAssists(key, base, duration, baseSrc, msg)
 	}
 
 	if s3out != nil {

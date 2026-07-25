@@ -1,12 +1,13 @@
-# Policy Engine (built-ins + JSON + optional OPA/Rego)
+# Policy Engine (built-ins + JSON + OPA + remote PDP)
 
 AI-cloudhub evaluates **agent** access with:
 
 1. **Built-in checks** (always): token scopes, agent `allowed_drive_ids`, agent path prefixes  
 2. **Optional JSON file** (`AI_CLOUDHUB_POLICY_FILE`): ordered allow/deny rules  
 3. **Optional OPA/Rego** (`AI_CLOUDHUB_OPA_POLICY_FILE`): `data.aicloudhub.authz.allow`  
+4. **Optional remote PDP** (`AI_CLOUDHUB_PDP_URL`) — Stage C HTTP decision point  
 
-Humans skip built-in agent checks; JSON rules with `"principals":["human"]`/`"any"` and OPA still apply.
+Humans skip built-in agent checks; JSON / OPA / PDP still apply where configured.
 
 ## Enable JSON
 
@@ -29,7 +30,23 @@ export AI_CLOUDHUB_OPA_STRICT=0
 Example Rego: [`protocols/aicloudhub.rego.example`](../protocols/aicloudhub.rego.example).  
 Query: **`data.aicloudhub.authz.allow`** (boolean). Input = request fields (`agent_id`, `action`, `drive_id`, `path`, `scopes`, …).
 
-Evaluation order: **built-in → JSON rules → OPA** (OPA can only further deny unless observe).
+Evaluation order: **built-in → JSON rules → OPA → remote PDP** (later stages can only further deny unless observe / fail-open).
+
+## Enable remote PDP (Stage C)
+
+```bash
+# POST JSON body: { "input": { agent_id, action, drive_id, path, scopes, principal, … } }
+# Response 200: { "allow": true|false, "reason": "optional" }
+export AI_CLOUDHUB_PDP_URL=http://127.0.0.1:8181/v1/data/aicloudhub/authz
+# optional bearer for the PDP
+# export AI_CLOUDHUB_PDP_TOKEN=…
+export AI_CLOUDHUB_PDP_TIMEOUT_MS=500   # default 500, max 10000
+export AI_CLOUDHUB_PDP_OBSERVE=0        # 1 = would-deny becomes allow + reason
+export AI_CLOUDHUB_PDP_STRICT=0         # 1 = network/HTTP errors deny (default fail-open)
+./.bin/api
+```
+
+Admin status: `GET /v1/admin/policy` includes `pdp_enabled` / `pdp_url`.
 
 JSON example: [`protocols/policy.example.json`](../protocols/policy.example.json).
 
@@ -114,6 +131,7 @@ Admin-only. Returns load status; `?rules=1` includes the document.
 
 ## Non-goals
 
-- Remote PDP / per-request external policy network calls  
+- Hosting a multi-tenant SaaS PDP for customers (you bring the URL)  
 - Replacing IAM on the object store (BYOS)  
-- Full OPA ecosystem (bundles, decision logs as a service) — local `.rego` file only  
+- Full OPA ecosystem (bundles, decision logs as a service) — local `.rego` file remains optional  
+- Platform multi-tenant **runner pool** (D-001) — unrelated to PDP  

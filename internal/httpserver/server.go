@@ -183,7 +183,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"features": []string{
 			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "opa_rego", "seccomp",
 			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
-			"qiniu_download", "oci_iam", "job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
+			"qiniu_download", "oci_iam", "oci_par", "oci_secret", "remote_pdp", "job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
 		},
 		"version": version.Version,
 	})
