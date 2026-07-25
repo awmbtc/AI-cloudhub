@@ -45,6 +45,10 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_restore_plan` | drive.read\|write | restore guidance: CLI + optional presign + api path |
 | `object_presign_get` | drive.read\|write | short-lived GET URL (optional `version_id`); bytes client↔store |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
+| `list_jobs` | job.run | `GET /v1/jobs` (+ pending / agent filters) |
+| `create_job` | job.run | `POST /v1/jobs` BYOC enqueue (D-001: user runners only) |
+| `claim_next_job` | job.run | `POST /v1/jobs/next/claim` (policy-filtered) |
+| `complete_job` | job.run | `POST /v1/jobs/{id}/complete` |
 
 ## Example
 

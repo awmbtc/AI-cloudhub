@@ -57,6 +57,7 @@
 - Audit job.claim / job.complete / job.cancel; smoke-job covers agent trace + durability
 - Provider routes: scope+policy for read/write/health; provider.write implies read
 - GET /v1/jobs filters agent_id and claimed_by_agent_id
+- MCP tools: list_jobs, create_job, claim_next_job, complete_job (job.run)
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

@@ -147,7 +147,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version":
+	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -293,6 +293,53 @@ func toolRegistry() []toolMeta {
 					"version_id": map[string]interface{}{"type": "string"},
 				},
 				"required": []string{"drive_id", "key", "version_id"},
+			},
+		},
+		{
+			name: "list_jobs", description: "List BYOC jobs. Optional filters: status=pending, agent_id, claimed_by_agent_id. Requires job.run.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"status":               map[string]interface{}{"type": "string", "description": "pending for claimable only"},
+					"agent_id":             map[string]interface{}{"type": "string"},
+					"claimed_by_agent_id":  map[string]interface{}{"type": "string"},
+					"region":               map[string]interface{}{"type": "string", "description": "Only with status=pending"},
+				},
+			},
+		},
+		{
+			name: "create_job", description: "Enqueue BYOC job for user runners (D-001: no platform pool). Requires job.run.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"drive_id":    map[string]interface{}{"type": "string"},
+					"command":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"mode":        map[string]interface{}{"type": "string", "description": "mount | sync_workspace | direct"},
+					"binding_id":  map[string]interface{}{"type": "string"},
+					"region_hint": map[string]interface{}{"type": "string"},
+					"note":        map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"drive_id", "command"},
+			},
+		},
+		{
+			name: "claim_next_job", description: "Claim oldest pending BYOC job (policy-filtered). Requires job.run. Sets claimed_by_agent_id.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "complete_job", description: "Mark claimed job succeeded or failed. Requires job.run.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"job_id": map[string]interface{}{"type": "string"},
+					"ok":     map[string]interface{}{"type": "boolean", "description": "true=succeeded (default true)"},
+					"note":   map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"job_id"},
 			},
 		},
 	}
@@ -448,6 +495,52 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolObjectPost(api, token, args.DriveID, "restore-version", map[string]interface{}{
 			"key": args.Key, "version_id": args.VersionID,
 		})
+	case "list_jobs":
+		var args struct {
+			Status             string `json:"status"`
+			AgentID            string `json:"agent_id"`
+			ClaimedByAgentID   string `json:"claimed_by_agent_id"`
+			Region             string `json:"region"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region)
+	case "create_job":
+		var args struct {
+			DriveID    string   `json:"drive_id"`
+			Command    []string `json:"command"`
+			Mode       string   `json:"mode"`
+			BindingID  string   `json:"binding_id"`
+			RegionHint string   `json:"region_hint"`
+			Note       string   `json:"note"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
+			return nil, fmt.Errorf("drive_id and command required")
+		}
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note)
+	case "claim_next_job":
+		return toolClaimNextJob(api, token)
+	case "complete_job":
+		var args struct {
+			JobID string `json:"job_id"`
+			OK    *bool  `json:"ok"`
+			Note  string `json:"note"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.JobID) == "" {
+			return nil, fmt.Errorf("job_id required")
+		}
+		ok := true
+		if args.OK != nil {
+			ok = *args.OK
+		}
+		return toolCompleteJob(api, token, args.JobID, ok, args.Note)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -708,6 +801,92 @@ func toolObjectPost(api, token, driveID, action string, payload map[string]inter
 	return toolResultJSON(parsed)
 }
 
+func toolListJobs(api, token, status, agentID, claimedBy, region string) (interface{}, error) {
+	url := api + "/v1/jobs"
+	q := []string{}
+	if status != "" {
+		q = append(q, "status="+status)
+	}
+	if agentID != "" {
+		q = append(q, "agent_id="+agentID)
+	}
+	if claimedBy != "" {
+		q = append(q, "claimed_by_agent_id="+claimedBy)
+	}
+	if region != "" {
+		q = append(q, "region="+region)
+	}
+	if len(q) > 0 {
+		url += "?" + strings.Join(q, "&")
+	}
+	body, code, err := httpDo(http.MethodGet, url, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("list jobs HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note string) (interface{}, error) {
+	payload := map[string]interface{}{
+		"drive_id": driveID,
+		"command":  command,
+	}
+	if mode != "" {
+		payload["mode"] = mode
+	}
+	if bindingID != "" {
+		payload["binding_id"] = bindingID
+	}
+	if regionHint != "" {
+		payload["region_hint"] = regionHint
+	}
+	if note != "" {
+		payload["note"] = note
+	}
+	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("create job HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolClaimNextJob(api, token string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/next/claim", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("claim next HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolCompleteJob(api, token, jobID string, ok bool, note string) (interface{}, error) {
+	payload := map[string]interface{}{"ok": ok, "note": note}
+	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/"+jobID+"/complete", token, payload)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("complete job HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
 func sessionSummary(parsed map[string]interface{}) map[string]interface{} {
 	sum := map[string]interface{}{}
 	if m, ok := parsed["manifest"].(map[string]interface{}); ok {
@@ -739,12 +918,16 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			{"name": "AI_CLOUDHUB_MODE", "meaning": "mount | sync_workspace | direct"},
 		},
 		"security": map[string]interface{}{
-			"mcp_scopes":  "Agent tokens need drive.read / drive.write for API tools",
+			"mcp_scopes":  "Agent tokens need drive.read/write, job.run for jobs tools",
 			"path_jail":   "resolve_path and mount_point checked against workspace",
 			"runner_env":  "runner filters secrets; set AI_CLOUDHUB_PASS_TOKEN=1 to pass API token into agent",
 			"mcp_version": serverVersion,
 		},
-		"tools": []string{"whoami", "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot"},
+		"tools": []string{
+			"whoami", "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path",
+			"list_snapshots", "create_snapshot", "list_objects",
+			"list_jobs", "create_job", "claim_next_job", "complete_job",
+		},
 	}
 	out, err := toolResultJSON(doc)
 	if err != nil {
