@@ -257,6 +257,12 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 	}
 
+	// Optional Git connector materialization (BYOC): AI_CLOUDHUB_CONNECTOR_ID + type=git.
+	// Control plane only stores non-secret config; clone runs here with user credentials/env.
+	if err := maybeGitConnector(api, token, mountPoint); err != nil {
+		log.Printf("git connector: %v (continuing)", err)
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -372,4 +378,78 @@ func env(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// maybeGitConnector clones a git connector into the workspace when AI_CLOUDHUB_CONNECTOR_ID is set.
+// Config comes from GET /v1/connectors/{id}; secrets (tokens) stay in runner env (e.g. GIT_ASKPASS).
+func maybeGitConnector(api, token, mountPoint string) error {
+	cid := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CONNECTOR_ID"))
+	if cid == "" {
+		return nil
+	}
+	req, err := http.NewRequest(http.MethodGet, api+"/v1/connectors/"+cid, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("GET connector HTTP %d: %s", res.StatusCode, body)
+	}
+	var c struct {
+		Type   string          `json:"type"`
+		Name   string          `json:"name"`
+		Config json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(body, &c); err != nil {
+		return err
+	}
+	if !strings.EqualFold(c.Type, "git") {
+		log.Printf("connector %s type=%s (skip git clone)", cid, c.Type)
+		return nil
+	}
+	var cfg map[string]interface{}
+	_ = json.Unmarshal(c.Config, &cfg)
+	remote, _ := cfg["remote_url"].(string)
+	if remote == "" {
+		remote, _ = cfg["url"].(string)
+	}
+	if remote == "" {
+		return fmt.Errorf("git connector missing remote_url")
+	}
+	branch, _ := cfg["branch"].(string)
+	prefix, _ := cfg["path_prefix"].(string)
+	dest := mountPoint
+	if prefix != "" {
+		dest = filepath.Join(mountPoint, prefix)
+	} else {
+		dest = filepath.Join(mountPoint, "repo")
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
+		log.Printf("git connector: already cloned at %s", dest)
+		return nil
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git not in PATH")
+	}
+	_ = os.MkdirAll(filepath.Dir(dest), 0o755)
+	args := []string{"clone", "--depth", "1"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, remote, dest)
+	log.Printf("git connector: clone %s -> %s", remote, dest)
+	cmd := exec.Command("git", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
+	return nil
 }

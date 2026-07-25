@@ -30,6 +30,7 @@
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
 | [docs/METRICS.md](docs/METRICS.md) | Prometheus `/metrics` 说明 · scrape · Grafana 查询 |
 | [docs/MEMORY.md](docs/MEMORY.md) · [MARKETPLACE.md](docs/MARKETPLACE.md) · [MODULES.md](docs/MODULES.md) · [STAGE-C.md](docs/STAGE-C.md) | Stage C：Memory / 市场 / 模块 / Lineage·Graph·Connectors |
+| [docs/PAYMENTS.md](docs/PAYMENTS.md) · [CONNECTORS.md](docs/CONNECTORS.md) | Stripe webhook 骨架 · Git/DB/SaaS 连接器 + runner |
 | [deploy/grafana/](deploy/grafana/) | 示例 dashboard + `prometheus.yml.example` |
 | [deploy/nginx.conf.example](deploy/nginx.conf.example) · [Caddyfile.example](deploy/Caddyfile.example) | 边缘 TLS 反代示例 |
 | Release | `git tag vX.Y.Z && git push --tags` → 多架构二进制；本地 `make release-binaries` |

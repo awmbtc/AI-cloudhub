@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Stage C smoke: memory/vector, marketplace checkout+stripe webhook, lineage, graph, connectors.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+export CGO_ENABLED=0
+export NO_PROXY="127.0.0.1,localhost,::1"
+export no_proxy="$NO_PROXY"
+CURL=(curl -sS --noproxy '*')
+
+if [[ -z "${API_PORT:-}" ]]; then
+  API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+fi
+API="http://127.0.0.1:${API_PORT}"
+mkdir -p .bin
+go build -o .bin/api ./cmd/api
+
+DB=$(mktemp /tmp/aihub-sc.db)
+export AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET=whsec_smoke
+HTTP_ADDR=":${API_PORT}" AI_CLOUDHUB_DB="$DB" JWT_SECRET=stagec-smoke-jwt-xx \
+  AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET=whsec_smoke \
+  ./.bin/api >/tmp/aihub-stage-c-api.log 2>&1 &
+APID=$!
+cleanup() { kill "$APID" 2>/dev/null || true; rm -f "$DB" "${DB}-wal" "${DB}-shm"; }
+trap cleanup EXIT
+
+for _ in $(seq 1 50); do "${CURL[@]}" "$API/healthz" >/dev/null 2>&1 && break; sleep 0.1; done
+
+"${CURL[@]}" -X POST "$API/v1/auth/register" -H 'Content-Type: application/json' \
+  -d '{"username":"stagec","password":"stagecpass"}' >/dev/null || true
+TOK=$("${CURL[@]}" -X POST "$API/v1/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"stagec","password":"stagecpass"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+AUTH=( -H "Authorization: Bearer $TOK" )
+
+echo "== modules =="
+"${CURL[@]}" "$API/v1/modules" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["deployment"]=="monolith"'
+
+echo "== memory + vector search =="
+"${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"layer":"semantic","content":"likes r2","embedding":[1,0,0]}' >/dev/null
+"${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"layer":"semantic","content":"likes cos","embedding":[0,1,0]}' >/dev/null
+"${CURL[@]}" -X POST "$API/v1/memory/search" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"query":[0.9,0.1,0],"k":2}' | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert len(d["hits"])>=1
+assert d["hits"][0]["score"] > 0.5
+print("vector search ok score", d["hits"][0]["score"])
+'
+
+echo "== lineage + graph =="
+"${CURL[@]}" -X POST "$API/v1/lineage" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"action":"test.event","entity":"drive:demo","detail":"smoke"}' >/dev/null
+"${CURL[@]}" "$API/v1/lineage?entity=drive:demo" "${AUTH[@]}" | python3 -c '
+import sys,json; d=json.load(sys.stdin); assert len(d["items"])>=1; print("lineage ok")
+'
+"${CURL[@]}" -X POST "$API/v1/graph" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"subject":"agent:a1","relation":"can_access","object":"drive:demo"}' >/dev/null
+"${CURL[@]}" "$API/v1/graph?subject=agent:a1" "${AUTH[@]}" | python3 -c '
+import sys,json; d=json.load(sys.stdin); assert len(d["items"])>=1; print("graph ok")
+'
+
+echo "== connectors =="
+"${CURL[@]}" "$API/v1/connectors/catalog" | python3 -c '
+import sys,json; d=json.load(sys.stdin); assert any(i["type"]=="git" for i in d["items"]); print("catalog ok")
+'
+CID=$("${CURL[@]}" -X POST "$API/v1/connectors" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"type":"git","name":"app","config":{"remote_url":"https://github.com/example/app.git","branch":"main","password":"STRIPME"}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" "$API/v1/connectors/$CID" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["type"]=="git"
+cfg=d.get("config") or {}
+# password must be stripped
+assert "password" not in cfg and "STRIPME" not in str(cfg)
+print("connector ok", d["id"])
+'
+
+echo "== marketplace checkout + stripe webhook =="
+ITEM=$("${CURL[@]}" -X POST "$API/v1/marketplace" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"name":"paid-skill","kind":"skill","price_cents":500,"currency":"usd","public":true,"payload":{"x":1}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+CHK=$("${CURL[@]}" -X POST "$API/v1/marketplace/$ITEM/checkout" "${AUTH[@]}" -H 'Content-Type: application/json' -d '{}')
+echo "$CHK" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="pending"
+assert d["stripe_metadata"]["purchase_id"]
+print("checkout", d["id"])
+open("/tmp/aihub-purchase-id","w").write(d["id"])
+open("/tmp/aihub-buyer-id","w").write(d["user_id"])
+'
+PURCHASE_ID=$(cat /tmp/aihub-purchase-id)
+BUYER_ID=$(cat /tmp/aihub-buyer-id)
+PAYLOAD=$(python3 - <<PY
+import json
+print(json.dumps({
+  "type":"checkout.session.completed",
+  "data":{"object":{"id":"cs_smoke","metadata":{"purchase_id":"$PURCHASE_ID","user_id":"$BUYER_ID","item_id":"$ITEM"}}}
+}))
+PY
+)
+export PAYLOAD
+SIG=$(PAYLOAD="$PAYLOAD" python3 - <<'PY'
+import hmac, hashlib, time, os
+secret=b"whsec_smoke"
+payload=os.environ["PAYLOAD"].encode()
+ts=int(time.time())
+mac=hmac.new(secret, f"{ts}.".encode()+payload, hashlib.sha256).hexdigest()
+print(f"t={ts},v1={mac}")
+PY
+)
+"${CURL[@]}" -X POST "$API/v1/webhooks/stripe" \
+  -H "Content-Type: application/json" \
+  -H "Stripe-Signature: $SIG" \
+  -d "$PAYLOAD" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("status")=="paid", d
+print("stripe webhook ok")
+'
+
+echo "OK smoke-stage-c"

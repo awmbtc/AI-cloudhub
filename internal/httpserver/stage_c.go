@@ -72,6 +72,16 @@ func (s *Server) routeMemoryRoot(w http.ResponseWriter, r *http.Request, userID,
 			return
 		}
 		s.auth.Audit(userID, "memory.put", e.ID, e.Layer)
+		if s.lineage != nil {
+			actor := "user:" + userID
+			if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+				actor = "agent:" + pr.AgentID
+			}
+			_, _ = s.lineage.Record(userID, actor, "memory.put", "memory:"+e.ID, "", e.Layer)
+		}
+		if s.idgraph != nil && e.AgentID != "" {
+			_, _ = s.idgraph.Link(userID, "agent:"+e.AgentID, "wrote_memory", "memory:"+e.ID, nil)
+		}
 		writeJSON(w, http.StatusCreated, e)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")

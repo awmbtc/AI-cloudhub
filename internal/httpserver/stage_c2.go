@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -204,7 +205,7 @@ func (s *Server) routeMarketplaceCheckout(w http.ResponseWriter, r *http.Request
 	if !s.requireHuman(w, r) {
 		return
 	}
-	p, err := s.market.Checkout(userID, itemID)
+	p, err := s.market.CheckoutDetailed(userID, itemID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -213,6 +214,32 @@ func (s *Server) routeMarketplaceCheckout(w http.ResponseWriter, r *http.Request
 		_, _ = s.lineage.Record(userID, "user:"+userID, "marketplace.checkout", "item:"+itemID, "purchase:"+p.ID, p.Status)
 	}
 	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.market == nil {
+		writeErr(w, http.StatusNotFound, "marketplace not configured")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "read body")
+		return
+	}
+	sig := r.Header.Get("Stripe-Signature")
+	p, err := s.market.HandleStripeWebhook(body, sig)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.lineage != nil {
+		_, _ = s.lineage.Record(p.UserID, "stripe", "marketplace.paid", "purchase:"+p.ID, "item:"+p.ItemID, p.ProviderRef)
+	}
+	writeJSON(w, http.StatusOK, p)
 }
 
 func (s *Server) routePurchases(w http.ResponseWriter, r *http.Request, userID, _, _ string) {

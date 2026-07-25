@@ -131,6 +131,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
 	mux.HandleFunc("/v1/admin/policy", s.withAdmin(s.handleAdminPolicy))
 	mux.HandleFunc("/v1/modules", s.method(http.MethodGet, s.handleModules))
+	// Stripe (or stub) payment webhook — verified via AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET
+	mux.HandleFunc("/v1/webhooks/stripe", s.handleStripeWebhook)
 
 	// Agent Identity (ROADMAP-2.0 stage A)
 	if s.agents != nil {

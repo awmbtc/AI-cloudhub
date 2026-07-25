@@ -25,6 +25,12 @@
 ### Docs
 - STAGE-C.md honesty table; ROADMAP C3e–h; D-001 reaffirmed
 
+### Stage C follow-up
+- Stripe webhook signature verify (`/v1/webhooks/stripe`, `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET`)
+- Checkout returns `stripe_metadata` for Checkout Session
+- Runner: `AI_CLOUDHUB_CONNECTOR_ID` git shallow clone (BYOC)
+- `make smoke-stage-c`; CONNECTORS.md + PAYMENTS.md
+
 ## v0.2.1
 
 ### Fixes

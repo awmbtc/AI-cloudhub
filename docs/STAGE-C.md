@@ -47,9 +47,15 @@ curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
 # then POST /v1/marketplace/{id}/checkout → pending; POST /v1/purchases/{id}/pay to mark paid
 ```
 
+## Payments & Git runner (follow-up)
+
+- Stripe webhook: `POST /v1/webhooks/stripe` + `AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET` — see [PAYMENTS.md](./PAYMENTS.md)  
+- Git connector clone on **user runner**: `AI_CLOUDHUB_CONNECTOR_ID` — see [CONNECTORS.md](./CONNECTORS.md)  
+- Regression: `make smoke-stage-c`
+
 ## Still out of scope
 
 - Platform multi-tenant **runner pool** (D-001)  
 - Splitting every package into a separate default microservice  
-- Real card payments without your Stripe account / webhooks verification  
-- Automatic Git clone or SaaS data plane through control plane (bytes stay BYOC/BYOS)  
+- PCI card data on the control plane  
+- Control-plane Git clone with stored deploy keys (use runner env instead)  

@@ -5,6 +5,7 @@ package marketplace
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -181,7 +182,8 @@ func (s *Service) Checkout(userID, itemID string) (*store.Purchase, error) {
 		p.ProviderRef = "free"
 	} else {
 		p.Status = "pending"
-		p.ProviderRef = "stub_" + p.ID
+		p.Provider = "stripe"
+		p.ProviderRef = "pending_" + p.ID
 		if p.Currency == "" {
 			p.Currency = "usd"
 		}
@@ -190,6 +192,56 @@ func (s *Service) Checkout(userID, itemID string) (*store.Purchase, error) {
 		return nil, err
 	}
 	return p, nil
+}
+
+// CheckoutResult extends purchase with client_hint for Stripe Checkout metadata.
+type CheckoutResult struct {
+	*store.Purchase
+	// StripeMetadata should be attached to Checkout Session metadata on the client.
+	StripeMetadata map[string]string `json:"stripe_metadata,omitempty"`
+	// Note explains next steps when using real Stripe.
+	Note string `json:"note,omitempty"`
+}
+
+// CheckoutDetailed returns purchase plus Stripe metadata hints.
+func (s *Service) CheckoutDetailed(userID, itemID string) (*CheckoutResult, error) {
+	p, err := s.Checkout(userID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	out := &CheckoutResult{Purchase: p}
+	if p.Status == "pending" {
+		out.StripeMetadata = map[string]string{
+			"purchase_id": p.ID,
+			"user_id":     userID,
+			"item_id":     itemID,
+		}
+		out.Note = "Create Stripe Checkout Session with these metadata fields; webhook POST /v1/webhooks/stripe with AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET"
+	}
+	return out, nil
+}
+
+// HandleStripeWebhook verifies optional Stripe signature and marks purchase paid.
+func (s *Service) HandleStripeWebhook(payload []byte, sigHeader string) (*store.Purchase, error) {
+	secret := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET"))
+	insecure := envTruthy("AI_CLOUDHUB_STRIPE_ALLOW_INSECURE")
+	if secret != "" {
+		if err := VerifyStripeSignature(payload, sigHeader, secret, time.Now()); err != nil {
+			return nil, fmt.Errorf("stripe signature: %w", err)
+		}
+	} else if !insecure {
+		return nil, fmt.Errorf("set AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET (or AI_CLOUDHUB_STRIPE_ALLOW_INSECURE=1 for local dev)")
+	}
+	pid, uid, sid, err := ParseStripeCheckoutCompleted(payload)
+	if err != nil {
+		return nil, err
+	}
+	return s.WebhookPaid(uid, pid, sid)
+}
+
+func envTruthy(k string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // WebhookPaid marks a purchase paid (called by payment provider webhook stub).
