@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.2.6
+
+STS offline 联调 smoke, Windows hubd hardening, Stage C observability counters.
 
 ### STS 联调
 - `make smoke-sts` / `scripts/smoke-sts.sh` — offline path selection + unit gate + optional live SKIP
 - Docs: STS.md, CLOUD-INTEGRATION.md offline table
+- Included in `make smoke-all` / CI
 
 ### hubd Windows
 - WinFsp missing → refuse `mode=mount` with install/sync_workspace hint
@@ -16,6 +19,7 @@
 ### Observability
 - Counters: marketplace install/checkout/paid, connectors created, memory put/search, jobs with connector
 - Grafana Stage C row; METRICS.md + STS labels `oci_par`/`oci_secret`
+- `smoke-stage-c` asserts Stage C metric series
 
 ## v0.2.5
 
