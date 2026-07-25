@@ -225,6 +225,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] MCP：`list_jobs` / `create_job` / `claim_next_job` / `complete_job`（scope job.run）
 - [x] docs/MCP.md 同步
 
+## 本波（MCP cancel + providers + smoke）
+
+- [x] MCP `cancel_job` / `list_providers`
+- [x] `scripts/smoke-mcp-jobs.sh` + `make smoke-mcp`
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）

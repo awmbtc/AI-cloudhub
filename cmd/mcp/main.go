@@ -147,7 +147,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job":
+	case "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job", "list_providers":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
 			return okResp(id, toolResult(true, err.Error()))
@@ -341,6 +341,22 @@ func toolRegistry() []toolMeta {
 				},
 				"required": []string{"job_id"},
 			},
+		},
+		{
+			name: "cancel_job", description: "Cancel a non-terminal BYOC job. Requires job.run.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"job_id": map[string]interface{}{"type": "string"},
+				},
+				"required": []string{"job_id"},
+			},
+		},
+		{
+			name: "list_providers", description: "List providers (public fields only). Requires provider.read (or provider.write).",
+			scopes: []string{auth.ScopeProviderRead, auth.ScopeProviderWrite},
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 	}
 }
@@ -541,6 +557,19 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			ok = *args.OK
 		}
 		return toolCompleteJob(api, token, args.JobID, ok, args.Note)
+	case "cancel_job":
+		var args struct {
+			JobID string `json:"job_id"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(args.JobID) == "" {
+			return nil, fmt.Errorf("job_id required")
+		}
+		return toolCancelJob(api, token, args.JobID)
+	case "list_providers":
+		return toolListProviders(api, token)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -887,6 +916,32 @@ func toolCompleteJob(api, token, jobID string, ok bool, note string) (interface{
 	return toolResultJSON(parsed)
 }
 
+func toolCancelJob(api, token, jobID string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/"+jobID+"/cancel", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("cancel job HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
+func toolListProviders(api, token string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodGet, api+"/v1/providers", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("list providers HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
 func sessionSummary(parsed map[string]interface{}) map[string]interface{} {
 	sum := map[string]interface{}{}
 	if m, ok := parsed["manifest"].(map[string]interface{}); ok {
@@ -924,9 +979,9 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			"mcp_version": serverVersion,
 		},
 		"tools": []string{
-			"whoami", "list_drives", "ensure_mounted_hint", "workspace_env", "resolve_path",
+			"whoami", "list_drives", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
-			"list_jobs", "create_job", "claim_next_job", "complete_job",
+			"list_jobs", "create_job", "claim_next_job", "complete_job", "cancel_job",
 		},
 	}
 	out, err := toolResultJSON(doc)

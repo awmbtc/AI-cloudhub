@@ -49,6 +49,10 @@ go build -o .bin/mcp ./cmd/mcp
 | `create_job` | job.run | `POST /v1/jobs` BYOC enqueue (D-001: user runners only) |
 | `claim_next_job` | job.run | `POST /v1/jobs/next/claim` (policy-filtered) |
 | `complete_job` | job.run | `POST /v1/jobs/{id}/complete` |
+| `cancel_job` | job.run | `POST /v1/jobs/{id}/cancel` |
+| `list_providers` | provider.read\|write | `GET /v1/providers` (public fields) |
+
+Live smoke: `make smoke-mcp` (`scripts/smoke-mcp-jobs.sh`).
 
 ## Example
 
