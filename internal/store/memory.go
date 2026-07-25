@@ -20,6 +20,8 @@ type Memory struct {
 	refresh    map[string]*RefreshToken // id -> token
 	agents     map[string]*Agent        // id -> agent
 	snapshots  map[string]*Snapshot     // id -> snapshot
+	memories   map[string]*MemoryEntry  // id -> memory
+	market     map[string]*MarketplaceItem
 }
 
 // NewMemory returns an empty in-memory store.
@@ -36,6 +38,8 @@ func NewMemory() *Memory {
 		refresh:    make(map[string]*RefreshToken),
 		agents:     make(map[string]*Agent),
 		snapshots:  make(map[string]*Snapshot),
+		memories:   make(map[string]*MemoryEntry),
+		market:     make(map[string]*MarketplaceItem),
 	}
 }
 
@@ -677,5 +681,150 @@ func (m *Memory) DeleteSnapshot(userID, driveID, id string) error {
 		return fmt.Errorf("snapshot not found")
 	}
 	delete(m.snapshots, id)
+	return nil
+}
+
+func (m *Memory) CreateMemory(e *MemoryEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e == nil || e.ID == "" {
+		return fmt.Errorf("memory id required")
+	}
+	cp := *e
+	if e.MetaJSON != nil {
+		cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+	}
+	m.memories[e.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetMemory(userID, id string) (*MemoryEntry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	e, ok := m.memories[id]
+	if !ok || e.UserID != userID {
+		return nil, fmt.Errorf("memory not found")
+	}
+	cp := *e
+	if e.MetaJSON != nil {
+		cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	now := time.Now()
+	var out []*MemoryEntry
+	for _, e := range m.memories {
+		if f.UserID != "" && e.UserID != f.UserID {
+			continue
+		}
+		if f.AgentID != "" && e.AgentID != f.AgentID {
+			continue
+		}
+		if f.DriveID != "" && e.DriveID != f.DriveID {
+			continue
+		}
+		if f.Layer != "" && e.Layer != f.Layer {
+			continue
+		}
+		if f.Key != "" && e.Key != f.Key {
+			continue
+		}
+		if !e.ExpiresAt.IsZero() && e.ExpiresAt.Before(now) {
+			continue
+		}
+		cp := *e
+		if e.MetaJSON != nil {
+			cp.MetaJSON = append([]byte(nil), e.MetaJSON...)
+		}
+		out = append(out, &cp)
+	}
+	// newest first
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].CreatedAt.After(out[i].CreatedAt) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	if len(out) > f.Limit {
+		out = out[:f.Limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) DeleteMemory(userID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.memories[id]
+	if !ok || e.UserID != userID {
+		return fmt.Errorf("memory not found")
+	}
+	delete(m.memories, id)
+	return nil
+}
+
+func (m *Memory) CreateMarketplaceItem(it *MarketplaceItem) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if it == nil || it.ID == "" {
+		return fmt.Errorf("marketplace id required")
+	}
+	cp := *it
+	if it.PayloadJSON != nil {
+		cp.PayloadJSON = append([]byte(nil), it.PayloadJSON...)
+	}
+	m.market[it.ID] = &cp
+	return nil
+}
+
+func (m *Memory) GetMarketplaceItem(id string) (*MarketplaceItem, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	it, ok := m.market[id]
+	if !ok {
+		return nil, fmt.Errorf("marketplace item not found")
+	}
+	cp := *it
+	if it.PayloadJSON != nil {
+		cp.PayloadJSON = append([]byte(nil), it.PayloadJSON...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*MarketplaceItem
+	for _, it := range m.market {
+		if publicOnly && !it.Public {
+			continue
+		}
+		if publisherUserID != "" && it.PublisherUserID != publisherUserID {
+			continue
+		}
+		cp := *it
+		if it.PayloadJSON != nil {
+			cp.PayloadJSON = append([]byte(nil), it.PayloadJSON...)
+		}
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (m *Memory) DeleteMarketplaceItem(publisherUserID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	it, ok := m.market[id]
+	if !ok || it.PublisherUserID != publisherUserID {
+		return fmt.Errorf("marketplace item not found")
+	}
+	delete(m.market, id)
 	return nil
 }

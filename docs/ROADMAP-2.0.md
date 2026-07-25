@@ -79,16 +79,18 @@ User
 |---|--------|------|------|
 | C1 | 远程 PDP | **done (v0.3 slice)** | `AI_CLOUDHUB_PDP_URL` HTTP POST；fail-open / observe / strict |
 | C2 | OCI PAR + Customer Secret 铸造 | **done (best-effort)** | `AI_CLOUDHUB_OCI_PAR` / `OCI_CREATE_SECRET`；非平台持有密钥 |
-| C3 | 完整 Memory / Marketplace / 微服务拆分 | **not started** | 仍需客户与规模 |
+| C3a | Memory Kernel v0 | **done** | `internal/memkernel` + `/v1/memory*`（working/episodic/semantic） |
+| C3b | Agent Marketplace v0 | **done** | `internal/marketplace` + `/v1/marketplace*` + install template |
+| C3c | 模块边界 / 逻辑微服务 | **done** | `GET /v1/modules` + [MODULES.md](./MODULES.md)；**默认仍 monorepo 单进程** |
+| C3d | 真·多进程微服务拆分 | **not started** | 需独立扩缩才拆；非默认 |
 | — | 自建大规模 Runner 池 | **禁止 (D-001)** | 永不作为默认；算力 BYOC |
 
 蓝图剩余：
 
-- Kernel 化命名与**模块边界**清晰后再谈服务拆分  
 - Data Lineage / EDA  
-- Workspace / Agent Marketplace  
 - Git / DB / SaaS Connector（对象存储做深之后）  
-- 完整 Memory Kernel、Identity Graph 产品化  
+- 完整 Memory（向量 / Identity Graph）产品化  
+- 支付级 Marketplace  
 
 ---
 

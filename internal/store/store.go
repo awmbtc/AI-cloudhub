@@ -149,6 +149,45 @@ type Snapshot struct {
 	CreatedAt    time.Time
 }
 
+// MemoryEntry is Stage C Memory Kernel v0 (metadata + small text; not vector DB).
+// Layer: working | episodic | semantic
+type MemoryEntry struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	DriveID   string    `json:"drive_id,omitempty"`
+	Layer     string    `json:"layer"`
+	Key       string    `json:"key,omitempty"`
+	Content   string    `json:"content"`
+	MetaJSON  []byte    `json:"meta,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// MemoryFilter selects memory rows.
+type MemoryFilter struct {
+	UserID  string
+	AgentID string
+	DriveID string
+	Layer   string
+	Key     string
+	Limit   int
+}
+
+// MarketplaceItem is a publishable template (agent_template | skill | manifest).
+// PublisherUserID empty = system catalog item.
+type MarketplaceItem struct {
+	ID              string    `json:"id"`
+	PublisherUserID string    `json:"publisher_user_id,omitempty"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description,omitempty"`
+	Kind            string    `json:"kind"`
+	Version         string    `json:"version,omitempty"`
+	PayloadJSON     []byte    `json:"payload,omitempty"`
+	Public          bool      `json:"public"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // Store is the persistence interface for control-plane CRUD.
 type Store interface {
 	// Users
@@ -237,6 +276,18 @@ type Store interface {
 	GetSnapshot(userID, driveID, id string) (*Snapshot, error)
 	ListSnapshots(userID, driveID string, limit int) ([]*Snapshot, error)
 	DeleteSnapshot(userID, driveID, id string) error
+
+	// Memory Kernel v0 (Stage C)
+	CreateMemory(e *MemoryEntry) error
+	GetMemory(userID, id string) (*MemoryEntry, error)
+	ListMemory(f MemoryFilter) ([]*MemoryEntry, error)
+	DeleteMemory(userID, id string) error
+
+	// Marketplace v0 (Stage C) — user-published items (system catalog is code-defined)
+	CreateMarketplaceItem(m *MarketplaceItem) error
+	GetMarketplaceItem(id string) (*MarketplaceItem, error)
+	ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error)
+	DeleteMarketplaceItem(publisherUserID, id string) error
 
 	Close() error
 }

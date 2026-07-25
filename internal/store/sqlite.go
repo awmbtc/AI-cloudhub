@@ -175,6 +175,33 @@ CREATE TABLE IF NOT EXISTS snapshots (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, created_at);
+
+CREATE TABLE IF NOT EXISTS memory_entries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  agent_id TEXT,
+  drive_id TEXT,
+  layer TEXT NOT NULL,
+  key TEXT,
+  content TEXT NOT NULL,
+  meta_json TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS marketplace_items (
+  id TEXT PRIMARY KEY,
+  publisher_user_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  kind TEXT NOT NULL,
+  version TEXT,
+  payload_json TEXT NOT NULL,
+  public INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -1072,6 +1099,171 @@ func (s *SQLite) DeleteSnapshot(userID, driveID, id string) error {
 		return fmt.Errorf("snapshot not found")
 	}
 	return nil
+}
+
+func (s *SQLite) CreateMemory(e *MemoryEntry) error {
+	exp := ""
+	if !e.ExpiresAt.IsZero() {
+		exp = e.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON),
+		e.CreatedAt.UTC().Format(time.RFC3339Nano), exp,
+	)
+	return err
+}
+
+func (s *SQLite) GetMemory(userID, id string) (*MemoryEntry, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		 FROM memory_entries WHERE id=? AND user_id=?`, id, userID)
+	return scanMemory(row)
+}
+
+func (s *SQLite) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		 FROM memory_entries WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, f.UserID, f.Limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*MemoryEntry
+	now := time.Now()
+	for rows.Next() {
+		e, err := scanMemory(rows)
+		if err != nil {
+			return nil, err
+		}
+		if f.AgentID != "" && e.AgentID != f.AgentID {
+			continue
+		}
+		if f.DriveID != "" && e.DriveID != f.DriveID {
+			continue
+		}
+		if f.Layer != "" && e.Layer != f.Layer {
+			continue
+		}
+		if f.Key != "" && e.Key != f.Key {
+			continue
+		}
+		if !e.ExpiresAt.IsZero() && e.ExpiresAt.Before(now) {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= f.Limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteMemory(userID, id string) error {
+	res, err := s.db.Exec(`DELETE FROM memory_entries WHERE id=? AND user_id=?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("memory not found")
+	}
+	return nil
+}
+
+func scanMemory(row interface{ Scan(dest ...any) error }) (*MemoryEntry, error) {
+	var e MemoryEntry
+	var meta, created, exp string
+	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &created, &exp); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("memory not found")
+		}
+		return nil, err
+	}
+	e.MetaJSON = []byte(meta)
+	e.CreatedAt = parseTime(created)
+	if exp != "" {
+		e.ExpiresAt = parseTime(exp)
+	}
+	return &e, nil
+}
+
+func (s *SQLite) CreateMarketplaceItem(m *MarketplaceItem) error {
+	pub := 0
+	if m.Public {
+		pub = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), pub,
+		m.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLite) GetMarketplaceItem(id string) (*MarketplaceItem, error) {
+	row := s.db.QueryRow(
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		 FROM marketplace_items WHERE id=?`, id)
+	return scanMarket(row)
+}
+
+func (s *SQLite) ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error) {
+	rows, err := s.db.Query(
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		 FROM marketplace_items ORDER BY created_at DESC LIMIT 500`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*MarketplaceItem
+	for rows.Next() {
+		it, err := scanMarket(rows)
+		if err != nil {
+			return nil, err
+		}
+		if publicOnly && !it.Public {
+			continue
+		}
+		if publisherUserID != "" && it.PublisherUserID != publisherUserID {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DeleteMarketplaceItem(publisherUserID, id string) error {
+	res, err := s.db.Exec(`DELETE FROM marketplace_items WHERE id=? AND publisher_user_id=?`, id, publisherUserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("marketplace item not found")
+	}
+	return nil
+}
+
+func scanMarket(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, error) {
+	var m MarketplaceItem
+	var payload, created string
+	var pub int
+	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &pub, &created); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("marketplace item not found")
+		}
+		return nil, err
+	}
+	m.PayloadJSON = []byte(payload)
+	m.Public = pub != 0
+	m.CreatedAt = parseTime(created)
+	return &m, nil
 }
 
 func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {

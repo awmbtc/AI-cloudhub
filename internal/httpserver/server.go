@@ -16,6 +16,8 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/device"
 	"github.com/awmbtc/AI-cloudhub/internal/drive"
 	"github.com/awmbtc/AI-cloudhub/internal/job"
+	"github.com/awmbtc/AI-cloudhub/internal/marketplace"
+	"github.com/awmbtc/AI-cloudhub/internal/memkernel"
 	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 	"github.com/awmbtc/AI-cloudhub/internal/policy"
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
@@ -39,6 +41,8 @@ type Server struct {
 	devices   *device.Service
 	jobs      *job.Service
 	agents    *agent.Service
+	memory    *memkernel.Service
+	market    *marketplace.Service
 	limit     policy.RateLimiter
 	authLim   *policy.AuthLimiter
 	authFail  *policy.FailureTracker
@@ -55,6 +59,8 @@ type Deps struct {
 	Devices   *device.Service // may be nil (devices routes omitted)
 	Jobs      *job.Service
 	Agents    *agent.Service
+	Memory    *memkernel.Service
+	Market    *marketplace.Service
 	Limiter   policy.RateLimiter
 	Store     store.Store
 }
@@ -90,6 +96,8 @@ func New(d Deps) http.Handler {
 		devices:   d.Devices,
 		jobs:      d.Jobs,
 		agents:    agentsSvc,
+		memory:    d.Memory,
+		market:    d.Market,
 		limit:     lim,
 		authLim:   policy.NewAuthLimiter(authRate, 5),
 		authFail:  policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
@@ -110,11 +118,22 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/admin/users/", s.withAdmin(s.routeAdminUsers))
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
 	mux.HandleFunc("/v1/admin/policy", s.withAdmin(s.handleAdminPolicy))
+	mux.HandleFunc("/v1/modules", s.method(http.MethodGet, s.handleModules))
 
 	// Agent Identity (ROADMAP-2.0 stage A)
 	if s.agents != nil {
 		mux.HandleFunc("/v1/agents", s.withAuth(s.routeAgentsRoot))
 		mux.HandleFunc("/v1/agents/", s.withAuth(s.routeAgentsSub))
+	}
+
+	// Stage C: Memory Kernel + Marketplace (logical modules; still embedded in api)
+	if s.memory != nil {
+		mux.HandleFunc("/v1/memory", s.withAuth(s.routeMemoryRoot))
+		mux.HandleFunc("/v1/memory/", s.withAuth(s.routeMemorySub))
+	}
+	if s.market != nil {
+		mux.HandleFunc("/v1/marketplace", s.withAuth(s.routeMarketplaceRoot))
+		mux.HandleFunc("/v1/marketplace/", s.withAuth(s.routeMarketplaceSub))
 	}
 
 	// Batch A: vendor catalog + provider bindings + drive maps
@@ -183,7 +202,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"features": []string{
 			"agent_identity", "path_jail", "env_filter", "snapshots_v0", "policy_file", "opa_rego", "seccomp",
 			"objects_presign", "restore_version", "sts_aliyun", "sts_tencent", "s3_sts",
-			"qiniu_download", "oci_iam", "oci_par", "oci_secret", "remote_pdp", "job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
+			"qiniu_download", "oci_iam", "oci_par", "oci_secret", "remote_pdp",
+			"memory_kernel_v0", "marketplace_v0", "modules_registry",
+			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
 		},
 		"version": version.Version,
 	})

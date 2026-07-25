@@ -19,6 +19,8 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/drive"
 	"github.com/awmbtc/AI-cloudhub/internal/httpserver"
 	"github.com/awmbtc/AI-cloudhub/internal/job"
+	"github.com/awmbtc/AI-cloudhub/internal/marketplace"
+	"github.com/awmbtc/AI-cloudhub/internal/memkernel"
 	"github.com/awmbtc/AI-cloudhub/internal/policy"
 	"github.com/awmbtc/AI-cloudhub/internal/provider"
 	"github.com/awmbtc/AI-cloudhub/internal/s3store"
@@ -121,6 +123,8 @@ func main() {
 		}
 	}
 	agentSvc := agent.NewServiceWithEngine(st, policyEng)
+	memSvc := memkernel.New(st)
+	mktSvc := marketplace.New(st)
 
 	handler := httpserver.New(httpserver.Deps{
 		Config:    cfg,
@@ -131,6 +135,8 @@ func main() {
 		Devices:   deviceSvc,
 		Jobs:      jobSvc,
 		Agents:    agentSvc,
+		Memory:    memSvc,
+		Market:    mktSvc,
 		Limiter:   lim,
 		Store:     st,
 	})

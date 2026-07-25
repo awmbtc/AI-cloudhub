@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Stage C slice)
+## Unreleased (Stage C)
 
 ### Policy
 - Remote PDP: `AI_CLOUDHUB_PDP_URL` HTTP POST `{input}` → `{allow,reason}`; observe/strict/timeout; after OPA in evaluate chain
@@ -10,8 +10,13 @@
 - `AI_CLOUDHUB_OCI_PAR=1` + `OCI_NAMESPACE` + `OCI_PAR_BUCKET`: ObjectRead PAR sample in session.note (`source=oci_par`)
 - Metrics: `oci_par`, `oci_secret` STS sources
 
+### Memory / Marketplace / modules
+- Memory Kernel v0: `POST/GET/DELETE /v1/memory` (working|episodic|semantic)
+- Marketplace v0: system catalog + publish + `POST …/install` agent templates
+- `GET /v1/modules` logical module registry (monolith default; D-002)
+
 ### Docs
-- ROADMAP Stage C C1/C2 marked started; D-001 runner-pool ban reaffirmed
+- MEMORY.md, MARKETPLACE.md, MODULES.md; ROADMAP C3a–c; D-001 reaffirmed
 
 ## v0.2.1
 

@@ -163,6 +163,31 @@ CREATE TABLE IF NOT EXISTS snapshots (
   created_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_drive ON snapshots(user_id, drive_id, created_at);
+CREATE TABLE IF NOT EXISTS memory_entries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  agent_id TEXT,
+  drive_id TEXT,
+  layer TEXT NOT NULL,
+  key TEXT,
+  content TEXT NOT NULL,
+  meta_json TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries(user_id, created_at);
+CREATE TABLE IF NOT EXISTS marketplace_items (
+  id TEXT PRIMARY KEY,
+  publisher_user_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  kind TEXT NOT NULL,
+  version TEXT,
+  payload_json TEXT NOT NULL,
+  public BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_pub ON marketplace_items(publisher_user_id);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -950,6 +975,162 @@ func scanJobRowsPG(rows *sql.Rows) ([]*Job, error) {
 		out = append(out, j)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) CreateMemory(e *MemoryEntry) error {
+	var exp interface{}
+	if !e.ExpiresAt.IsZero() {
+		exp = e.ExpiresAt.UTC()
+	}
+	_, err := p.db.Exec(
+		`INSERT INTO memory_entries (id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		e.ID, e.UserID, e.AgentID, e.DriveID, e.Layer, e.Key, e.Content, string(e.MetaJSON), e.CreatedAt.UTC(), exp,
+	)
+	return err
+}
+
+func (p *Postgres) GetMemory(userID, id string) (*MemoryEntry, error) {
+	row := p.db.QueryRow(
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		 FROM memory_entries WHERE id=$1 AND user_id=$2`, id, userID)
+	return scanMemoryPG(row)
+}
+
+func (p *Postgres) ListMemory(f MemoryFilter) ([]*MemoryEntry, error) {
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	rows, err := p.db.Query(
+		`SELECT id, user_id, agent_id, drive_id, layer, key, content, meta_json, created_at, expires_at
+		 FROM memory_entries WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, f.UserID, f.Limit*3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*MemoryEntry
+	now := time.Now()
+	for rows.Next() {
+		e, err := scanMemoryPG(rows)
+		if err != nil {
+			return nil, err
+		}
+		if f.AgentID != "" && e.AgentID != f.AgentID {
+			continue
+		}
+		if f.DriveID != "" && e.DriveID != f.DriveID {
+			continue
+		}
+		if f.Layer != "" && e.Layer != f.Layer {
+			continue
+		}
+		if f.Key != "" && e.Key != f.Key {
+			continue
+		}
+		if !e.ExpiresAt.IsZero() && e.ExpiresAt.Before(now) {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= f.Limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteMemory(userID, id string) error {
+	res, err := p.db.Exec(`DELETE FROM memory_entries WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("memory not found")
+	}
+	return nil
+}
+
+func scanMemoryPG(row interface{ Scan(dest ...any) error }) (*MemoryEntry, error) {
+	var e MemoryEntry
+	var meta string
+	var exp *time.Time
+	if err := row.Scan(&e.ID, &e.UserID, &e.AgentID, &e.DriveID, &e.Layer, &e.Key, &e.Content, &meta, &e.CreatedAt, &exp); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("memory not found")
+		}
+		return nil, err
+	}
+	e.MetaJSON = []byte(meta)
+	if exp != nil {
+		e.ExpiresAt = *exp
+	}
+	return &e, nil
+}
+
+func (p *Postgres) CreateMarketplaceItem(m *MarketplaceItem) error {
+	_, err := p.db.Exec(
+		`INSERT INTO marketplace_items (id, publisher_user_id, name, description, kind, version, payload_json, public, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		m.ID, m.PublisherUserID, m.Name, m.Description, m.Kind, m.Version, string(m.PayloadJSON), m.Public, m.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (p *Postgres) GetMarketplaceItem(id string) (*MarketplaceItem, error) {
+	row := p.db.QueryRow(
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		 FROM marketplace_items WHERE id=$1`, id)
+	return scanMarketPG(row)
+}
+
+func (p *Postgres) ListMarketplaceItems(publicOnly bool, publisherUserID string) ([]*MarketplaceItem, error) {
+	rows, err := p.db.Query(
+		`SELECT id, publisher_user_id, name, description, kind, version, payload_json, public, created_at
+		 FROM marketplace_items ORDER BY created_at DESC LIMIT 500`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*MarketplaceItem
+	for rows.Next() {
+		it, err := scanMarketPG(rows)
+		if err != nil {
+			return nil, err
+		}
+		if publicOnly && !it.Public {
+			continue
+		}
+		if publisherUserID != "" && it.PublisherUserID != publisherUserID {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) DeleteMarketplaceItem(publisherUserID, id string) error {
+	res, err := p.db.Exec(`DELETE FROM marketplace_items WHERE id=$1 AND publisher_user_id=$2`, id, publisherUserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("marketplace item not found")
+	}
+	return nil
+}
+
+func scanMarketPG(row interface{ Scan(dest ...any) error }) (*MarketplaceItem, error) {
+	var m MarketplaceItem
+	var payload string
+	if err := row.Scan(&m.ID, &m.PublisherUserID, &m.Name, &m.Description, &m.Kind, &m.Version, &payload, &m.Public, &m.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("marketplace item not found")
+		}
+		return nil, err
+	}
+	m.PayloadJSON = []byte(payload)
+	return &m, nil
 }
 
 // IsPostgresDSN reports whether path is a postgres URL.

@@ -262,8 +262,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] **远程 PDP**：`AI_CLOUDHUB_PDP_URL`（POST allow/reason；fail-open / observe / strict）
 - [x] **OCI Customer Secret 铸造**：`AI_CLOUDHUB_OCI_CREATE_SECRET=1` → `source=oci_secret`（best-effort）
 - [x] **OCI ObjectRead PAR sample**：`AI_CLOUDHUB_OCI_PAR=1` + NAMESPACE + PAR_BUCKET → note / `oci_par`
-- [ ] Memory Kernel / Marketplace / 微服务拆分（仍后置）
-- **仍禁止：** 平台大规模 Runner 池（D-001）
+- [x] **Memory Kernel v0**：`/v1/memory*` · [MEMORY.md](./MEMORY.md)
+- [x] **Marketplace v0**：`/v1/marketplace*` · [MARKETPLACE.md](./MARKETPLACE.md)
+- [x] **模块注册表**：`GET /v1/modules` · [MODULES.md](./MODULES.md)（逻辑边界，非强拆进程）
+- **仍禁止：** 平台大规模 Runner 池（D-001）；默认不强制微服务
 
 ### 剩余诚实边界
 

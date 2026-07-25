@@ -68,4 +68,4 @@
 
 - 非完整网盘 UI。
 - 控制面不捆绑 MinIO 服务（非魔改 MinIO）。
-- 2.0 主线已收口；Stage C 切片（远程 PDP + OCI PAR/secret 铸造）已启动。**仍禁止**平台大规模 Runner 池（D-001）。Marketplace / Memory / 微服务拆分未做。
+- 2.0 主线已收口；Stage C：远程 PDP、OCI PAR/secret、**Memory v0**、**Marketplace v0**、**逻辑模块注册表**已落地。默认仍 monorepo 单 `api` 进程（非强拆微服务）。**仍禁止**平台大规模 Runner 池（D-001）。
