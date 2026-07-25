@@ -346,6 +346,13 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			return
 		}
 		metrics.IncJobClaimed()
+		if pr := principalFrom(r); pr != nil {
+			detail := j.DriveID
+			if j.ClaimedByAgentID != "" {
+				detail += " claimer=" + j.ClaimedByAgentID
+			}
+			s.auth.AuditAgent(userID, pr.AgentID, "job.claim", j.ID, detail)
+		}
 		writeJSON(w, http.StatusOK, j)
 	case "complete":
 		if r.Method != http.MethodPost {
@@ -372,6 +379,13 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		detail := "ok"
+		if !body.OK {
+			detail = "failed"
+		}
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "job.complete", j.ID, detail)
+		}
 		writeJSON(w, http.StatusOK, j)
 	case "cancel":
 		if r.Method != http.MethodPost {
@@ -392,6 +406,9 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if pr := principalFrom(r); pr != nil {
+			s.auth.AuditAgent(userID, pr.AgentID, "job.cancel", j.ID, driveID)
 		}
 		writeJSON(w, http.StatusOK, j)
 	default:

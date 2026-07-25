@@ -54,6 +54,7 @@
 - Job routes enforce job.run scope + policy CheckAccess; make smoke-policy; OpenAPI admin/policy
 - ClaimNextFiltered + ReleaseToPending: policy/drive deny after claim returns job to pending
 - Jobs track agent_id (creator) and claimed_by_agent_id (claimer); store migrate + audit job.create
+- Audit job.claim / job.complete / job.cancel; smoke-job covers agent trace + durability
 
 ### Ops
 - PostgreSQL store: `AI_CLOUDHUB_DB=postgres://...`

@@ -208,6 +208,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] claim 路径写入 claimer；release 清空 claimer
 - [x] OpenAPI Job schema；ROADMAP M-B 勾选同步
 
+## 本波（Job 审计 + smoke-job agent 追溯）
+
+- [x] `job.claim` / `job.complete` / `job.cancel` 审计（带 agent_id）
+- [x] `make smoke-job`：restart 耐久 + creator/claimer agent 字段
+- [x] runner jobDTO 含 agent 字段
+
 ## 仍可后续
 
 - OCI 私钥 IAM / Qiniu 私有下载 token（非 S3 session 模型）

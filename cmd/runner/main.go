@@ -76,7 +76,8 @@ func runWorker(api, token, mountPoint string) {
 				// no jobs is normal
 				continue
 			}
-			log.Printf("claimed job %s drive=%s cmd=%v", j.ID, j.DriveID, j.Command)
+			log.Printf("claimed job %s drive=%s created_by=%s claimer=%s cmd=%v",
+				j.ID, j.DriveID, j.AgentID, j.ClaimedByAgentID, j.Command)
 			mode := j.Mode
 			if mode != "" {
 				_ = os.Setenv("AI_CLOUDHUB_MODE", mode)
@@ -94,12 +95,14 @@ func runWorker(api, token, mountPoint string) {
 }
 
 type jobDTO struct {
-	ID        string   `json:"id"`
-	DriveID   string   `json:"drive_id"`
-	BindingID string   `json:"binding_id"`
-	Mode      string   `json:"mode"`
-	Command   []string `json:"command"`
-	Status    string   `json:"status"`
+	ID               string   `json:"id"`
+	DriveID          string   `json:"drive_id"`
+	BindingID        string   `json:"binding_id"`
+	Mode             string   `json:"mode"`
+	Command          []string `json:"command"`
+	Status           string   `json:"status"`
+	AgentID          string   `json:"agent_id"`
+	ClaimedByAgentID string   `json:"claimed_by_agent_id"`
 }
 
 func claimNext(api, token string) (*jobDTO, error) {
