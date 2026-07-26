@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.27
+
+User job list filter push-down to store.
+
+### Jobs
+- `ListJobsPage` on memory/sqlite/postgres: agent_id, claimed_by_agent_id, status, labels (JSON extract), keyset cursor + limit
+- `GET /v1/jobs` List no longer loads all user jobs then filters in memory
+
 ## v0.2.26
 
 Admin job-webhooks filter by `job_id` / `user_id`.

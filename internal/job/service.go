@@ -461,53 +461,12 @@ type ListFilter struct {
 }
 
 // List returns jobs for user, optionally filtered by agent ids, status, and/or labels.
+// Filters, keyset cursor, and limit are pushed to the store (ListJobsPage).
 // Order: created_at DESC, id DESC. When more pages exist, nextCursor is non-empty.
 func (s *Service) List(userID string, filter ...ListFilter) (items []*Job, nextCursor string) {
-	list, err := s.store.ListJobs(userID)
-	if err != nil {
-		return nil, ""
-	}
 	var f ListFilter
 	if len(filter) > 0 {
 		f = filter[0]
-	}
-	status := strings.TrimSpace(f.Status)
-	out := make([]*Job, 0, len(list))
-	for _, sj := range list {
-		if f.AgentID != "" && sj.AgentID != f.AgentID {
-			continue
-		}
-		if f.ClaimedByAgentID != "" && sj.ClaimedByAgentID != f.ClaimedByAgentID {
-			continue
-		}
-		if status != "" && sj.Status != status {
-			continue
-		}
-		if len(f.Labels) > 0 && !jobLabelsMatch(sj.LabelsJSON, f.Labels) {
-			continue
-		}
-		out = append(out, jobFromStore(sj))
-	}
-	// Stable keyset order (same as admin list).
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
-			return out[i].CreatedAt.After(out[j].CreatedAt)
-		}
-		return out[i].ID > out[j].ID
-	})
-	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
-		trimmed := make([]*Job, 0, len(out))
-		for _, j := range out {
-			// keep rows strictly older than (ca, id) in DESC order
-			if j.CreatedAt.After(ca) {
-				continue
-			}
-			if j.CreatedAt.Equal(ca) && j.ID >= id {
-				continue
-			}
-			trimmed = append(trimmed, j)
-		}
-		out = trimmed
 	}
 	limit := f.Limit
 	if limit <= 0 {
@@ -515,6 +474,26 @@ func (s *Service) List(userID string, filter ...ListFilter) (items []*Job, nextC
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	sf := store.JobListFilter{
+		UserID:           strings.TrimSpace(userID),
+		AgentID:          strings.TrimSpace(f.AgentID),
+		ClaimedByAgentID: strings.TrimSpace(f.ClaimedByAgentID),
+		Status:           strings.TrimSpace(f.Status),
+		Labels:           f.Labels,
+		Limit:            limit + 1,
+	}
+	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
+		sf.CursorCreated = ca
+		sf.CursorID = id
+	}
+	list, err := s.store.ListJobsPage(sf)
+	if err != nil {
+		return nil, ""
+	}
+	out := make([]*Job, 0, len(list))
+	for _, sj := range list {
+		out = append(out, jobFromStore(sj))
 	}
 	if len(out) > limit {
 		last := out[limit-1]

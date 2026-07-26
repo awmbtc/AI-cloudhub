@@ -1129,6 +1129,48 @@ func TestListFilterByAgent(t *testing.T) {
 	}
 }
 
+func TestListFilterPushDown(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-push"
+	j1, _, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"a"}, AgentID: "ag1",
+		Labels: map[string]string{"env": "prod", "team": "ml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j2, _, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"b"}, AgentID: "ag2",
+		Labels: map[string]string{"env": "dev"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j2.ID, "claimer-z", ""); err != nil {
+		t.Fatal(err)
+	}
+	// agent filter
+	only, _ := svc.List(uid, ListFilter{AgentID: "ag1", Limit: 50})
+	if len(only) != 1 || only[0].ID != j1.ID {
+		t.Fatalf("agent filter: %+v", only)
+	}
+	// labels AND match
+	prod, _ := svc.List(uid, ListFilter{Labels: map[string]string{"env": "prod", "team": "ml"}, Limit: 50})
+	if len(prod) != 1 || prod[0].ID != j1.ID {
+		t.Fatalf("labels: %+v", prod)
+	}
+	// claimer + status
+	run, _ := svc.List(uid, ListFilter{ClaimedByAgentID: "claimer-z", Status: "running", Limit: 50})
+	if len(run) != 1 || run[0].ID != j2.ID {
+		t.Fatalf("claimer/status: %+v", run)
+	}
+	// no match
+	none, _ := svc.List(uid, ListFilter{Labels: map[string]string{"env": "staging"}, Limit: 50})
+	if len(none) != 0 {
+		t.Fatalf("want empty got %+v", none)
+	}
+}
+
 func TestListCursor(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-list-cur"

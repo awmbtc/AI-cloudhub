@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -662,6 +663,81 @@ func (m *Memory) ListJobs(userID string) ([]*Job, error) {
 		if j.UserID == userID {
 			out = append(out, cloneJob(j))
 		}
+	}
+	return out, nil
+}
+
+func jobLabelsMatchStore(raw []byte, want map[string]string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	if len(raw) == 0 {
+		return false
+	}
+	var have map[string]string
+	if err := json.Unmarshal(raw, &have); err != nil || have == nil {
+		return false
+	}
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Memory) ListJobsPage(f JobListFilter) ([]*Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 501 {
+		limit = 501
+	}
+	userID := strings.TrimSpace(f.UserID)
+	agentID := strings.TrimSpace(f.AgentID)
+	claimer := strings.TrimSpace(f.ClaimedByAgentID)
+	status := strings.TrimSpace(f.Status)
+	var out []*Job
+	for _, j := range m.jobs {
+		if userID != "" && j.UserID != userID {
+			continue
+		}
+		if agentID != "" && j.AgentID != agentID {
+			continue
+		}
+		if claimer != "" && j.ClaimedByAgentID != claimer {
+			continue
+		}
+		if status != "" && j.Status != status {
+			continue
+		}
+		if !jobLabelsMatchStore(j.LabelsJSON, f.Labels) {
+			continue
+		}
+		if !f.CursorCreated.IsZero() && f.CursorID != "" {
+			if j.CreatedAt.After(f.CursorCreated) {
+				continue
+			}
+			if j.CreatedAt.Equal(f.CursorCreated) && j.ID >= f.CursorID {
+				continue
+			}
+		}
+		out = append(out, cloneJob(j))
+	}
+	// created_at DESC, id DESC
+	for i := 0; i < len(out); i++ {
+		for k := i + 1; k < len(out); k++ {
+			if out[k].CreatedAt.After(out[i].CreatedAt) ||
+				(out[k].CreatedAt.Equal(out[i].CreatedAt) && out[k].ID > out[i].ID) {
+				out[i], out[k] = out[k], out[i]
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

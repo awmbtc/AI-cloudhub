@@ -176,6 +176,19 @@ type AdminJobFilter struct {
 	CursorID      string    // used with CursorCreated for stable keyset
 }
 
+// JobListFilter filters a single user's job list (owner-scoped).
+// Keyset: created_at DESC, id DESC. Labels require all key=value pairs present.
+type JobListFilter struct {
+	UserID           string // required
+	AgentID          string // creator; empty = any
+	ClaimedByAgentID string // claimer; empty = any
+	Status           string // exact status; empty = any
+	Labels           map[string]string
+	Limit            int // 0 = default 100; capped at 501
+	CursorCreated    time.Time
+	CursorID         string
+}
+
 // JobStatusCounts is a full aggregation of jobs by status (no row cap).
 type JobStatusCounts struct {
 	Pending    int
@@ -394,6 +407,8 @@ type Store interface {
 	// GetJobByIdempotencyKey returns a job for user with the given key (empty key = not found).
 	GetJobByIdempotencyKey(userID, key string) (*Job, error)
 	ListJobs(userID string) ([]*Job, error)
+	// ListJobsPage lists a user's jobs with filters, label match, and keyset pagination.
+	ListJobsPage(f JobListFilter) ([]*Job, error)
 	// ListJobsAdmin lists jobs across users with optional filters (admin).
 	ListJobsAdmin(f AdminJobFilter) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)

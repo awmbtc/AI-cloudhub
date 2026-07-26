@@ -1159,6 +1159,64 @@ func (s *SQLite) ListJobs(userID string) ([]*Job, error) {
 	return out, rows.Err()
 }
 
+func (s *SQLite) ListJobsPage(f JobListFilter) ([]*Job, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 501 {
+		limit = 501
+	}
+	q := `SELECT ` + jobSelectCols + ` FROM jobs WHERE user_id = ?`
+	args := []interface{}{strings.TrimSpace(f.UserID)}
+	if aid := strings.TrimSpace(f.AgentID); aid != "" {
+		q += ` AND agent_id = ?`
+		args = append(args, aid)
+	}
+	if cid := strings.TrimSpace(f.ClaimedByAgentID); cid != "" {
+		q += ` AND claimed_by_agent_id = ?`
+		args = append(args, cid)
+	}
+	if st := strings.TrimSpace(f.Status); st != "" {
+		q += ` AND status = ?`
+		args = append(args, st)
+	}
+	for k, v := range f.Labels {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		// SQLite JSON1: treat NULL/empty labels_json as {}
+		path := "$." + k
+		if strings.ContainsAny(k, ".-") {
+			path = "$." + `"` + strings.ReplaceAll(k, `"`, ``) + `"`
+		}
+		q += ` AND json_extract(CASE WHEN labels_json IS NULL OR labels_json = '' THEN '{}' ELSE labels_json END, ?) = ?`
+		args = append(args, path, v)
+	}
+	if !f.CursorCreated.IsZero() && f.CursorID != "" {
+		ca := f.CursorCreated.UTC().Format(time.RFC3339Nano)
+		q += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, ca, ca, f.CursorID)
+	}
+	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLite) CountJobsByStatus(userID string) (*JobStatusCounts, error) {
 	var (
 		rows *sql.Rows

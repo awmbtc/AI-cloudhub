@@ -964,6 +964,58 @@ func (p *Postgres) ListJobs(userID string) ([]*Job, error) {
 	return scanJobRowsPG(rows)
 }
 
+func (p *Postgres) ListJobsPage(f JobListFilter) ([]*Job, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 501 {
+		limit = 501
+	}
+	q := `SELECT ` + jobSelectColsPG + ` FROM jobs WHERE user_id=$1`
+	args := []interface{}{strings.TrimSpace(f.UserID)}
+	n := 2
+	if aid := strings.TrimSpace(f.AgentID); aid != "" {
+		q += fmt.Sprintf(` AND agent_id=$%d`, n)
+		args = append(args, aid)
+		n++
+	}
+	if cid := strings.TrimSpace(f.ClaimedByAgentID); cid != "" {
+		q += fmt.Sprintf(` AND claimed_by_agent_id=$%d`, n)
+		args = append(args, cid)
+		n++
+	}
+	if st := strings.TrimSpace(f.Status); st != "" {
+		q += fmt.Sprintf(` AND status=$%d`, n)
+		args = append(args, st)
+		n++
+	}
+	for k, v := range f.Labels {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		// labels_json is TEXT; treat NULL/empty as {}
+		q += fmt.Sprintf(` AND (CASE WHEN labels_json IS NULL OR labels_json = '' THEN '{}'::json ELSE labels_json::json END) ->> $%d = $%d`, n, n+1)
+		args = append(args, k, v)
+		n += 2
+	}
+	if !f.CursorCreated.IsZero() && f.CursorID != "" {
+		ca := f.CursorCreated.UTC()
+		q += fmt.Sprintf(` AND (created_at < $%d OR (created_at = $%d AND id < $%d))`, n, n+1, n+2)
+		args = append(args, ca, ca, f.CursorID)
+		n += 3
+	}
+	q += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, n)
+	args = append(args, limit)
+	rows, err := p.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanJobRowsPG(rows)
+}
+
 func (p *Postgres) CountJobsByStatus(userID string) (*JobStatusCounts, error) {
 	var (
 		rows *sql.Rows

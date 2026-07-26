@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.26 已发布；admin job-webhooks job_id/user_id 过滤
+## 总览：v0.2.27 已发布；user jobs list 过滤下推 store
 
 | 阶段 | 状态 |
 |------|------|
@@ -480,3 +480,8 @@ curl -s localhost:8080/v1/runtime/check
 
 - [x] list/retry-all 支持 `job_id` / `user_id`
 - [x] 版本钉 **0.2.26** + tag
+
+### 本波（job list store push-down）
+
+- [x] `ListJobsPage` agent/status/labels/cursor/limit 下推
+- [x] 版本钉 **0.2.27** + tag

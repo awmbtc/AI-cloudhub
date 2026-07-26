@@ -78,6 +78,7 @@ GET /v1/jobs/stats
 ```
 
 - Non-`pending` list: keyset pagination (`created_at DESC, id DESC`); `limit` default 100, max 500; response may include `next_cursor` / `count` / `limit`.
+- Filters (`status`, `agent_id`, `claimed_by_agent_id`, `label=`) and cursor are applied in the store (not full-table scan + in-memory filter).
 - `status=pending` remains the claimable set (pending+dispatched), no cursor (full claimable list + optional `region`).
 - `stats` returns counts: `pending`, `dispatched`, `running`, `succeeded`, `failed`, `cancelled`, `total`.
 
