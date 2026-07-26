@@ -78,6 +78,7 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 - Architecture: `docs/ARCHITECTURE.md`
 - Decisions (D-001…D-003): `docs/DECISIONS.md`
 - Golden path (mainline demo): `docs/GOLDEN-PATH.md`
+- Provider storage keys (user-facing): `docs/PROVIDERS.md`
 - Limits: `docs/KNOWN_LIMITATIONS.md`
 - Production cutover: `docs/PRODUCTION.md` · `docs/CUTOVER.md` + `make prod-preflight` / `smoke-prod-preflight`
 - STS 联调: `docs/STS-RUNBOOK.md` + `make smoke-sts` / `smoke-sts-live`
