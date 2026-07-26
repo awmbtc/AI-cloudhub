@@ -50,7 +50,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.9` 多架构二进制；job stdout/stderr + status filter + CI STS live | ✅ |
+| **发布** | `v0.2.10` 多架构二进制；job timeout/trunc flags + hubd mount probe | ✅ |
 
 ## 快速开始
 

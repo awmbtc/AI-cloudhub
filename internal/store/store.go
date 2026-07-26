@@ -140,11 +140,17 @@ type Job struct {
 	DurationMs int64
 	// HeartbeatAt last claim or heartbeat while running (zero if not running / never claimed).
 	HeartbeatAt time.Time
+	// ClaimedAt set when job enters running; used for hard timeout wall clock.
+	ClaimedAt time.Time
+	// TimeoutSec optional max run seconds from claim (0 = no job-level timeout).
+	TimeoutSec int
 	// Stdout / Stderr capped process output from runner complete (empty if not reported).
-	Stdout    string
-	Stderr    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Stdout            string
+	Stderr            string
+	StdoutTruncated   bool
+	StderrTruncated   bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).

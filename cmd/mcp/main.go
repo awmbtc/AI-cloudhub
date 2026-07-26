@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.9"
+const serverVersion = "0.2.10"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -344,6 +344,7 @@ func toolRegistry() []toolMeta {
 					"region_hint":  map[string]interface{}{"type": "string"},
 					"note":         map[string]interface{}{"type": "string"},
 					"connector_id": map[string]interface{}{"type": "string", "description": "Optional Stage C connector (e.g. git) for runner materialization"},
+					"timeout_sec":  map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
 				},
 				"required": []string{"drive_id", "command"},
 			},
@@ -364,8 +365,10 @@ func toolRegistry() []toolMeta {
 					"note":        map[string]interface{}{"type": "string"},
 					"exit_code":   map[string]interface{}{"type": "integer", "description": "Process exit code from runner"},
 					"duration_ms": map[string]interface{}{"type": "integer", "description": "Wall time ms"},
-					"stdout":      map[string]interface{}{"type": "string", "description": "Capped process stdout (tail)"},
-					"stderr":      map[string]interface{}{"type": "string", "description": "Capped process stderr (tail)"},
+					"stdout":           map[string]interface{}{"type": "string", "description": "Capped process stdout (tail)"},
+					"stderr":           map[string]interface{}{"type": "string", "description": "Capped process stderr (tail)"},
+					"stdout_truncated": map[string]interface{}{"type": "boolean"},
+					"stderr_truncated": map[string]interface{}{"type": "boolean"},
 				},
 				"required": []string{"job_id"},
 			},
@@ -762,6 +765,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			RegionHint  string   `json:"region_hint"`
 			Note        string   `json:"note"`
 			ConnectorID string   `json:"connector_id"`
+			TimeoutSec  int      `json:"timeout_sec"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -769,18 +773,20 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
 			return nil, fmt.Errorf("drive_id and command required")
 		}
-		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID)
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec)
 	case "claim_next_job":
 		return toolClaimNextJob(api, token)
 	case "complete_job":
 		var args struct {
-			JobID      string `json:"job_id"`
-			OK         *bool  `json:"ok"`
-			Note       string `json:"note"`
-			ExitCode   *int   `json:"exit_code"`
-			DurationMs int64  `json:"duration_ms"`
-			Stdout     string `json:"stdout"`
-			Stderr     string `json:"stderr"`
+			JobID           string `json:"job_id"`
+			OK              *bool  `json:"ok"`
+			Note            string `json:"note"`
+			ExitCode        *int   `json:"exit_code"`
+			DurationMs      int64  `json:"duration_ms"`
+			Stdout          string `json:"stdout"`
+			Stderr          string `json:"stderr"`
+			StdoutTruncated bool   `json:"stdout_truncated"`
+			StderrTruncated bool   `json:"stderr_truncated"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -792,7 +798,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if args.OK != nil {
 			ok = *args.OK
 		}
-		return toolCompleteJob(api, token, args.JobID, ok, args.Note, args.ExitCode, args.DurationMs, args.Stdout, args.Stderr)
+		return toolCompleteJob(api, token, args.JobID, ok, args.Note, args.ExitCode, args.DurationMs, args.Stdout, args.Stderr, args.StdoutTruncated, args.StderrTruncated)
 	case "heartbeat_job":
 		var args struct {
 			JobID string `json:"job_id"`
@@ -1286,7 +1292,7 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string) (interf
 	return toolResultJSON(parsed)
 }
 
-func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string) (interface{}, error) {
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec int) (interface{}, error) {
 	payload := map[string]interface{}{
 		"drive_id": driveID,
 		"command":  command,
@@ -1305,6 +1311,9 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	}
 	if connectorID != "" {
 		payload["connector_id"] = connectorID
+	}
+	if timeoutSec > 0 {
+		payload["timeout_sec"] = timeoutSec
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
 	if err != nil {
@@ -1357,7 +1366,7 @@ func toolHeartbeatJob(api, token, jobID string) (interface{}, error) {
 	return toolResultJSON(parsed)
 }
 
-func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string) (interface{}, error) {
+func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string, stdoutTrunc, stderrTrunc bool) (interface{}, error) {
 	payload := map[string]interface{}{"ok": ok, "note": note}
 	if exitCode != nil {
 		payload["exit_code"] = *exitCode
@@ -1370,6 +1379,12 @@ func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *i
 	}
 	if stderr != "" {
 		payload["stderr"] = stderr
+	}
+	if stdoutTrunc {
+		payload["stdout_truncated"] = true
+	}
+	if stderrTrunc {
+		payload["stderr_truncated"] = true
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/"+jobID+"/complete", token, payload)
 	if err != nil {

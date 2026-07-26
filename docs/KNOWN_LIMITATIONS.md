@@ -51,7 +51,10 @@
 - 依赖 **rclone**；挂盘还要 FUSE / **WinFsp** / macFUSE。
 - Windows：运行 `scripts\windows\install-deps.ps1`（或 `.bat`）安装 WinFsp + rclone；详见 [WINDOWS.md](./WINDOWS.md)。
 - soft refresh 只更新 conf，已打开的 FUSE 句柄仍可能持旧凭证、需 remount（hubd 不会对“打开文件”做强制踢出）。
-- hubd 会检测 **rclone 进程退出** 并 `actual=error` + 自动 remount；无法检测“进程存活但 FUSE 假死”。
+- hubd 会检测 **rclone 进程退出** 并 `actual=error` + 自动 remount。
+- hubd 另做 **mount path 可达性探测**（`ReadDir` 超时则 remount）；仍无法保证所有 FUSE 假死场景。
+- soft refresh 默认只重写 conf；`AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH=1` 时改为整挂 remount（诚实处理打开句柄）。
+- Windows stop：优先 `Kill` 进程；Linux stop 额外 fusermount/umount best-effort。
 - Mode 优先级：binding.mode → session.mode → manifest env → `mount`（hubd v0.2.7+）。
 - `mode=sync_workspace` 可在无 FUSE / 无 WinFsp 时兜底。
 
@@ -66,7 +69,8 @@
 - `/metrics` 默认可匿名；生产设 `AI_CLOUDHUB_METRICS_TOKEN`。
 - Job 为 BYOC 队列，**禁止**平台大规模 Runner 池（D-001）。
 - Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
-- Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）；非流式、非对象存储日志。
+- Job hard timeout：`timeout_sec`（创建）或全局 `AI_CLOUDHUB_JOB_TIMEOUT_SEC`；从 `claimed_at` 起算，超时在 claim 路径 fail（exit 124 + note）。runner 侧 `CommandContext` 杀进程。
+- Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。
 
 ## 产品
 

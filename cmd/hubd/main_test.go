@@ -55,6 +55,36 @@ func TestMountDeadProcessState(t *testing.T) {
 	}
 }
 
+func TestMountPointUnreachable(t *testing.T) {
+	if !mountPointUnreachable("", time.Second) {
+		t.Fatal("empty path should be unreachable")
+	}
+	// Temp dir is always listable.
+	dir := t.TempDir()
+	if mountPointUnreachable(dir, 2*time.Second) {
+		t.Fatalf("temp dir should be reachable: %s", dir)
+	}
+	// Nonexistent path.
+	if !mountPointUnreachable(dir+"/does-not-exist-xyz", 2*time.Second) {
+		t.Fatal("missing path should be unreachable")
+	}
+}
+
+func TestForceRemountOnRefreshEnv(t *testing.T) {
+	t.Setenv("AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH", "")
+	if forceRemountOnRefresh() {
+		t.Fatal("default off")
+	}
+	t.Setenv("AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH", "1")
+	if !forceRemountOnRefresh() {
+		t.Fatal("want true for 1")
+	}
+	t.Setenv("AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH", "true")
+	if !forceRemountOnRefresh() {
+		t.Fatal("want true for true")
+	}
+}
+
 func TestMountDeadAfterKill(t *testing.T) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {

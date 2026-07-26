@@ -230,6 +230,10 @@ CREATE TABLE IF NOT EXISTS connectors (
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stdout TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stderr TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS timeout_sec INTEGER`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stdout_truncated BOOLEAN`)
+	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stderr_truncated BOOLEAN`)
 	return nil
 }
 
@@ -831,19 +835,24 @@ func (p *Postgres) ListDevices(userID string) ([]*Device, error) {
 
 const jobSelectColsPG = `id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
-		 exit_code, COALESCE(duration_ms,0), heartbeat_at, COALESCE(stdout,''), COALESCE(stderr,''),
+		 exit_code, COALESCE(duration_ms,0), heartbeat_at, claimed_at, COALESCE(timeout_sec,0),
+		 COALESCE(stdout,''), COALESCE(stderr,''), COALESCE(stdout_truncated,false), COALESCE(stderr_truncated,false),
 		 created_at, updated_at`
 
 func (p *Postgres) CreateJob(j *Job) error {
-	var hb interface{}
+	var hb, ca interface{}
 	if !j.HeartbeatAt.IsZero() {
 		hb = j.HeartbeatAt.UTC()
 	}
+	if !j.ClaimedAt.IsZero() {
+		ca = j.ClaimedAt.UTC()
+	}
 	_, err := p.db.Exec(
-		`INSERT INTO jobs (id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,agent_id,claimed_by_agent_id,connector_id,exit_code,duration_ms,heartbeat_at,stdout,stderr,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		`INSERT INTO jobs (id,user_id,drive_id,binding_id,mode,command_json,status,region_hint,note,agent_id,claimed_by_agent_id,connector_id,exit_code,duration_ms,heartbeat_at,claimed_at,timeout_sec,stdout,stderr,stdout_truncated,stderr_truncated,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb, j.Stdout, j.Stderr,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
+		j.Stdout, j.Stderr, j.StdoutTruncated, j.StderrTruncated,
 		j.CreatedAt.UTC(), j.UpdatedAt.UTC(),
 	)
 	return err
@@ -886,10 +895,10 @@ func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 func (p *Postgres) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC()
 	row := p.db.QueryRow(
-		`UPDATE jobs SET status='running', claimed_by_agent_id=$1, heartbeat_at=$2, updated_at=$3
-		 WHERE id=$4 AND user_id=$5 AND status IN ('pending','dispatched')
+		`UPDATE jobs SET status='running', claimed_by_agent_id=$1, heartbeat_at=$2, claimed_at=$3, updated_at=$4
+		 WHERE id=$5 AND user_id=$6 AND status IN ('pending','dispatched')
 		 RETURNING `+jobSelectColsPG,
-		claimedByAgentID, now, now, id, userID,
+		claimedByAgentID, now, now, now, id, userID,
 	)
 	j, err := scanJobPG(row)
 	if err != nil {
@@ -903,17 +912,21 @@ func (p *Postgres) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, e
 }
 
 func (p *Postgres) UpdateJob(j *Job) error {
-	var hb interface{}
+	var hb, ca interface{}
 	if !j.HeartbeatAt.IsZero() {
 		hb = j.HeartbeatAt.UTC()
+	}
+	if !j.ClaimedAt.IsZero() {
+		ca = j.ClaimedAt.UTC()
 	}
 	res, err := p.db.Exec(
 		`UPDATE jobs SET drive_id=$1,binding_id=$2,mode=$3,command_json=$4,status=$5,region_hint=$6,note=$7,
 		 agent_id=$8,claimed_by_agent_id=$9,connector_id=$10,exit_code=$11,duration_ms=$12,heartbeat_at=$13,
-		 stdout=$14,stderr=$15,updated_at=$16 WHERE id=$17 AND user_id=$18`,
+		 claimed_at=$14,timeout_sec=$15,stdout=$16,stderr=$17,stdout_truncated=$18,stderr_truncated=$19,updated_at=$20
+		 WHERE id=$21 AND user_id=$22`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
 		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb,
-		j.Stdout, j.Stderr, j.UpdatedAt.UTC(), j.ID, j.UserID,
+		ca, j.TimeoutSec, j.Stdout, j.Stderr, j.StdoutTruncated, j.StderrTruncated, j.UpdatedAt.UTC(), j.ID, j.UserID,
 	)
 	if err != nil {
 		return err
@@ -995,10 +1008,11 @@ func scanJobPG(row scannable) (*Job, error) {
 	var j Job
 	var cmd string
 	var exitCode sql.NullInt64
-	var hb sql.NullTime
+	var hb, ca sql.NullTime
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &j.DurationMs, &hb, &j.Stdout, &j.Stderr,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &j.DurationMs, &hb, &ca, &j.TimeoutSec,
+		&j.Stdout, &j.Stderr, &j.StdoutTruncated, &j.StderrTruncated,
 		&j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
@@ -1013,6 +1027,9 @@ func scanJobPG(row scannable) (*Job, error) {
 	}
 	if hb.Valid {
 		j.HeartbeatAt = hb.Time.UTC()
+	}
+	if ca.Valid {
+		j.ClaimedAt = ca.Time.UTC()
 	}
 	return &j, nil
 }

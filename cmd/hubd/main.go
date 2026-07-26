@@ -165,8 +165,23 @@ func main() {
 				remount(id, b)
 				continue
 			}
+			// Process alive but FUSE path unreadable (Windows WinFsp hang / Linux dead mount).
+			if mp.mode == "mount" && mountPointUnreachable(mp.mountPoint, 3*time.Second) {
+				log.Printf("mount path unreachable for binding %s (%s); reporting error and remounting", id, mp.mountPoint)
+				_ = reportActual(api, token, id, "error", "mount path unreachable")
+				mp.stop()
+				delete(active, id)
+				remount(id, b)
+				continue
+			}
 			if !mp.expiresAt.IsZero() && time.Until(mp.expiresAt) < 5*time.Minute {
 				log.Printf("refresh session for binding %s (expires soon)", id)
+				// AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH=1 skips soft conf rewrite (honest for open FUSE handles).
+				if forceRemountOnRefresh() {
+					log.Printf("force remount on refresh for binding %s", id)
+					remount(id, b)
+					continue
+				}
 				if mp.sessionToken != "" && mp.driveID != "" {
 					if nb, err := refreshSession(api, token, mp.sessionToken, mp.driveID); err == nil {
 						spec := nb.mountSpec()
@@ -177,6 +192,11 @@ func main() {
 								// soft-refresh may leave open FUSE handles on old creds (documented)
 								if mountDead(mp) {
 									log.Printf("mount dead after soft-refresh %s; remounting", id)
+									remount(id, b)
+									continue
+								}
+								if mountPointUnreachable(mp.mountPoint, 3*time.Second) {
+									log.Printf("mount unreachable after soft-refresh %s; remounting", id)
 									remount(id, b)
 									continue
 								}
@@ -252,6 +272,36 @@ func resolveMode(bindingMode string, sess *sessionBundle) string {
 		}
 	}
 	return "mount"
+}
+
+// forceRemountOnRefresh is true when soft STS conf rewrite is disabled in favor of full remount.
+func forceRemountOnRefresh() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// mountPointUnreachable returns true if path cannot be listed within timeout
+// (stuck FUSE / WinFsp, missing mount). Empty path is treated as unreachable.
+// sync_workspace modes should not call this for process health.
+func mountPointUnreachable(path string, timeout time.Duration) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return true
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ch := make(chan error, 1)
+	go func() {
+		_, err := os.ReadDir(path)
+		ch <- err
+	}()
+	select {
+	case err := <-ch:
+		return err != nil
+	case <-time.After(timeout):
+		return true
+	}
 }
 
 // mountDead reports whether a mount-mode rclone process has exited.
@@ -335,15 +385,28 @@ func (m *mountProc) stop() {
 	}
 	if m.cmd != nil && m.cmd.Process != nil {
 		if m.cmd.ProcessState == nil {
-			if err := m.cmd.Process.Signal(syscall.SIGTERM); err != nil && runtime.GOOS == "windows" {
+			// Windows: Signal(SIGTERM) is often unsupported — kill directly.
+			if runtime.GOOS == "windows" {
+				_ = m.cmd.Process.Kill()
+			} else if err := m.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				_ = m.cmd.Process.Kill()
 			}
 			if m.waitCh != nil {
-				<-m.waitCh
+				select {
+				case <-m.waitCh:
+				case <-time.After(8 * time.Second):
+					_ = m.cmd.Process.Kill()
+					<-m.waitCh
+				}
 			} else {
 				_, _ = m.cmd.Process.Wait()
 			}
 		}
+	}
+	// Best-effort unmount leftover (Linux fusermount; no-op when already gone).
+	if m.mode == "mount" && m.mountPoint != "" && runtime.GOOS != "windows" {
+		_ = exec.Command("fusermount", "-u", m.mountPoint).Run()
+		_ = exec.Command("umount", m.mountPoint).Run()
 	}
 }
 

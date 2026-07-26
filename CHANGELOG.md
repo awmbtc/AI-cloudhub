@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.2.10
+
+Job hard timeout, output truncation flags, hubd mount path probe + force remount.
+
+### Jobs
+- `timeout_sec` on create; `claimed_at` on claim; hard fail (exit 124) on claim path when overdue
+- Global `AI_CLOUDHUB_JOB_TIMEOUT_SEC`; runner `CommandContext` kill
+- `stdout_truncated` / `stderr_truncated` on complete (API cap and runner limitedBuffer)
+
+### hubd / Windows
+- Mount path liveness: `ReadDir` timeout → error + remount
+- `AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH=1` full remount instead of soft conf rewrite
+- Windows stop uses Kill; Linux stop fusermount/umount best-effort
+
 ## v0.2.9
 
 Job process output on complete, list status filters, CI live STS.

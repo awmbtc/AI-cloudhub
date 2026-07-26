@@ -235,6 +235,9 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	if !strings.HasSuffix(done.Stdout, "xxxx") {
 		t.Fatalf("stdout tail %q", done.Stdout)
 	}
+	if !done.StdoutTruncated || !done.StderrTruncated {
+		t.Fatalf("truncated flags: out=%v err=%v", done.StdoutTruncated, done.StderrTruncated)
+	}
 	// list by status
 	succ := svc.List(uid, ListFilter{Status: "succeeded"})
 	if len(succ) != 1 || succ[0].ID != j.ID {
@@ -248,6 +251,53 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	pend := svc.ListPending(uid, "")
 	if len(pend) != 0 {
 		t.Fatalf("pending %d", len(pend))
+	}
+}
+
+func TestHardTimeoutFailsJob(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	svc.SetLease(0) // only timeout path
+	uid := "u-to"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, TimeoutSec: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.TimeoutSec != 1 {
+		t.Fatalf("timeout_sec %d", j.TimeoutSec)
+	}
+	claimed, err := svc.Claim(uid, j.ID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ClaimedAt == nil {
+		t.Fatal("claimed_at required")
+	}
+	got, err := mem.GetJob(uid, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.ClaimedAt = time.Now().UTC().Add(-2 * time.Second)
+	got.HeartbeatAt = got.ClaimedAt
+	if err := mem.UpdateJob(got); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.ReclaimStale(uid)
+	if err != nil || n != 1 {
+		t.Fatalf("reclaim n=%d err=%v", n, err)
+	}
+	done, err := svc.Get(uid, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusFailed {
+		t.Fatalf("status %s", done.Status)
+	}
+	if done.ExitCode == nil || *done.ExitCode != 124 {
+		t.Fatalf("exit %v", done.ExitCode)
+	}
+	if !strings.Contains(done.Note, "timeout after 1s") {
+		t.Fatalf("note %q", done.Note)
 	}
 }
 

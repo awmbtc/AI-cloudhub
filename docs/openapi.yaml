@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.9
+  version: 0.2.10
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -698,12 +698,23 @@ components:
           type: string
           format: date-time
           description: Last claim or runner heartbeat while status=running (omitted when idle/terminal)
+        claimed_at:
+          type: string
+          format: date-time
+          description: When job entered running (wall clock for hard timeout)
+        timeout_sec:
+          type: integer
+          description: Hard wall-clock seconds from claim (0 = none)
         stdout:
           type: string
           description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
         stderr:
           type: string
           description: Capped agent stderr tail
+        stdout_truncated:
+          type: boolean
+        stderr_truncated:
+          type: boolean
         created_at:
           type: string
           format: date-time
@@ -734,6 +745,9 @@ components:
         connector_id:
           type: string
           description: Optional git/postgres/mysql connector for runner materialization
+        timeout_sec:
+          type: integer
+          description: Optional hard timeout seconds from claim (runner + API reclaim)
 
     JobComplete:
       type: object
@@ -755,6 +769,10 @@ components:
         stderr:
           type: string
           description: Optional capped process stderr
+        stdout_truncated:
+          type: boolean
+        stderr_truncated:
+          type: boolean
 
     Agent:
       type: object

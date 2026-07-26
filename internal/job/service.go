@@ -45,11 +45,17 @@ type Job struct {
 	DurationMs int64 `json:"duration_ms,omitempty"`
 	// HeartbeatAt last claim/heartbeat while running (omitted when zero).
 	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
+	// ClaimedAt when job entered running (wall clock for hard timeout).
+	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+	// TimeoutSec max run seconds from claim (0 = none / runner default only).
+	TimeoutSec int `json:"timeout_sec,omitempty"`
 	// Stdout / Stderr capped process output from runner (empty if not reported).
-	Stdout    string    `json:"stdout,omitempty"`
-	Stderr    string    `json:"stderr,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Stdout          string    `json:"stdout,omitempty"`
+	Stderr          string    `json:"stderr,omitempty"`
+	StdoutTruncated bool      `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool      `json:"stderr_truncated,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // CreateInput for new job.
@@ -61,6 +67,8 @@ type CreateInput struct {
 	RegionHint  string   `json:"region_hint"`
 	Note        string   `json:"note"`
 	ConnectorID string   `json:"connector_id"`
+	// TimeoutSec optional hard wall clock from claim (0 = none).
+	TimeoutSec int `json:"timeout_sec"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -132,6 +140,10 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		note += " | "
 	}
 	note += "BYOC only: claim with your runner; no platform large pool (D-001)"
+	timeoutSec := in.TimeoutSec
+	if timeoutSec < 0 {
+		timeoutSec = 0
+	}
 	sj := &store.Job{
 		ID:          uuid.NewString(),
 		UserID:      userID,
@@ -144,6 +156,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		Note:        note,
 		ConnectorID: strings.TrimSpace(in.ConnectorID),
 		AgentID:     strings.TrimSpace(in.AgentID),
+		TimeoutSec:  timeoutSec,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -276,20 +289,41 @@ func (s *Service) Heartbeat(userID, id string) (*Job, error) {
 	return jobFromStore(sj), nil
 }
 
-// ReclaimStale releases running jobs whose heartbeat is older than lease TTL.
-// Returns how many jobs were returned to pending. No-op when lease is disabled.
+// ReclaimStale fails timed-out running jobs and releases lease-expired ones.
+// Returns how many jobs were transitioned (timeout fail or lease release).
+// Lease reclaim is a no-op when lease is disabled.
 func (s *Service) ReclaimStale(userID string) (int, error) {
-	if s.lease <= 0 {
-		return 0, nil
-	}
 	list, err := s.store.ListJobs(userID)
 	if err != nil {
 		return 0, err
 	}
-	cutoff := time.Now().UTC().Add(-s.lease)
+	now := time.Now().UTC()
+	var leaseCutoff time.Time
+	if s.lease > 0 {
+		leaseCutoff = now.Add(-s.lease)
+	}
 	n := 0
 	for _, sj := range list {
 		if Status(sj.Status) != StatusRunning {
+			continue
+		}
+		// Hard wall-clock timeout from claim (job.TimeoutSec or global default).
+		if sec := effectiveTimeoutSec(sj.TimeoutSec); sec > 0 {
+			start := sj.ClaimedAt
+			if start.IsZero() {
+				start = sj.HeartbeatAt
+			}
+			if start.IsZero() {
+				start = sj.UpdatedAt
+			}
+			if !start.IsZero() && now.After(start.Add(time.Duration(sec)*time.Second)) {
+				if _, err := s.failTimeout(userID, sj.ID, sec); err == nil {
+					n++
+				}
+				continue
+			}
+		}
+		if s.lease <= 0 {
 			continue
 		}
 		// Prefer HeartbeatAt; fall back to UpdatedAt for pre-lease rows.
@@ -297,7 +331,7 @@ func (s *Service) ReclaimStale(userID string) (int, error) {
 		if ts.IsZero() {
 			ts = sj.UpdatedAt
 		}
-		if ts.IsZero() || !ts.Before(cutoff) {
+		if ts.IsZero() || !ts.Before(leaseCutoff) {
 			continue
 		}
 		if _, err := s.ReleaseToPending(userID, sj.ID, "lease expired"); err != nil {
@@ -306,6 +340,44 @@ func (s *Service) ReclaimStale(userID string) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// effectiveTimeoutSec returns job-level timeout, else AI_CLOUDHUB_JOB_TIMEOUT_SEC, else 0.
+func effectiveTimeoutSec(jobTimeout int) int {
+	if jobTimeout > 0 {
+		return jobTimeout
+	}
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_TIMEOUT_SEC"))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// failTimeout marks a running job failed due to hard deadline (exit 124 convention).
+func (s *Service) failTimeout(userID, id string, sec int) (*Job, error) {
+	sj, err := s.store.GetJob(userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	if Status(sj.Status) != StatusRunning {
+		return nil, fmt.Errorf("job not running (status=%s)", sj.Status)
+	}
+	code := 124
+	sj.Status = string(StatusFailed)
+	sj.ExitCode = &code
+	sj.Note = appendJobNote(sj.Note, fmt.Sprintf("timeout after %ds", sec))
+	sj.HeartbeatAt = time.Time{}
+	sj.ClaimedAt = time.Time{}
+	sj.UpdatedAt = time.Now().UTC()
+	if err := s.store.UpdateJob(sj); err != nil {
+		return nil, err
+	}
+	return jobFromStore(sj), nil
 }
 
 // ReleaseToPending returns a running job to pending so another BYOC runner can claim it.
@@ -326,6 +398,7 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 	sj.Status = string(StatusPending)
 	sj.ClaimedByAgentID = "" // clear claimer so another runner can take ownership
 	sj.HeartbeatAt = time.Time{}
+	sj.ClaimedAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	reason = strings.TrimSpace(reason)
 	if reason != "" {
@@ -405,12 +478,14 @@ const DefaultMaxJobOutput = 8192
 
 // CompleteInput is the optional structured result of a BYOC runner complete.
 type CompleteInput struct {
-	OK         bool
-	Note       string
-	ExitCode   *int  // nil = not reported
-	DurationMs int64 // 0 = not reported
-	Stdout     string
-	Stderr     string
+	OK              bool
+	Note            string
+	ExitCode        *int  // nil = not reported
+	DurationMs      int64 // 0 = not reported
+	Stdout          string
+	Stderr          string
+	StdoutTruncated bool // explicit from runner; also set if API caps
+	StderrTruncated bool
 }
 
 // Complete sets terminal status.
@@ -438,13 +513,18 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 		sj.DurationMs = in.DurationMs
 	}
 	maxOut := jobOutputMax()
-	if in.Stdout != "" {
-		sj.Stdout = capTail(in.Stdout, maxOut)
+	if in.Stdout != "" || in.StdoutTruncated {
+		capped, trunc := capTailFlag(in.Stdout, maxOut)
+		sj.Stdout = capped
+		sj.StdoutTruncated = in.StdoutTruncated || trunc
 	}
-	if in.Stderr != "" {
-		sj.Stderr = capTail(in.Stderr, maxOut)
+	if in.Stderr != "" || in.StderrTruncated {
+		capped, trunc := capTailFlag(in.Stderr, maxOut)
+		sj.Stderr = capped
+		sj.StderrTruncated = in.StderrTruncated || trunc
 	}
 	sj.HeartbeatAt = time.Time{}
+	sj.ClaimedAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -469,10 +549,16 @@ func jobOutputMax() int {
 
 // capTail keeps the last max bytes of s (UTF-8 safe-ish: byte-level; logs are usually ASCII).
 func capTail(s string, max int) string {
+	c, _ := capTailFlag(s, max)
+	return c
+}
+
+// capTailFlag returns capped string and whether truncation occurred.
+func capTailFlag(s string, max int) (string, bool) {
 	if max <= 0 || len(s) <= max {
-		return s
+		return s, false
 	}
-	return s[len(s)-max:]
+	return s[len(s)-max:], true
 }
 
 // appendJobNote joins note segments with " | " and caps length (tail kept).
@@ -503,6 +589,7 @@ func (s *Service) Cancel(userID, id string) (*Job, error) {
 	}
 	sj.Status = string(StatusCancelled)
 	sj.HeartbeatAt = time.Time{}
+	sj.ClaimedAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -527,8 +614,11 @@ func jobFromStore(sj *store.Job) *Job {
 		AgentID:          sj.AgentID,
 		ClaimedByAgentID: sj.ClaimedByAgentID,
 		DurationMs:       sj.DurationMs,
+		TimeoutSec:       sj.TimeoutSec,
 		Stdout:           sj.Stdout,
 		Stderr:           sj.Stderr,
+		StdoutTruncated:  sj.StdoutTruncated,
+		StderrTruncated:  sj.StderrTruncated,
 		CreatedAt:        sj.CreatedAt,
 		UpdatedAt:        sj.UpdatedAt,
 	}
@@ -539,6 +629,10 @@ func jobFromStore(sj *store.Job) *Job {
 	if !sj.HeartbeatAt.IsZero() {
 		t := sj.HeartbeatAt.UTC()
 		j.HeartbeatAt = &t
+	}
+	if !sj.ClaimedAt.IsZero() {
+		t := sj.ClaimedAt.UTC()
+		j.ClaimedAt = &t
 	}
 	return j
 }

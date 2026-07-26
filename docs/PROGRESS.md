@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.9 已发布；job stdout/stderr + status 过滤 + CI STS live
+## 总览：v0.2.10 已发布；job timeout/截断标记 + hubd 挂载探测
 
 | 阶段 | 状态 |
 |------|------|
@@ -376,3 +376,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/jobs?status=` exact filter（pending 仍为 claimable 集）
 - [x] CI `smoke-sts-live`（MinIO + LIVE/REQUIRE）
 - [x] 版本钉 **0.2.9** + tag
+
+### 本波（timeout + trunc flags + hubd probe）
+
+- [x] `timeout_sec` / `claimed_at`；API fail timeout exit 124；runner CommandContext
+- [x] `stdout_truncated` / `stderr_truncated` store+API+runner+MCP
+- [x] hubd：mount path ReadDir 探测；`FORCE_REMOUNT_ON_REFRESH`；Windows Kill 停挂
+- [x] 版本钉 **0.2.10** + tag

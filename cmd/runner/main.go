@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,16 +60,18 @@ func main() {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args); err != nil {
+	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args, 0); err != nil {
 		log.Fatal(err)
 	}
 }
 
 // runOnceResult is workspace prep + agent command outcome for worker complete.
 type runOnceResult struct {
-	CloneNote string
-	Stdout    string
-	Stderr    string
+	CloneNote       string
+	Stdout          string
+	Stderr          string
+	StdoutTruncated bool
+	StderrTruncated bool
 }
 
 func envTruthy(v string) bool {
@@ -169,7 +172,7 @@ func runWorker(api, token, mountPoint string) {
 			}
 			stopHB := startJobHeartbeat(api, token, j.ID)
 			start := time.Now()
-			res, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
+			res, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command, j.TimeoutSec)
 			durMs := time.Since(start).Milliseconds()
 			stopHB()
 			ok := err == nil
@@ -178,12 +181,17 @@ func runWorker(api, token, mountPoint string) {
 			if err != nil {
 				note = joinJobNote(res.CloneNote, err.Error())
 				exitCode = exitCodeFromErr(err)
+				if errors.Is(err, errJobTimeout) {
+					exitCode = 124
+				}
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
-			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs, res.Stdout, res.Stderr)
+			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs, res.Stdout, res.Stderr, res.StdoutTruncated, res.StderrTruncated)
 		}
 	}
 }
+
+var errJobTimeout = errors.New("job timeout")
 
 // exitCodeFromErr unwraps exec.ExitError; otherwise 1 for non-exit failures.
 func exitCodeFromErr(err error) int {
@@ -204,6 +212,7 @@ type jobDTO struct {
 	ConnectorID      string   `json:"connector_id"`
 	AgentID          string   `json:"agent_id"`
 	ClaimedByAgentID string   `json:"claimed_by_agent_id"`
+	TimeoutSec       int      `json:"timeout_sec"`
 }
 
 func claimNext(api, token string) (*jobDTO, error) {
@@ -225,7 +234,7 @@ func claimNext(api, token string) (*jobDTO, error) {
 	return &j, nil
 }
 
-func completeJob(api, token, id string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string) error {
+func completeJob(api, token, id string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string, stdoutTrunc, stderrTrunc bool) error {
 	payload := map[string]interface{}{"ok": ok, "note": note}
 	if exitCode != nil {
 		payload["exit_code"] = *exitCode
@@ -238,6 +247,12 @@ func completeJob(api, token, id string, ok bool, note string, exitCode *int, dur
 	}
 	if stderr != "" {
 		payload["stderr"] = stderr
+	}
+	if stdoutTrunc {
+		payload["stdout_truncated"] = true
+	}
+	if stderrTrunc {
+		payload["stderr_truncated"] = true
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest(http.MethodPost, api+"/v1/jobs/"+id+"/complete", bytes.NewReader(body))
@@ -306,7 +321,7 @@ func heartbeatJob(api, token, id string) error {
 // CloneNote is "cloned to <path>" or "clone failed: …" when a connector was attempted; empty otherwise.
 // With AI_CLOUDHUB_CLONE_STRICT, clone failures return as err (job fails); default soft-continues.
 // Stdout/Stderr are capped agent process output (also mirrored to the runner process streams).
-func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (runOnceResult, error) {
+func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string, timeoutSec int) (runOnceResult, error) {
 	log.Printf("AI-cloudhub runner (BYOC) api=%s mount=%s job=%s", api, mountPoint, jobID)
 	var out runOnceResult
 	var clonePath string
@@ -545,18 +560,45 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 	}
 
-	agent := exec.Command(args[0], args[1:]...)
+	// Hard timeout: job.TimeoutSec, else AI_CLOUDHUB_JOB_TIMEOUT_SEC (0 = none).
+	to := timeoutSec
+	if to <= 0 {
+		if v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_TIMEOUT_SEC")); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				to = n
+			}
+		}
+	}
+	var (
+		agent  *exec.Cmd
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+	if to > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(to)*time.Second)
+		defer cancel()
+		agent = exec.CommandContext(ctx, args[0], args[1:]...)
+	} else {
+		agent = exec.Command(args[0], args[1:]...)
+	}
 	agent.Dir = mountPoint
 	agent.Env = childEnv
 	var stdoutBuf, stderrBuf bytes.Buffer
 	capN := runnerOutputCap()
-	agent.Stdout = io.MultiWriter(os.Stdout, &limitedBuffer{buf: &stdoutBuf, max: capN})
-	agent.Stderr = io.MultiWriter(os.Stderr, &limitedBuffer{buf: &stderrBuf, max: capN})
+	outLim := &limitedBuffer{buf: &stdoutBuf, max: capN}
+	errLim := &limitedBuffer{buf: &stderrBuf, max: capN}
+	agent.Stdout = io.MultiWriter(os.Stdout, outLim)
+	agent.Stderr = io.MultiWriter(os.Stderr, errLim)
 	agent.Stdin = os.Stdin
 	runErr := agent.Run()
 	out.Stdout = stdoutBuf.String()
 	out.Stderr = stderrBuf.String()
+	out.StdoutTruncated = outLim.truncated
+	out.StderrTruncated = errLim.truncated
 	if runErr != nil {
+		if to > 0 && ctx != nil && ctx.Err() == context.DeadlineExceeded {
+			return out, fmt.Errorf("%w after %ds: %v", errJobTimeout, to, runErr)
+		}
 		return out, fmt.Errorf("agent: %w", runErr)
 	}
 	return out, nil
@@ -582,8 +624,9 @@ func runnerOutputCap() int {
 
 // limitedBuffer keeps at most max bytes (tail) of written data.
 type limitedBuffer struct {
-	buf *bytes.Buffer
-	max int
+	buf       *bytes.Buffer
+	max       int
+	truncated bool
 }
 
 func (l *limitedBuffer) Write(p []byte) (int, error) {
@@ -596,6 +639,7 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 	// Always accept full write; trim front if over max.
 	n, err := l.buf.Write(p)
 	if l.buf.Len() > l.max {
+		l.truncated = true
 		b := l.buf.Bytes()
 		trim := len(b) - l.max
 		l.buf.Reset()

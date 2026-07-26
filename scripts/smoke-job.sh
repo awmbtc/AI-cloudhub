@@ -129,10 +129,10 @@ assert d.get("heartbeat_at"), d
 print("heartbeat_at", d["heartbeat_at"])
 '
 
-echo "== complete with exit_code + duration_ms + stdout/stderr =="
+echo "== complete with exit_code + duration_ms + stdout/stderr + truncated =="
 "${CURL[@]}" -X POST "$API/v1/jobs/$JID/complete" -H "Authorization: Bearer $ATOK" \
   -H 'Content-Type: application/json' \
-  -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123,"stdout":"hello-out\n","stderr":"warn-err\n"}' \
+  -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123,"stdout":"hello-out\n","stderr":"warn-err\n","stdout_truncated":true}' \
   | python3 -c '
 import sys,json
 d=json.load(sys.stdin)
@@ -141,9 +141,26 @@ assert d.get("exit_code")==0, d
 assert d.get("duration_ms")==123, d
 assert "hello-out" in (d.get("stdout") or ""), d
 assert "warn-err" in (d.get("stderr") or ""), d
+assert d.get("stdout_truncated") is True, d
 assert not d.get("heartbeat_at"), d
-print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"], "out", repr(d.get("stdout")))
+print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"], "trunc", d.get("stdout_truncated"))
 '
+
+echo "== timeout_sec create + claim claimed_at =="
+JTO=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"timeout_sec\":3600}" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("timeout_sec")==3600, d; print(d["id"])')
+CLAIM_TO=$("${CURL[@]}" -X POST "$API/v1/jobs/$JTO/claim" -H "Authorization: Bearer $ATOK")
+echo "$CLAIM_TO" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="running", d
+assert d.get("claimed_at"), d
+assert d.get("timeout_sec")==3600, d
+print("timeout claim claimed_at ok", d["claimed_at"])
+'
+"${CURL[@]}" -X POST "$API/v1/jobs/$JTO/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
 
 echo "== list status=succeeded filter =="
 "${CURL[@]}" "$API/v1/jobs?status=succeeded" -H "Authorization: Bearer $ATOK" \

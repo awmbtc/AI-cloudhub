@@ -92,7 +92,9 @@ A: 将工作目录与 rclone 加入白名单；见 `docs/RISK-COST.md` FUSE/WinF
 - [ ] hubd 对 `mode=mount` 且无 WinFsp：**拒绝挂载**并提示 install-deps / sync_workspace
 - [ ] **Mode 来源**（优先级）：binding.mode → session.mode → manifest `AI_CLOUDHUB_MODE` → `mount`
 - [ ] rclone mount 进程退出后，hubd 会 `actual=error` 并自动 remount（desired=mounted）
-- [ ] soft-refresh 只重写 conf；**已打开的 FUSE 句柄**仍可能持旧凭证，必要时手动 remount
+- [ ] mount 路径 `ReadDir` 超时/失败 → remount（WinFsp 假死兜底）
+- [ ] soft-refresh 默认只重写 conf；**已打开的 FUSE 句柄**仍可能持旧凭证
+- [ ] 可选：`$env:AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH=1` 强制整挂 remount
 - [ ] 注意：`GET /v1/runtime/check` 是 **API 进程所在主机**，不一定是本机 — 以 hubd 启动日志为准
 - [ ] 杀软白名单：state 目录 + rclone
 

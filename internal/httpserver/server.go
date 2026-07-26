@@ -459,17 +459,20 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			return
 		}
 		var body struct {
-			OK         bool   `json:"ok"`
-			Note       string `json:"note"`
-			ExitCode   *int   `json:"exit_code"`
-			DurationMs int64  `json:"duration_ms"`
-			Stdout     string `json:"stdout"`
-			Stderr     string `json:"stderr"`
+			OK              bool   `json:"ok"`
+			Note            string `json:"note"`
+			ExitCode        *int   `json:"exit_code"`
+			DurationMs      int64  `json:"duration_ms"`
+			Stdout          string `json:"stdout"`
+			Stderr          string `json:"stderr"`
+			StdoutTruncated bool   `json:"stdout_truncated"`
+			StderrTruncated bool   `json:"stderr_truncated"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		j, err := s.jobs.Complete(userID, id, job.CompleteInput{
 			OK: body.OK, Note: body.Note, ExitCode: body.ExitCode, DurationMs: body.DurationMs,
 			Stdout: body.Stdout, Stderr: body.Stderr,
+			StdoutTruncated: body.StdoutTruncated, StderrTruncated: body.StderrTruncated,
 		})
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())

@@ -277,6 +277,10 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT`,
 		`ALTER TABLE jobs ADD COLUMN stdout TEXT`,
 		`ALTER TABLE jobs ADD COLUMN stderr TEXT`,
+		`ALTER TABLE jobs ADD COLUMN claimed_at TEXT`,
+		`ALTER TABLE jobs ADD COLUMN timeout_sec INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN stdout_truncated INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN stderr_truncated INTEGER`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1007,7 +1011,9 @@ func parseTime(s string) time.Time {
 
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
-		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), COALESCE(stdout,''), COALESCE(stderr,''),
+		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), COALESCE(claimed_at,''),
+		 COALESCE(timeout_sec,0), COALESCE(stdout,''), COALESCE(stderr,''),
+		 COALESCE(stdout_truncated,0), COALESCE(stderr_truncated,0),
 		 created_at, updated_at`
 
 func (s *SQLite) CreateJob(j *Job) error {
@@ -1015,11 +1021,16 @@ func (s *SQLite) CreateJob(j *Job) error {
 	if !j.HeartbeatAt.IsZero() {
 		hb = j.HeartbeatAt.UTC().Format(time.RFC3339Nano)
 	}
+	ca := ""
+	if !j.ClaimedAt.IsZero() {
+		ca = j.ClaimedAt.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, heartbeat_at, stdout, stderr, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb, j.Stdout, j.Stderr,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
+		j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1077,10 +1088,10 @@ func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	row := s.db.QueryRow(
-		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, heartbeat_at = ?, updated_at = ?
+		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, heartbeat_at = ?, claimed_at = ?, updated_at = ?
 		 WHERE id = ? AND user_id = ? AND status IN ('pending','dispatched')
 		 RETURNING `+jobSelectCols,
-		claimedByAgentID, now, now, id, userID,
+		claimedByAgentID, now, now, now, id, userID,
 	)
 	j, err := scanJob(row)
 	if err != nil {
@@ -1099,14 +1110,18 @@ func (s *SQLite) UpdateJob(j *Job) error {
 	if !j.HeartbeatAt.IsZero() {
 		hb = j.HeartbeatAt.UTC().Format(time.RFC3339Nano)
 	}
+	ca := ""
+	if !j.ClaimedAt.IsZero() {
+		ca = j.ClaimedAt.UTC().Format(time.RFC3339Nano)
+	}
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
 		 agent_id=?, claimed_by_agent_id=?, connector_id=?, exit_code=?, duration_ms=?, heartbeat_at=?,
-		 stdout=?, stderr=?, updated_at=?
+		 claimed_at=?, timeout_sec=?, stdout=?, stderr=?, stdout_truncated=?, stderr_truncated=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
 		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb,
-		j.Stdout, j.Stderr,
+		ca, j.TimeoutSec, j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1558,12 +1573,14 @@ func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
 
 func scanJob(row scannable) (*Job, error) {
 	var j Job
-	var cmd, created, updated, heartbeat, stdout, stderr string
+	var cmd, created, updated, heartbeat, claimedAt, stdout, stderr string
 	var exitCode sql.NullInt64
 	var durationMs int64
+	var timeoutSec, outTrunc, errTrunc int
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &heartbeat, &stdout, &stderr,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &heartbeat, &claimedAt,
+		&timeoutSec, &stdout, &stderr, &outTrunc, &errTrunc,
 		&created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
@@ -1580,8 +1597,14 @@ func scanJob(row scannable) (*Job, error) {
 	if strings.TrimSpace(heartbeat) != "" {
 		j.HeartbeatAt = parseTime(heartbeat)
 	}
+	if strings.TrimSpace(claimedAt) != "" {
+		j.ClaimedAt = parseTime(claimedAt)
+	}
+	j.TimeoutSec = timeoutSec
 	j.Stdout = stdout
 	j.Stderr = stderr
+	j.StdoutTruncated = outTrunc != 0
+	j.StderrTruncated = errTrunc != 0
 	j.CreatedAt = parseTime(created)
 	j.UpdatedAt = parseTime(updated)
 	return &j, nil
@@ -1592,4 +1615,11 @@ func nullInt(p *int) interface{} {
 		return nil
 	}
 	return *p
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
