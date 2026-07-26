@@ -355,3 +355,27 @@ code=$("${CURL[@]}" -o /tmp/aihub-adm-cancel.json -w "%{http_code}" \
   -X POST "$API/v1/admin/jobs/$JADM/cancel" -H "Authorization: Bearer $ATOK")
 test "$code" = "403"
 echo "admin cancel denied for agent ($code)"
+echo "== admin release running -> pending =="
+JREL=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$JREL/claim" -H "Authorization: Bearer $ATOK" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/admin/jobs/$JREL/release" -H "Authorization: Bearer $TOK" \
+  -H 'Content-Type: application/json' -d '{"note":"smoke-requeue"}' \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="pending", d
+assert "released: admin: smoke-requeue" in (d.get("note") or ""), d
+assert not d.get("claimed_by_agent_id"), d
+print("admin release ok", d["id"])
+'
+# reclaim after release
+"${CURL[@]}" -X POST "$API/v1/jobs/$JREL/claim" -H "Authorization: Bearer $ATOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["status"]=="running", d; print("reclaim after release ok")'
+"${CURL[@]}" -X POST "$API/v1/jobs/$JREL/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
+code=$("${CURL[@]}" -o /tmp/aihub-adm-rel.json -w "%{http_code}" \
+  -X POST "$API/v1/admin/jobs/$JREL/release" -H "Authorization: Bearer $ATOK")
+test "$code" = "403"
+echo "admin release denied for agent ($code)"

@@ -966,6 +966,22 @@ func (s *Service) AdminCancel(id, optionalNote string) (*Job, error) {
 	return s.cancelStoreJob(sj, strings.TrimSpace(optionalNote))
 }
 
+// AdminRelease returns a running/dispatched job to pending so another BYOC runner can claim it.
+// reason is required for audit trail (appended as released: admin: …).
+func (s *Service) AdminRelease(id, reason string) (*Job, error) {
+	sj, err := s.store.GetJobByID(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "admin force release"
+	} else {
+		reason = "admin: " + reason
+	}
+	return s.ReleaseToPending(sj.UserID, sj.ID, reason)
+}
+
 func (s *Service) cancelStoreJob(sj *store.Job, adminNote string) (*Job, error) {
 	if sj.Status == string(StatusSucceeded) || sj.Status == string(StatusFailed) {
 		return nil, fmt.Errorf("job already finished")

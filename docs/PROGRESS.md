@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.17 已发布；admin cancel 任意 job
+## 总览：v0.2.18 已发布；admin force-release 回 pending
 
 | 阶段 | 状态 |
 |------|------|
@@ -429,3 +429,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `POST /v1/admin/jobs/{id}/cancel` + optional note
 - [x] AdminCancel 幂等；metrics/audit；smoke
 - [x] 版本钉 **0.2.17** + tag
+
+### 本波（admin release）
+
+- [x] `POST /v1/admin/jobs/{id}/release` → pending（`released: admin: …`）
+- [x] AdminRelease + audit + smoke
+- [x] 版本钉 **0.2.18** + tag

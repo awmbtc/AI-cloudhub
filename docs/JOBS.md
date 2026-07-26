@@ -123,14 +123,18 @@ GET  /v1/admin/jobs/stats?user_id=
 GET  /v1/admin/jobs/{id}
 POST /v1/admin/jobs/{id}/cancel
 { "note": "optional reason" }
+
+POST /v1/admin/jobs/{id}/release
+{ "note": "optional reason" }
 ```
 
 - Cross-user listing; `limit` default 100, max 500.
 - Global `stats` without `user_id` counts **up to 500 newest** jobs only (honest cap).
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
+- **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
 - Agent tokens cannot call admin APIs.
-- Audit: `admin.jobs.list` / `stats` / `get` / `cancel`.
+- Audit: `admin.jobs.list` / `stats` / `get` / `cancel` / `release`.
 
 ## Honesty
 

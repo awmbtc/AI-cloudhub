@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.18
+
+Admin force-release running jobs to pending.
+
+### Admin / Jobs
+- `POST /v1/admin/jobs/{id}/release` with optional `{note}` → pending + `released: admin: …`
+- Clears claimer fields so another BYOC runner can claim
+- Audit `admin.jobs.release`
+
 ## v0.2.17
 
 Admin cancel any BYOC job.

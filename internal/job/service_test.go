@@ -352,6 +352,45 @@ func TestAdminCancel(t *testing.T) {
 	}
 }
 
+func TestAdminRelease(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	j, _, err := svc.Create("u-rel", CreateInput{DriveID: "d", Command: []string{"work"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim("u-rel", j.ID, "a", "r1"); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := svc.AdminRelease(j.ID, "dead runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Status != StatusPending {
+		t.Fatalf("status %s", rel.Status)
+	}
+	if rel.ClaimedByAgentID != "" || rel.ClaimedByRunnerID != "" {
+		t.Fatalf("claimer should clear: %+v", rel)
+	}
+	if !strings.Contains(rel.Note, "released: admin: dead runner") {
+		t.Fatalf("note %q", rel.Note)
+	}
+	// can claim again
+	again, err := svc.Claim("u-rel", j.ID, "b", "r2")
+	if err != nil || again.Status != StatusRunning {
+		t.Fatalf("reclaim: %v %+v", err, again)
+	}
+	// release pending fails
+	if _, err := svc.AdminRelease(j.ID+"nope", ""); err == nil {
+		// wrong id
+	}
+	if _, err := svc.Complete("u-rel", j.ID, CompleteInput{OK: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AdminRelease(j.ID, "x"); err == nil {
+		t.Fatal("expected release fail on terminal")
+	}
+}
+
 func TestCompleteNoopWhenCancelled(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j, _, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})

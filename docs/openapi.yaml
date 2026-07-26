@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.17
+  version: 0.2.18
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1866,6 +1866,42 @@ paths:
       responses:
         '200':
           description: Cancelled job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Admin required
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/admin/jobs/{id}/release:
+    post:
+      tags: [admin]
+      summary: Force-release running job to pending (admin)
+      operationId: adminReleaseJob
+      description: |
+        Returns a running/dispatched job to `pending` so another BYOC runner can claim it.
+        Note trail gets `released: admin: …`. Fails if job is terminal or not releaseable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        '200':
+          description: Job back in pending
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Job' }

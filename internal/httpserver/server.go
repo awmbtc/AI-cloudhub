@@ -2376,7 +2376,7 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 	})
 }
 
-// routeAdminJobsSub: GET stats|/{id} ; POST /{id}/cancel
+// routeAdminJobsSub: GET stats|/{id} ; POST /{id}/cancel | POST /{id}/release
 func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/jobs/"), "/")
 	if path == "" {
@@ -2384,7 +2384,7 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 		return
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) == 2 && parts[1] == "cancel" {
+	if len(parts) == 2 && (parts[1] == "cancel" || parts[1] == "release") {
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -2393,7 +2393,24 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 			Note string `json:"note"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		j, err := s.jobs.AdminCancel(parts[0], body.Note)
+		var (
+			j   *job.Job
+			err error
+		)
+		switch parts[1] {
+		case "cancel":
+			j, err = s.jobs.AdminCancel(parts[0], body.Note)
+			if err == nil {
+				metrics.IncJobCancelled()
+				s.auth.Audit(adminID, "admin.jobs.cancel", j.ID, "user="+j.UserID+" note="+strings.TrimSpace(body.Note))
+			}
+		case "release":
+			j, err = s.jobs.AdminRelease(parts[0], body.Note)
+			if err == nil {
+				metrics.IncJobLeaseReclaim() // reuse reclaim counter for ops force-release
+				s.auth.Audit(adminID, "admin.jobs.release", j.ID, "user="+j.UserID+" note="+strings.TrimSpace(body.Note))
+			}
+		}
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				writeErr(w, http.StatusNotFound, err.Error())
@@ -2402,8 +2419,6 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		metrics.IncJobCancelled()
-		s.auth.Audit(adminID, "admin.jobs.cancel", j.ID, "user="+j.UserID+" note="+strings.TrimSpace(body.Note))
 		writeJSON(w, http.StatusOK, j)
 		return
 	}
