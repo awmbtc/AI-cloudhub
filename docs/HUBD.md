@@ -1,7 +1,7 @@
 # hubd — 本机 Runtime 挂盘
 
 > 用户机器上的自动挂载守护进程（**BYOC / D-001**：不在平台跑）。  
-> 黄金路径总览：[GOLDEN-PATH.md](./GOLDEN-PATH.md) · Windows：[WINDOWS.md](./WINDOWS.md)
+> **Runtime 总览：** [RUNTIME.md](./RUNTIME.md) · 黄金路径：[GOLDEN-PATH.md](./GOLDEN-PATH.md) · Windows：[WINDOWS.md](./WINDOWS.md)
 
 ## 做什么
 
@@ -103,7 +103,8 @@ make smoke-hubd
 
 ## 与 runner
 
-Job 侧对称探测见 [RUNNER.md](./RUNNER.md)（`runner check|dry-run`，不 claim）。
+Job 侧对称探测见 [RUNNER.md](./RUNNER.md)（`runner check|dry-run`，不 claim）。  
+总对照表：[RUNTIME.md](./RUNTIME.md)。
 
 ## 版本
 

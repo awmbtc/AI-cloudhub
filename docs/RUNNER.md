@@ -1,7 +1,7 @@
 # runner — BYOC 云端 / 本机 Job Runtime
 
 > 跑在**用户机器**上（D-001：禁止平台 Runner 大池）。  
-> 对称本机探测：与 [HUBD.md](./HUBD.md) 的 `check` / `dry-run` 对齐。
+> **Runtime 总览：** [RUNTIME.md](./RUNTIME.md) · 对称探测：[HUBD.md](./HUBD.md) `check` / `dry-run`
 
 ## 模式
 

@@ -7,7 +7,7 @@ BINS    := api hubd runner mcp
 .PHONY: all build test help clean docker-api docker-all release-binaries \
 	api hubd runner mcp \
 	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp \
-	smoke-quickstart-agent smoke-golden smoke-golden-minio smoke-hubd smoke-runner smoke-stage-c smoke-byoc smoke-sts smoke-sts-live prod-preflight smoke-prod-preflight smoke-all
+	smoke-quickstart-agent smoke-golden smoke-golden-minio smoke-hubd smoke-runner smoke-runtime smoke-stage-c smoke-byoc smoke-sts smoke-sts-live prod-preflight smoke-prod-preflight smoke-all
 all: build
 
 build: $(BINS)
@@ -53,6 +53,7 @@ help:
 	@echo "  make smoke-golden-minio  Live MinIO golden path (optional; soft-skip if MinIO unavailable)"
 	@echo "  make smoke-hubd    hubd check + dry-run (no FUSE; docs/HUBD.md)"
 	@echo "  make smoke-runner  runner check + dry-run (no claim; docs/RUNNER.md)"
+	@echo "  make smoke-runtime hubd+runner (docs/RUNTIME.md)"
 	@echo "  make smoke-stage-c  Stage C memory/marketplace/connectors"
 	@echo "  make smoke-byoc     BYOC git/pg/mysql materialize (local)"
 	@echo "  make smoke-sts      Offline STS path selection + unit tests (+ fail-open)"
@@ -105,6 +106,10 @@ smoke-hubd: build
 smoke-runner: build
 	@chmod +x scripts/smoke-runner.sh
 	./scripts/smoke-runner.sh
+
+# Combined user-side runtime path (hubd + runner); see docs/RUNTIME.md
+smoke-runtime: smoke-hubd smoke-runner
+	@echo "OK smoke-runtime (hubd + runner)"
 
 smoke-stage-c: build
 	./scripts/smoke-stage-c.sh

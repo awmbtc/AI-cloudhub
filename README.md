@@ -18,6 +18,7 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构定稿 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策记录（D-001 Runner 池黑名单 · **D-003 主线收口 / Job freeze**） |
 | [docs/GOLDEN-PATH.md](docs/GOLDEN-PATH.md) | **黄金路径**（主线演示剧本 + `make smoke-golden`） |
+| [docs/RUNTIME.md](docs/RUNTIME.md) | **Runtime 总览**（hubd + runner + 验收顺序） |
 | [docs/HUBD.md](docs/HUBD.md) | **hubd** check/dry-run/真挂盘 |
 | [docs/RUNNER.md](docs/RUNNER.md) | **runner** BYOC check/dry-run/worker |
 | [docs/openapi.yaml](docs/openapi.yaml) | **HTTP OpenAPI**（auth / providers / drives / bindings / sessions / jobs / admin / healthz / readyz / metrics / runtime） |
@@ -56,7 +57,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.58`：runner check/dry-run（对称 hubd，不 claim） | ✅ |
+| **发布** | `v0.2.59`：Runtime 总览（hubd+runner）收口 | ✅ |
 
 ## 快速开始
 

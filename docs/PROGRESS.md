@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.58（+ runner check/dry-run）
+## 总览：v0.2.59（+ Runtime 总览收口）
 
 | 阶段 | 状态 |
 |------|------|
@@ -560,6 +560,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `runner check|dry-run` + docs/RUNNER.md
 - [x] `make smoke-runner`（pending 列表且不 claim）
 - [x] 版本钉 **0.2.58** + tag
+
+### 本波（v0.2.59 · Runtime 总览）
+
+- [x] `docs/RUNTIME.md` hubd+runner 一张图与验收顺序
+- [x] `make smoke-runtime`
+- [x] 版本钉 **0.2.59** + tag
+
 
 
 

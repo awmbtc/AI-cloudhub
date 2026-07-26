@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.59
+
+Runtime overview close-out:
+
+- `docs/RUNTIME.md` — hubd + runner map, env table, acceptance order
+- `make smoke-runtime` (= smoke-hubd + smoke-runner)
+- Cross-links from GOLDEN-PATH / CUTOVER / HUBD / RUNNER
+
 ## v0.2.58
 
 runner check/dry-run (symmetric to hubd, D-001 BYOC):

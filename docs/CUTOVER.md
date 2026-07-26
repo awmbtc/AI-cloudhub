@@ -63,6 +63,7 @@ make prod-preflight
 export CGO_ENABLED=0
 make test
 make smoke-golden              # 主线契约（无活桶）
+make smoke-runtime             # hubd + runner check/dry-run（见 RUNTIME.md）
 make smoke-sts                 # 多云 session.source + fail-open
 make smoke-all                 # 全量离线 smoke
 # 有 MinIO 时：

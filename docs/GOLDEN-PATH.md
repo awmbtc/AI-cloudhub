@@ -2,8 +2,10 @@
 
 > **主线收口后的唯一默认演示剧本。**  
 > 决策：[D-003](./DECISIONS.md) · 进度：[PROGRESS.md](./PROGRESS.md)  
+> Runtime 总览：[RUNTIME.md](./RUNTIME.md)（hubd + runner）  
 > 自动化：`make smoke-golden` → `scripts/smoke-golden.sh`（无活桶）  
-> 活桶扩展：`make smoke-golden-minio` → `scripts/smoke-golden-minio.sh`
+> 活桶扩展：`make smoke-golden-minio` → `scripts/smoke-golden-minio.sh`  
+> 本机 Runtime：`make smoke-runtime`（= hubd + runner dry 路径）
 
 ## 产品一句话
 
