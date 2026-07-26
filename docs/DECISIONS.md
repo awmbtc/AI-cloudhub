@@ -186,9 +186,73 @@ P0 + P1 安全子集
 
 ---
 
+## D-003 · 主线收口：阶段 B + Stage C v0；Job/Webhook ops 默认冻结
+
+| 字段 | 内容 |
+|------|------|
+| **日期** | 2026-07-26 |
+| **状态** | **已采纳（Accepted）** |
+| **范围** | 产品主线停机条件、Job 子系统加深边界、后续开工准入 |
+| **相关** | D-001、D-002、[PROGRESS.md](./PROGRESS.md)、[GOLDEN-PATH.md](./GOLDEN-PATH.md) |
+
+### 背景
+
+P0–P3 与阶段 A/B 已收口；Stage C 仅控制面 v0 切片。v0.2.21–v0.2.50 期间大量 tag 集中在 **Job / Webhook / Admin jobs 运维纵深**（outbox、分页、gauges、admin 按钮等）。功能已过饱和；继续按「刀」开功能会用版本号制造「永远做不完」的假象，并偏离北极星（安全数据平面，而非 Job 运维 SaaS）。
+
+### 决策结论
+
+#### 1. 主线停机点（Accepted done）
+
+```text
+✅ P0–P3 工程阶段
+✅ 阶段 A（Agent IAM）+ 阶段 B（2.0 最小企业可用）
+✅ 阶段 C 控制面 v0 切片（Memory / Marketplace 骨架 / Lineage / Graph / Connectors 目录）
+✅ BYOC Job 契约可用 + webhook durable outbox（ops-complete）
+```
+
+**不**把以下当作默认欠债：托管 embedding、完整 OAuth 双向同步、OpenLineage 仓、PCI 真支付、默认微服务拆分（见 D-002 / STAGE-C）。
+
+#### 2. Job / Webhook / Admin jobs · 默认冻结（Freeze）
+
+| 默认 | 说明 |
+|------|------|
+| **冻结** | 不再默认新增 list 过滤字段、admin 按钮、gauge、retry 变体、分页变体 |
+| **允许** | 生产事故修复、安全漏洞、明确付费/内部客户书面需求、文档/smoke 诚实修正 |
+| **禁止当作下一阶段 KPI** | 「再 10 刀 Job」「100 agent 并行砍 ops」 |
+
+Job 子系统状态记为：**ops-complete / freeze**（见 PROGRESS）。
+
+#### 3. 下一阶段只允许三类开工
+
+| 优先级 | 类型 | 验收 |
+|--------|------|------|
+| **P0** | **黄金路径**演示与回归（Key → Drive → Binding/Session → Agent 或 BYOC Job） | `make smoke-golden` + [GOLDEN-PATH.md](./GOLDEN-PATH.md) |
+| **P1** | 生产纪律 / 文档诚实 / 真厂商联调（有用户再做） | PRODUCTION + 客户场景 |
+| **P2** | Stage C **单独立项**后的深挖 | 书面范围，非默认 |
+
+#### 4. 与 D-001 / D-002 的关系
+
+- 不削弱 D-001（禁止平台 Runner 大池）  
+- 不重开 D-002 已禁的默认微服务 / 过早生态膨胀  
+- 本决策只收束 **「主线已够用」与 Job 纵深停机**
+
+### 后果
+
+- 无事故/无客户需求时，PR 若仅为 Job admin/webhook 彩蛋 → 默认拒收或降级为草稿  
+- 版本号可用于收口/文档/黄金路径，**不必**为运维雕花连打 tag  
+
+### 相关链接
+
+- [GOLDEN-PATH.md](./GOLDEN-PATH.md)  
+- [JOBS.md](./JOBS.md)  
+- [STAGE-C.md](./STAGE-C.md)  
+
+---
+
 ## 记录索引
 
 | ID | 标题 | 状态 |
 |----|------|------|
 | D-001 | 决策基线与自建大规模 Runner 池黑名单 | Accepted |
 | D-002 | 2.0 演进：Agent IAM 优先，拒绝过早微服务 | Accepted |
+| D-003 | 主线收口；Job/Webhook ops 默认冻结 | Accepted |

@@ -7,7 +7,7 @@ BINS    := api hubd runner mcp
 .PHONY: all build test help clean docker-api docker-all release-binaries \
 	api hubd runner mcp \
 	smoke smoke-agent smoke-objects smoke-minio smoke-policy smoke-job smoke-mcp \
-	smoke-quickstart-agent smoke-stage-c smoke-byoc smoke-sts prod-preflight smoke-all
+	smoke-quickstart-agent smoke-golden smoke-stage-c smoke-byoc smoke-sts prod-preflight smoke-all
 all: build
 
 build: $(BINS)
@@ -49,6 +49,7 @@ help:
 	@echo "  make smoke-job      Job smoke (scripts/smoke-job.sh)"
 	@echo "  make smoke-mcp      MCP jobs smoke (scripts/smoke-mcp-jobs.sh)"
 	@echo "  make smoke-quickstart-agent  QUICKSTART-AGENT.md end-to-end"
+	@echo "  make smoke-golden  Product golden path (D-003 / docs/GOLDEN-PATH.md)"
 	@echo "  make smoke-stage-c  Stage C memory/marketplace/connectors"
 	@echo "  make smoke-byoc     BYOC git/pg/mysql materialize (local)"
 	@echo "  make smoke-sts      Offline STS path selection + unit tests"
@@ -82,6 +83,9 @@ smoke-mcp: build
 smoke-quickstart-agent: build
 	./scripts/smoke-quickstart-agent.sh
 
+smoke-golden: build
+	./scripts/smoke-golden.sh
+
 smoke-stage-c: build
 	./scripts/smoke-stage-c.sh
 
@@ -98,7 +102,7 @@ prod-preflight:
 	./scripts/prod-preflight.sh
 
 # Full local smoke suite without live MinIO (use smoke-minio separately).
-smoke-all: smoke smoke-agent smoke-objects smoke-policy smoke-job smoke-mcp smoke-quickstart-agent smoke-stage-c smoke-byoc smoke-sts
+smoke-all: smoke smoke-agent smoke-objects smoke-policy smoke-job smoke-mcp smoke-quickstart-agent smoke-golden smoke-stage-c smoke-byoc smoke-sts
 
 clean:
 	rm -rf $(BIN_DIR)

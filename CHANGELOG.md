@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.51
+
+Mainline close-out (not more Job ops):
+
+- **D-003**: freeze default Job/Webhook admin deepening; product spine = P0–P3 + stage A/B + C-v0
+- `docs/GOLDEN-PATH.md` + `make smoke-golden` (`scripts/smoke-golden.sh`)
+- PROGRESS / README / AGENTS aligned to freeze + golden path
+
 ## v0.2.50
 
 Ten-cut ship: region/runner list filters, dispatched gauge, cancel-all, webhook inflight, readyz ops, admin get webhooks, purge cascade, docs/smoke.

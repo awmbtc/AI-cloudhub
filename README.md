@@ -16,7 +16,8 @@
 | 文档 | 内容 |
 |------|------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构定稿 |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策记录（含 Runner 池黑名单） |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 决策记录（D-001 Runner 池黑名单 · **D-003 主线收口 / Job freeze**） |
+| [docs/GOLDEN-PATH.md](docs/GOLDEN-PATH.md) | **黄金路径**（主线演示剧本 + `make smoke-golden`） |
 | [docs/openapi.yaml](docs/openapi.yaml) | **HTTP OpenAPI**（auth / providers / drives / bindings / sessions / jobs / admin / healthz / readyz / metrics / runtime） |
 | [docs/RISK-COST.md](docs/RISK-COST.md) | 风险成本 |
 | [docs/VENDORS.md](docs/VENDORS.md) | 厂商 A/B/C |
@@ -51,7 +52,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.50` 十刀：region/runner 过滤、dispatched gauge、cancel-all、inflight、readyz、admin webhooks、purge cascade | ✅ |
+| **发布** | `v0.2.51` 主线收口（D-003 Job freeze + 黄金路径 `make smoke-golden`） | ✅ |
 
 ## 快速开始
 
@@ -72,6 +73,8 @@ export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"
 
 ./.bin/api
 ./scripts/smoke-p0.sh
+# 主线黄金路径（推荐收口验收）：
+# make smoke-golden   # 见 docs/GOLDEN-PATH.md · D-003
 # 可选生产栈（需先 export JWT_SECRET / AI_CLOUDHUB_MASTER_KEY，见 docs/PRODUCTION.md）：
 # docker compose -f deploy/docker-compose.prod.yml up -d --build
 ```

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.50 已发布；再十刀（0.2.41–0.2.50）
+## 总览：v0.2.51 主线收口（D-003）
 
 | 阶段 | 状态 |
 |------|------|
@@ -9,7 +9,13 @@
 | 厂商 A/B/C | ✅ s3 r2 minio b2 oss cos qiniu oracle |
 | P2 | ✅ 大部（真云 STS 仅 MinIO 可选） |
 | P3 | ✅ 骨架（jobs 持久化+worker、mcp、metrics） |
+| 阶段 A / B | ✅ 2.0 最小企业可用已收口 |
+| 阶段 C v0 切片 | ✅ 控制面地基；**非** 3.0 愿景完成 |
 | D-001 大池黑名单 | ✅ |
+| **D-003 主线收口 + Job ops freeze** | ✅ **v0.2.51** |
+| Job/Webhook 运维纵深 | ✅ **ops-complete / freeze**（v0.2.21–0.2.50） |
+
+**停机口径：** 主线 = P0–P3 + A/B + C-v0。再开工优先 [GOLDEN-PATH.md](./GOLDEN-PATH.md)，不默认「再 10 刀 Job」。
 
 ## 二进制
 
@@ -515,3 +521,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] readyz ops snapshot
 - [x] admin get + webhooks; purge cascade outbox
 - [x] tags **v0.2.41** … **v0.2.50**
+
+### 本波（v0.2.51 · 主线收口，非 Job 雕花）
+
+- [x] **D-003**：阶段 B + C-v0 停机；Job/Webhook admin ops **默认冻结**
+- [x] [GOLDEN-PATH.md](./GOLDEN-PATH.md) + `make smoke-golden` / `scripts/smoke-golden.sh`
+- [x] PROGRESS / README / AGENTS 对齐收口口径
+- [x] 版本钉 **0.2.51** + tag

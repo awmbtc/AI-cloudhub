@@ -14,10 +14,12 @@ Short rules for AI coding agents. Prefer this over inventing product direction.
 | ID | Rule | Do / Don't |
 |----|------|------------|
 | **D-001** | No platform runner mega-pool | Jobs are **BYOC**: user-owned `hubd` / `runner` only. Do **not** invent a multi-tenant platform fleet, default K8s runner farm, or “we host all compute” path. |
+| **D-003** | Mainline closed; Job ops freeze | P0–P3 + stage A/B + C-v0 are **done**. Do **not** default-add Job/Webhook admin filters, gauges, retry variants. Only incident / security / written customer need. See `docs/GOLDEN-PATH.md`. |
 | **BYOS** | User brings object storage | Control plane is thin: STS, metadata, CopyObject, presign. **No object body proxy** through API (no download/upload relay of file bytes). |
 | Runtime | Same contract | Local `hubd` and cloud `runner` share mount/session/manifest contract; cloud runs on **user** machines/accounts. |
 
-When tempted to add “platform pool / free cloud agents / body streaming proxy”, **stop** — see `docs/DECISIONS.md` (D-001) and `docs/ARCHITECTURE.md`.
+When tempted to add “platform pool / free cloud agents / body streaming proxy”, **stop** — see `docs/DECISIONS.md` (D-001) and `docs/ARCHITECTURE.md`.  
+When tempted to add another Job ops admin button without a customer incident, **stop** — see D-003.
 
 ## Smoke targets (`Makefile`)
 
@@ -34,8 +36,9 @@ When tempted to add “platform pool / free cloud agents / body streaming proxy�
 | `make smoke-byoc` | local git clone + postgres/mysql env materialize (`MATERIALIZE_ONLY`) |
 | `make smoke-sts` | offline multi-cloud STS path + `go test ./internal/sts` |
 | `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
+| `make smoke-golden` | **Product golden path** (D-003 / `docs/GOLDEN-PATH.md`) |
 | `make prod-preflight` | production env checklist (no API required) |
-| `make smoke-all` | above smokes **including** stage-c + byoc + sts (**not** minio) |
+| `make smoke-all` | above smokes **including** golden + stage-c + byoc + sts (**not** minio) |
 | Windows dry-check | `scripts/windows/smoke-windows.ps1` + `install-deps.ps1 -CheckOnly` |
 
 Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as `make` aliases).
@@ -65,7 +68,8 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 ## Docs map
 
 - Architecture: `docs/ARCHITECTURE.md`
-- Decisions (D-001…): `docs/DECISIONS.md`
+- Decisions (D-001…D-003): `docs/DECISIONS.md`
+- Golden path (mainline demo): `docs/GOLDEN-PATH.md`
 - Limits: `docs/KNOWN_LIMITATIONS.md`
 - Production cutover: `docs/PRODUCTION.md` + `make prod-preflight`
 - Stage C: `docs/STAGE-C.md` · connectors: `docs/CONNECTORS.md`

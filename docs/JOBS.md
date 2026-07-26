@@ -2,6 +2,8 @@
 
 Honest control-plane job queue for **user-owned runners** only (D-001: no platform runner pool).
 
+> **D-003 · ops-complete / freeze：** 队列与 webhook outbox 已够用。默认不再加深 admin 过滤/重试/gauge；只修事故与安全。产品主线演示见 [GOLDEN-PATH.md](./GOLDEN-PATH.md)。
+
 ## Lifecycle
 
 ```text
