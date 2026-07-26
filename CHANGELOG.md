@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.2.21
+
+Durable job webhook outbox with retry / dead-letter.
+
+### Jobs / Webhook
+- Terminal notifications enqueue `job_webhook_outbox` (memory/sqlite/postgres) instead of fire-and-forget
+- Background worker (`StartWebhookWorker`) polls due rows; exponential backoff; max attempts → `dead`
+- Env: `AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS` (default 8), `AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC` (default 2)
+- Metrics: `jobs_webhook_fail_total`, `jobs_webhook_dead_total` (+ existing `jobs_webhook_ok_total`)
+- At-least-once delivery; receivers de-dupe on `event_id`
+
 ## v0.2.20
 
 User job list keyset pagination (`GET /v1/jobs` cursor / next_cursor).

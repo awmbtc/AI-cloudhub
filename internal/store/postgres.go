@@ -208,6 +208,21 @@ CREATE TABLE IF NOT EXISTS connectors (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL,
   config_json TEXT, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS job_webhook_outbox (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  delivered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_due ON job_webhook_outbox(status, next_attempt_at);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -1472,6 +1487,104 @@ func (p *Postgres) DeleteConnector(userID, id string) error {
 		return fmt.Errorf("connector not found")
 	}
 	return nil
+}
+
+func (p *Postgres) EnqueueWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	var delivered interface{}
+	if !e.DeliveredAt.IsZero() {
+		delivered = e.DeliveredAt.UTC()
+	}
+	_, err := p.db.Exec(
+		`INSERT INTO job_webhook_outbox
+		 (id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		e.ID, e.JobID, e.UserID, e.Event, string(e.PayloadJSON), e.Status, e.Attempts,
+		e.NextAttemptAt.UTC(), e.LastError, e.CreatedAt.UTC(), e.UpdatedAt.UTC(), delivered,
+	)
+	if err != nil {
+		return fmt.Errorf("enqueue webhook outbox: %w", err)
+	}
+	return nil
+}
+
+func (p *Postgres) ListDueWebhookOutbox(now time.Time, limit int) ([]*WebhookOutbox, error) {
+	if limit <= 0 {
+		limit = 32
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := p.db.Query(
+		`SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox
+		 WHERE status = 'pending' AND next_attempt_at <= $1
+		 ORDER BY next_attempt_at ASC LIMIT $2`,
+		now.UTC(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*WebhookOutbox
+	for rows.Next() {
+		e, err := scanWebhookOutboxPG(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) UpdateWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	var delivered interface{}
+	if !e.DeliveredAt.IsZero() {
+		delivered = e.DeliveredAt.UTC()
+	}
+	res, err := p.db.Exec(
+		`UPDATE job_webhook_outbox SET job_id=$1, user_id=$2, event=$3, payload_json=$4, status=$5, attempts=$6,
+		 next_attempt_at=$7, last_error=$8, updated_at=$9, delivered_at=$10 WHERE id=$11`,
+		e.JobID, e.UserID, e.Event, string(e.PayloadJSON), e.Status, e.Attempts,
+		e.NextAttemptAt.UTC(), e.LastError, e.UpdatedAt.UTC(), delivered, e.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("webhook outbox not found")
+	}
+	return nil
+}
+
+func scanWebhookOutboxPG(row interface{ Scan(dest ...any) error }) (*WebhookOutbox, error) {
+	var e WebhookOutbox
+	var payload string
+	var lastErr sql.NullString
+	var delivered sql.NullTime
+	if err := row.Scan(
+		&e.ID, &e.JobID, &e.UserID, &e.Event, &payload, &e.Status, &e.Attempts,
+		&e.NextAttemptAt, &lastErr, &e.CreatedAt, &e.UpdatedAt, &delivered,
+	); err != nil {
+		return nil, err
+	}
+	e.PayloadJSON = []byte(payload)
+	if lastErr.Valid {
+		e.LastError = lastErr.String
+	}
+	if delivered.Valid {
+		e.DeliveredAt = delivered.Time.UTC()
+	}
+	e.NextAttemptAt = e.NextAttemptAt.UTC()
+	e.CreatedAt = e.CreatedAt.UTC()
+	e.UpdatedAt = e.UpdatedAt.UTC()
+	return &e, nil
 }
 
 // IsPostgresDSN reports whether path is a postgres URL.

@@ -81,12 +81,17 @@ GET /v1/jobs/stats
 - `status=pending` remains the claimable set (pending+dispatched), no cursor (full claimable list + optional `region`).
 - `stats` returns counts: `pending`, `dispatched`, `running`, `succeeded`, `failed`, `cancelled`, `total`.
 
-## Webhook (optional)
+## Webhook (optional, durable outbox)
 
 ```bash
 export AI_CLOUDHUB_JOB_WEBHOOK_URL=https://hooks.example.com/jobs
-export AI_CLOUDHUB_JOB_WEBHOOK_SECRET=whsec_xxx
+export AI_CLOUDHUB_JOB_WEBHOOK_SECRET=whsec_xxx          # optional HMAC
+export AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS=8            # default 8, max 32
+export AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC=2                # outbox worker poll
+# AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0                  # tests only: ~1ms retry
 ```
+
+On terminal status (`succeeded` / `failed` / `cancelled`), the control plane **enqueues** a row in `job_webhook_outbox` and a background worker delivers at-least-once (survives API restart). Receivers should de-dupe on `event_id`.
 
 Body:
 
@@ -101,11 +106,11 @@ Body:
 
 Headers: `X-AI-Cloudhub-Event-Id`, `X-AI-Cloudhub-Event`, `X-AI-Cloudhub-Timestamp`, optional `X-AI-Cloudhub-Signature: sha256=<hex>` over `timestamp + "." + body`.
 
-Verify: `job.VerifyJobWebhookSignature`. Delivery is **best-effort**, not a durable outbox.
+Verify: `job.VerifyJobWebhookSignature`. Failed attempts use exponential backoff (5s → 4h); after max attempts the row is marked `dead` (metrics `webhook_dead`).
 
 ## Metrics
 
-See [METRICS.md](./METRICS.md): created/claimed/completed/cancelled, timeout, lease_reclaim, max_attempts, heartbeat, webhook_ok.
+See [METRICS.md](./METRICS.md): created/claimed/completed/cancelled, timeout, lease_reclaim, max_attempts, heartbeat, webhook_ok / webhook_fail / webhook_dead.
 
 ## MCP
 

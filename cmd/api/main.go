@@ -77,6 +77,10 @@ func main() {
 	driveSvc := drive.NewService(provSvc, st)
 	deviceSvc := device.NewService(st)
 	jobSvc := job.NewService(st)
+	// Durable job webhook outbox worker (no-op if AI_CLOUDHUB_JOB_WEBHOOK_URL unset).
+	webhookCtx, webhookCancel := context.WithCancel(context.Background())
+	defer webhookCancel()
+	jobSvc.StartWebhookWorker(webhookCtx)
 
 	apiBase := os.Getenv("AI_CLOUDHUB_PUBLIC_URL")
 	if apiBase == "" {
@@ -168,6 +172,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-stop
 	log.Printf("shutdown signal: %v", sig)
+	webhookCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

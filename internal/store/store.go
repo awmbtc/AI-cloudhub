@@ -408,7 +408,30 @@ type Store interface {
 	ListConnectors(userID string) ([]*ConnectorBinding, error)
 	DeleteConnector(userID, id string) error
 
+	// Job webhook outbox (durable at-least-once terminal notifications)
+	EnqueueWebhookOutbox(e *WebhookOutbox) error
+	// ListDueWebhookOutbox returns pending rows with next_attempt_at <= now (oldest first).
+	ListDueWebhookOutbox(now time.Time, limit int) ([]*WebhookOutbox, error)
+	UpdateWebhookOutbox(e *WebhookOutbox) error
+
 	Close() error
+}
+
+// WebhookOutbox is a durable job terminal webhook delivery row.
+// Status: pending | delivered | dead.
+type WebhookOutbox struct {
+	ID            string
+	JobID         string
+	UserID        string
+	Event         string // job.succeeded | job.failed | job.cancelled
+	PayloadJSON   []byte // full envelope body (stable event_id)
+	Status        string
+	Attempts      int
+	NextAttemptAt time.Time
+	LastError     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeliveredAt   time.Time
 }
 
 // MarshalJSON is a small helper for credential / blob columns.

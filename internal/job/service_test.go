@@ -4,14 +4,19 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 )
 
@@ -553,6 +558,133 @@ func TestWebhookHMACVerify(t *testing.T) {
 	}
 	if VerifyJobWebhookSignature(secret, "1", sig, body) {
 		t.Fatal("wrong ts")
+	}
+}
+
+func TestWebhookOutboxDeliverAndRetry(t *testing.T) {
+	var hits atomic.Int32
+	var lastEventID string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		var env map[string]interface{}
+		_ = json.Unmarshal(body, &env)
+		mu.Lock()
+		if id, _ := env["event_id"].(string); id != "" {
+			lastEventID = id
+		}
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		// verify HMAC when secret set
+		ts := r.Header.Get("X-AI-Cloudhub-Timestamp")
+		sig := r.Header.Get("X-AI-Cloudhub-Signature")
+		if !VerifyJobWebhookSignature("whsec_outbox", ts, sig, body) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_URL", srv.URL)
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET", "whsec_outbox")
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC", "0")
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS", "5")
+
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	uid := "u-wh"
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, "a", "r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Complete(uid, j.ID, CompleteInput{OK: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First pass fails (500); retry after 1ms backoff succeeds.
+	// notifyJobTerminal also kicks a background Process — race-tolerant wait.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = svc.ProcessWebhookOutbox(8)
+		due, err := mem.ListDueWebhookOutbox(time.Now().UTC().Add(time.Hour), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(due) == 0 && hits.Load() >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if hits.Load() < 2 {
+		t.Fatalf("expected retry hits>=2 got %d", hits.Load())
+	}
+	mu.Lock()
+	eid := lastEventID
+	mu.Unlock()
+	if eid == "" {
+		t.Fatal("missing event_id")
+	}
+	due, err := mem.ListDueWebhookOutbox(time.Now().UTC().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("still pending: %+v", due)
+	}
+	if metrics.JobsWebhookOK.Load() < 1 {
+		t.Fatalf("expected webhook ok metric")
+	}
+}
+
+func TestWebhookOutboxDeadAfterMax(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_URL", srv.URL)
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC", "0")
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS", "2")
+
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	uid := "u-dead"
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Complete(uid, j.ID, CompleteInput{OK: false, Note: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = svc.ProcessWebhookOutbox(8)
+		due, _ := mem.ListDueWebhookOutbox(time.Now().UTC().Add(time.Hour), 10)
+		if len(due) == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	due, err := mem.ListDueWebhookOutbox(time.Now().UTC().Add(24*time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("expected no pending after dead, got %d", len(due))
+	}
+	if metrics.JobsWebhookDead.Load() < 1 {
+		t.Fatalf("expected dead metric, fail=%d dead=%d", metrics.JobsWebhookFail.Load(), metrics.JobsWebhookDead.Load())
 	}
 }
 

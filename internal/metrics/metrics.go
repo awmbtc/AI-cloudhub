@@ -45,6 +45,8 @@ var (
 	JobsMaxAttempts   atomic.Uint64
 	JobsHeartbeat     atomic.Uint64
 	JobsWebhookOK     atomic.Uint64
+	JobsWebhookFail   atomic.Uint64
+	JobsWebhookDead   atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -142,6 +144,12 @@ func IncJobHeartbeat() { JobsHeartbeat.Add(1) }
 // IncJobWebhook increments successful terminal job webhook deliveries.
 func IncJobWebhook() { JobsWebhookOK.Add(1) }
 
+// IncJobWebhookFail increments failed delivery attempts (will retry if under max).
+func IncJobWebhookFail() { JobsWebhookFail.Add(1) }
+
+// IncJobWebhookDead increments outbox rows moved to dead after max attempts.
+func IncJobWebhookDead() { JobsWebhookDead.Add(1) }
+
 // Handler serves Prometheus text exposition (no auth).
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -223,4 +231,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_ok_total Terminal job webhooks delivered (HTTP <300)\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_ok_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_ok_total %d\n", JobsWebhookOK.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_fail_total Terminal job webhook delivery attempts that failed\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_fail_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_fail_total %d\n", JobsWebhookFail.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_dead_total Terminal job webhooks moved to dead after max attempts\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_dead_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_dead_total %d\n", JobsWebhookDead.Load())
 }

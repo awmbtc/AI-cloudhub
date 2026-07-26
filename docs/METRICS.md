@@ -66,7 +66,9 @@ All series are **counters** (monotonic within a process lifetime).
 | `aicloudhub_jobs_lease_reclaim_total` | — | Running jobs released to pending after lease expiry |
 | `aicloudhub_jobs_max_attempts_total` | — | Jobs failed when lease expired and `max_attempts` reached |
 | `aicloudhub_jobs_heartbeat_total` | — | Successful job lease heartbeats |
-| `aicloudhub_jobs_webhook_ok_total` | — | Terminal job webhooks with HTTP &lt;300 (`AI_CLOUDHUB_JOB_WEBHOOK_URL`; optional HMAC secret) |
+| `aicloudhub_jobs_webhook_ok_total` | — | Terminal job webhooks delivered HTTP &lt;300 (durable outbox) |
+| `aicloudhub_jobs_webhook_fail_total` | — | Failed outbox delivery attempts (will retry if under max) |
+| `aicloudhub_jobs_webhook_dead_total` | — | Outbox rows marked dead after max attempts |
 | `aicloudhub_rate_limited_total` | — | Requests rejected by rate limiting |
 | `aicloudhub_snapshots_created_total` | — | Metadata snapshots created |
 | `aicloudhub_marketplace_installs_total` | — | Successful marketplace installs |

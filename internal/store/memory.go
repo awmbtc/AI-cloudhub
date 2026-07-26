@@ -27,6 +27,7 @@ type Memory struct {
 	graph      map[string]*GraphEdge
 	purchases  map[string]*Purchase
 	connectors map[string]*ConnectorBinding
+	webhooks   map[string]*WebhookOutbox // id -> outbox
 }
 
 // NewMemory returns an empty in-memory store.
@@ -49,6 +50,7 @@ func NewMemory() *Memory {
 		graph:      make(map[string]*GraphEdge),
 		purchases:  make(map[string]*Purchase),
 		connectors: make(map[string]*ConnectorBinding),
+		webhooks:   make(map[string]*WebhookOutbox),
 	}
 }
 
@@ -1116,5 +1118,75 @@ func (m *Memory) DeleteConnector(userID, id string) error {
 		return fmt.Errorf("connector not found")
 	}
 	delete(m.connectors, id)
+	return nil
+}
+
+func cloneWebhookOutbox(e *WebhookOutbox) *WebhookOutbox {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	if e.PayloadJSON != nil {
+		cp.PayloadJSON = append([]byte(nil), e.PayloadJSON...)
+	}
+	return &cp
+}
+
+func (m *Memory) EnqueueWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.webhooks[e.ID]; ok {
+		return fmt.Errorf("webhook outbox exists")
+	}
+	m.webhooks[e.ID] = cloneWebhookOutbox(e)
+	return nil
+}
+
+func (m *Memory) ListDueWebhookOutbox(now time.Time, limit int) ([]*WebhookOutbox, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 32
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var due []*WebhookOutbox
+	for _, e := range m.webhooks {
+		if e.Status != "pending" {
+			continue
+		}
+		if e.NextAttemptAt.After(now) {
+			continue
+		}
+		due = append(due, cloneWebhookOutbox(e))
+	}
+	// oldest next_attempt_at first
+	for i := 0; i < len(due); i++ {
+		for k := i + 1; k < len(due); k++ {
+			if due[k].NextAttemptAt.Before(due[i].NextAttemptAt) {
+				due[i], due[k] = due[k], due[i]
+			}
+		}
+	}
+	if len(due) > limit {
+		due = due[:limit]
+	}
+	return due, nil
+}
+
+func (m *Memory) UpdateWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.webhooks[e.ID]; !ok {
+		return fmt.Errorf("webhook outbox not found")
+	}
+	m.webhooks[e.ID] = cloneWebhookOutbox(e)
 	return nil
 }

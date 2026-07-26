@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.20 已发布；user jobs keyset cursor 分页
+## 总览：v0.2.21 已发布；job webhook durable outbox
 
 | 阶段 | 状态 |
 |------|------|
@@ -447,3 +447,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/jobs` keyset `limit`/`cursor`/`next_cursor`（pending 路径除外）
 - [x] MCP `list_jobs` limit/cursor；smoke + docs
 - [x] 版本钉 **0.2.20** + tag
+
+### 本波（webhook outbox）
+
+- [x] `job_webhook_outbox` store + enqueue on terminal
+- [x] worker retry/backoff/dead + metrics fail/dead
+- [x] 版本钉 **0.2.21** + tag

@@ -253,6 +253,22 @@ CREATE TABLE IF NOT EXISTS connectors (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
+
+CREATE TABLE IF NOT EXISTS job_webhook_outbox (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_due ON job_webhook_outbox(status, next_attempt_at);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -1640,6 +1656,101 @@ func (s *SQLite) DeleteConnector(userID, id string) error {
 		return fmt.Errorf("connector not found")
 	}
 	return nil
+}
+
+func (s *SQLite) EnqueueWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	delivered := ""
+	if !e.DeliveredAt.IsZero() {
+		delivered = e.DeliveredAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO job_webhook_outbox
+		 (id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.JobID, e.UserID, e.Event, string(e.PayloadJSON), e.Status, e.Attempts,
+		e.NextAttemptAt.UTC().Format(time.RFC3339Nano), e.LastError,
+		e.CreatedAt.UTC().Format(time.RFC3339Nano), e.UpdatedAt.UTC().Format(time.RFC3339Nano), delivered,
+	)
+	if err != nil {
+		return fmt.Errorf("enqueue webhook outbox: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) ListDueWebhookOutbox(now time.Time, limit int) ([]*WebhookOutbox, error) {
+	if limit <= 0 {
+		limit = 32
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := s.db.Query(
+		`SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox
+		 WHERE status = 'pending' AND next_attempt_at <= ?
+		 ORDER BY next_attempt_at ASC LIMIT ?`,
+		now.UTC().Format(time.RFC3339Nano), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*WebhookOutbox
+	for rows.Next() {
+		e, err := scanWebhookOutbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) UpdateWebhookOutbox(e *WebhookOutbox) error {
+	if e == nil || strings.TrimSpace(e.ID) == "" {
+		return fmt.Errorf("webhook outbox id required")
+	}
+	delivered := ""
+	if !e.DeliveredAt.IsZero() {
+		delivered = e.DeliveredAt.UTC().Format(time.RFC3339Nano)
+	}
+	res, err := s.db.Exec(
+		`UPDATE job_webhook_outbox SET job_id=?, user_id=?, event=?, payload_json=?, status=?, attempts=?,
+		 next_attempt_at=?, last_error=?, updated_at=?, delivered_at=? WHERE id=?`,
+		e.JobID, e.UserID, e.Event, string(e.PayloadJSON), e.Status, e.Attempts,
+		e.NextAttemptAt.UTC().Format(time.RFC3339Nano), e.LastError,
+		e.UpdatedAt.UTC().Format(time.RFC3339Nano), delivered, e.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("webhook outbox not found")
+	}
+	return nil
+}
+
+func scanWebhookOutbox(row scannable) (*WebhookOutbox, error) {
+	var e WebhookOutbox
+	var payload, nextAt, created, updated, delivered string
+	if err := row.Scan(
+		&e.ID, &e.JobID, &e.UserID, &e.Event, &payload, &e.Status, &e.Attempts,
+		&nextAt, &e.LastError, &created, &updated, &delivered,
+	); err != nil {
+		return nil, err
+	}
+	e.PayloadJSON = []byte(payload)
+	e.NextAttemptAt = parseTime(nextAt)
+	e.CreatedAt = parseTime(created)
+	e.UpdatedAt = parseTime(updated)
+	if delivered != "" {
+		e.DeliveredAt = parseTime(delivered)
+	}
+	return &e, nil
 }
 
 func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {

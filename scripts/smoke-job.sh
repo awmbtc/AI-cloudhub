@@ -407,3 +407,51 @@ code=$("${CURL[@]}" -o /tmp/aihub-adm-rel.json -w "%{http_code}" \
   -X POST "$API/v1/admin/jobs/$JREL/release" -H "Authorization: Bearer $ATOK")
 test "$code" = "403"
 echo "admin release denied for agent ($code)"
+
+echo "== job webhook durable outbox =="
+WH_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+WH_HIT=/tmp/aihub-wh-hit-$$.json
+rm -f "$WH_HIT"
+python3 - "$WH_PORT" "$WH_HIT" <<'PY' &
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+port, path = int(sys.argv[1]), sys.argv[2]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n)
+        open(path, "wb").write(body)
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+PY
+WH_PID=$!
+export AI_CLOUDHUB_JOB_WEBHOOK_URL="http://127.0.0.1:${WH_PORT}/hook"
+export AI_CLOUDHUB_JOB_WEBHOOK_SECRET="smoke-whsec"
+export AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC=1
+start_api
+JWH=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$JWH/claim" -H "Authorization: Bearer $ATOK" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/jobs/$JWH/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
+ok=0
+for _ in $(seq 1 40); do
+  if [[ -s "$WH_HIT" ]]; then ok=1; break; fi
+  sleep 0.15
+done
+kill "$WH_PID" 2>/dev/null || true
+wait "$WH_PID" 2>/dev/null || true
+test "$ok" = "1"
+python3 -c '
+import json,sys
+d=json.load(open("'"$WH_HIT"'"))
+assert d.get("event")=="job.succeeded", d
+assert d.get("event_id"), d
+assert d.get("job",{}).get("id")=="'"$JWH"'", d
+print("webhook outbox ok event_id", d["event_id"])
+'
+# metrics should show webhook_ok after delivery
+"${CURL[@]}" "$API/metrics" | grep -q 'aicloudhub_jobs_webhook_ok_total [1-9]'
+echo "webhook metrics ok"

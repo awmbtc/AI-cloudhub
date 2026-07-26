@@ -2,6 +2,7 @@ package job
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -705,7 +706,7 @@ func (s *Service) failTimeout(userID, id string, sec int) (*Job, error) {
 		return nil, err
 	}
 	j := jobFromStore(sj)
-	notifyJobTerminal(j)
+	s.notifyJobTerminal(j)
 	return j, nil
 }
 
@@ -730,7 +731,7 @@ func (s *Service) failMaxAttempts(userID, id string, attempt, max int) (*Job, er
 		return nil, err
 	}
 	j := jobFromStore(sj)
-	notifyJobTerminal(j)
+	s.notifyJobTerminal(j)
 	return j, nil
 }
 
@@ -742,16 +743,63 @@ type webhookEvent struct {
 	Job        *Job      `json:"job"`
 }
 
-// notifyJobTerminal best-effort POSTs event envelope to AI_CLOUDHUB_JOB_WEBHOOK_URL (async).
-// When AI_CLOUDHUB_JOB_WEBHOOK_SECRET is set, signs with HMAC-SHA256 over "timestamp.body"
-// and sets X-AI-Cloudhub-Timestamp + X-AI-Cloudhub-Signature: sha256=<hex>.
-// Also sets X-AI-Cloudhub-Event-Id and X-AI-Cloudhub-Event for receivers.
-func notifyJobTerminal(j *Job) {
-	if j == nil {
-		return
+func jobWebhookURL() string {
+	return strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_URL"))
+}
+
+func jobWebhookMaxAttempts() int {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS"))
+	if v == "" {
+		return 8
 	}
-	url := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_URL"))
-	if url == "" {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 8
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
+}
+
+func jobWebhookPollInterval() time.Duration {
+	// AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC default 2
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC"))
+	if v == "" {
+		return 2 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 2 * time.Second
+	}
+	if n > 60 {
+		n = 60
+	}
+	return time.Duration(n) * time.Second
+}
+
+// webhookBackoff returns delay after the Nth failed attempt (1-based).
+// AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0 forces ~1ms (tests).
+func webhookBackoff(attempt int) time.Duration {
+	if strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC")) == "0" {
+		return time.Millisecond
+	}
+	// 5s, 15s, 60s, 5m, 15m, 1h, 2h, 4h …
+	secs := []int{5, 15, 60, 300, 900, 3600, 7200, 14400}
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt <= len(secs) {
+		return time.Duration(secs[attempt-1]) * time.Second
+	}
+	return time.Duration(secs[len(secs)-1]) * time.Second
+}
+
+// notifyJobTerminal enqueues a durable outbox row when AI_CLOUDHUB_JOB_WEBHOOK_URL is set.
+// Delivery is at-least-once via ProcessWebhookOutbox / StartWebhookWorker.
+// When AI_CLOUDHUB_JOB_WEBHOOK_SECRET is set, each attempt signs HMAC-SHA256 over "timestamp.body".
+func (s *Service) notifyJobTerminal(j *Job) {
+	if j == nil || jobWebhookURL() == "" {
 		return
 	}
 	evName := "job." + string(j.Status)
@@ -763,49 +811,139 @@ func notifyJobTerminal(j *Job) {
 	case StatusCancelled:
 		evName = "job.cancelled"
 	}
+	now := time.Now().UTC()
 	ev := webhookEvent{
 		EventID:    uuid.NewString(),
 		Event:      evName,
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: now,
 		Job:        j,
 	}
 	payload, err := json.Marshal(ev)
 	if err != nil {
 		return
 	}
+	row := &store.WebhookOutbox{
+		ID:            ev.EventID,
+		JobID:         j.ID,
+		UserID:        j.UserID,
+		Event:         evName,
+		PayloadJSON:   payload,
+		Status:        "pending",
+		Attempts:      0,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.store.EnqueueWebhookOutbox(row); err != nil {
+		return
+	}
+	// Snappy first attempt without waiting for poll tick.
+	go func() { _ = s.ProcessWebhookOutbox(8) }()
+}
+
+// StartWebhookWorker polls the durable outbox until ctx is cancelled.
+// No-op when AI_CLOUDHUB_JOB_WEBHOOK_URL is unset.
+func (s *Service) StartWebhookWorker(ctx context.Context) {
+	if jobWebhookURL() == "" {
+		return
+	}
+	go func() {
+		tick := time.NewTicker(jobWebhookPollInterval())
+		defer tick.Stop()
+		// Immediate pass on start (recover after restart).
+		_ = s.ProcessWebhookOutbox(32)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				_ = s.ProcessWebhookOutbox(32)
+			}
+		}
+	}()
+}
+
+// ProcessWebhookOutbox delivers due pending outbox rows (batch). Returns how many were delivered.
+// Safe to call concurrently; deliveries are at-least-once (receivers should key on event_id).
+func (s *Service) ProcessWebhookOutbox(limit int) int {
+	url := jobWebhookURL()
+	if url == "" {
+		return 0
+	}
+	if limit <= 0 {
+		limit = 32
+	}
+	due, err := s.store.ListDueWebhookOutbox(time.Now().UTC(), limit)
+	if err != nil || len(due) == 0 {
+		return 0
+	}
+	maxAtt := jobWebhookMaxAttempts()
 	secret := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET"))
+	client := &http.Client{Timeout: 5 * time.Second}
+	delivered := 0
+	for _, row := range due {
+		if row == nil {
+			continue
+		}
+		ok, derr := deliverWebhookOnce(client, url, secret, row)
+		now := time.Now().UTC()
+		row.Attempts++
+		row.UpdatedAt = now
+		if ok {
+			row.Status = "delivered"
+			row.DeliveredAt = now
+			row.LastError = ""
+			if err := s.store.UpdateWebhookOutbox(row); err == nil {
+				metrics.IncJobWebhook()
+				delivered++
+			}
+			continue
+		}
+		metrics.IncJobWebhookFail()
+		errMsg := derr
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+		row.LastError = errMsg
+		if row.Attempts >= maxAtt {
+			row.Status = "dead"
+			_ = s.store.UpdateWebhookOutbox(row)
+			metrics.IncJobWebhookDead()
+			continue
+		}
+		row.NextAttemptAt = now.Add(webhookBackoff(row.Attempts))
+		_ = s.store.UpdateWebhookOutbox(row)
+	}
+	return delivered
+}
+
+// deliverWebhookOnce POSTs payload; returns (ok, errorDetail).
+func deliverWebhookOnce(client *http.Client, url, secret string, row *store.WebhookOutbox) (bool, string) {
 	ts := strconv.FormatInt(time.Now().UTC().Unix(), 10)
-	var sig string
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(row.PayloadJSON))
+	if err != nil {
+		return false, err.Error()
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "AI-cloudhub-job-webhook/1")
+	req.Header.Set("X-AI-Cloudhub-Timestamp", ts)
+	req.Header.Set("X-AI-Cloudhub-Event-Id", row.ID)
+	req.Header.Set("X-AI-Cloudhub-Event", row.Event)
 	if secret != "" {
 		mac := hmac.New(sha256.New, []byte(secret))
 		_, _ = mac.Write([]byte(ts + "."))
-		_, _ = mac.Write(payload)
-		sig = "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		_, _ = mac.Write(row.PayloadJSON)
+		req.Header.Set("X-AI-Cloudhub-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
-	eventID := ev.EventID
-	go func() {
-		client := &http.Client{Timeout: 5 * time.Second}
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "AI-cloudhub-job-webhook/1")
-		req.Header.Set("X-AI-Cloudhub-Timestamp", ts)
-		req.Header.Set("X-AI-Cloudhub-Event-Id", eventID)
-		req.Header.Set("X-AI-Cloudhub-Event", evName)
-		if sig != "" {
-			req.Header.Set("X-AI-Cloudhub-Signature", sig)
-		}
-		res, err := client.Do(req)
-		if err != nil {
-			return
-		}
-		_ = res.Body.Close()
-		if res.StatusCode < 300 {
-			metrics.IncJobWebhook()
-		}
-	}()
+	res, err := client.Do(req)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return false, fmt.Sprintf("HTTP %d", res.StatusCode)
+	}
+	return true, ""
 }
 
 // VerifyJobWebhookSignature checks HMAC for receivers (exported for tests/docs).
@@ -989,7 +1127,7 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 		return nil, err
 	}
 	j := jobFromStore(sj)
-	notifyJobTerminal(j)
+	s.notifyJobTerminal(j)
 	return j, nil
 }
 
@@ -1092,7 +1230,7 @@ func (s *Service) cancelStoreJob(sj *store.Job, adminNote string) (*Job, error) 
 		return nil, err
 	}
 	j := jobFromStore(sj)
-	notifyJobTerminal(j)
+	s.notifyJobTerminal(j)
 	return j, nil
 }
 
