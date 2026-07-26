@@ -307,3 +307,32 @@ test "$N2" -ge 2
 echo "list filter ok agent_id count=$N claimer count=$N2 (j3=$J3)"
 
 echo "OK smoke-job durable BYOC + agent_id trace"
+
+echo "== admin jobs list/stats/get =="
+# first registered user is admin
+"${CURL[@]}" "$API/v1/admin/jobs?limit=20" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert "items" in d and d.get("count",0)>=1, d
+print("admin list count", d["count"])
+'
+"${CURL[@]}" "$API/v1/admin/jobs/stats" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("total",0)>=1, d
+print("admin stats total", d["total"])
+'
+"${CURL[@]}" "$API/v1/admin/jobs/$JID" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("id")=="'"$JID"'", d
+print("admin get ok", d["id"], "user", d.get("user_id"))
+'
+# agent token cannot admin
+code=$("${CURL[@]}" -o /tmp/aihub-admin-deny.json -w "%{http_code}" \
+  "$API/v1/admin/jobs" -H "Authorization: Bearer $ATOK")
+test "$code" = "403"
+echo "admin jobs ok (agent denied $code)"

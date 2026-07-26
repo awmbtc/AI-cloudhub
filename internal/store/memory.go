@@ -582,6 +582,50 @@ func (m *Memory) GetJob(userID, id string) (*Job, error) {
 	return cloneJob(j), nil
 }
 
+func (m *Memory) GetJobByID(id string) (*Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return nil, fmt.Errorf("job not found")
+	}
+	return cloneJob(j), nil
+}
+
+func (m *Memory) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	var out []*Job
+	for _, j := range m.jobs {
+		if f.UserID != "" && j.UserID != f.UserID {
+			continue
+		}
+		if f.Status != "" && j.Status != f.Status {
+			continue
+		}
+		out = append(out, cloneJob(j))
+	}
+	// newest first
+	for i := 0; i < len(out); i++ {
+		for k := i + 1; k < len(out); k++ {
+			if out[k].CreatedAt.After(out[i].CreatedAt) {
+				out[i], out[k] = out[k], out[i]
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *Memory) GetJobByIdempotencyKey(userID, key string) (*Job, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {

@@ -297,6 +297,58 @@ func (s *Service) Stats(userID string) Stats {
 	if err != nil {
 		return Stats{}
 	}
+	return statsFromStoreJobs(list)
+}
+
+// AdminListFilter filters cross-user admin job listings.
+type AdminListFilter struct {
+	UserID string
+	Status string
+	Limit  int
+}
+
+// AdminList returns jobs across users (admin). Limit default 100, max 500.
+func (s *Service) AdminList(f AdminListFilter) []*Job {
+	list, err := s.store.ListJobsAdmin(store.AdminJobFilter{
+		UserID: strings.TrimSpace(f.UserID),
+		Status: strings.TrimSpace(f.Status),
+		Limit:  f.Limit,
+	})
+	if err != nil {
+		return nil
+	}
+	out := make([]*Job, 0, len(list))
+	for _, sj := range list {
+		out = append(out, jobFromStore(sj))
+	}
+	return out
+}
+
+// AdminGet returns any job by id (admin).
+func (s *Service) AdminGet(id string) (*Job, error) {
+	sj, err := s.store.GetJobByID(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	return jobFromStore(sj), nil
+}
+
+// AdminStats returns global or per-user status counts (admin).
+// When userID is empty, counts all jobs (up to 10k newest for safety).
+func (s *Service) AdminStats(userID string) Stats {
+	userID = strings.TrimSpace(userID)
+	if userID != "" {
+		return s.Stats(userID)
+	}
+	list, err := s.store.ListJobsAdmin(store.AdminJobFilter{Limit: 500})
+	if err != nil {
+		return Stats{}
+	}
+	// Note: capped at 500 newest; honest limitation for large fleets.
+	return statsFromStoreJobs(list)
+}
+
+func statsFromStoreJobs(list []*store.Job) Stats {
 	var st Stats
 	for _, sj := range list {
 		st.Total++

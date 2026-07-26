@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.15 已发布；idempotency 409 + job stats + JOBS runbook
+## 总览：v0.2.16 已发布；admin 跨用户 job 视图
 
 | 阶段 | 状态 |
 |------|------|
@@ -416,3 +416,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/jobs/stats` + MCP `job_stats`
 - [x] docs/JOBS.md 运维 runbook
 - [x] 版本钉 **0.2.15** + tag
+
+### 本波（admin jobs）
+
+- [x] `GET /v1/admin/jobs` 跨用户 list（user_id/status/limit）
+- [x] `GET /v1/admin/jobs/stats`、`GET /v1/admin/jobs/{id}`
+- [x] store ListJobsAdmin / GetJobByID；审计 + JOBS.md
+- [x] 版本钉 **0.2.16** + tag

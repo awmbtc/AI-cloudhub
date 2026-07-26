@@ -115,8 +115,22 @@ make smoke-job
 make smoke-mcp
 ```
 
+## Admin (role=admin, human session only)
+
+```http
+GET /v1/admin/jobs?user_id=&status=&limit=
+GET /v1/admin/jobs/stats?user_id=
+GET /v1/admin/jobs/{id}
+```
+
+- Cross-user listing; `limit` default 100, max 500.
+- Global `stats` without `user_id` counts **up to 500 newest** jobs only (honest cap).
+- Agent tokens cannot call admin APIs.
+- Audit actions: `admin.jobs.list` / `admin.jobs.stats` / `admin.jobs.get`.
+
 ## Honesty
 
 - Not a platform scheduler or multi-tenant runner fleet (D-001).
 - Soft-refresh / open FUSE handles are hubd concerns ([WINDOWS.md](./WINDOWS.md)).
 - Output is capped tails, not log shipping.
+- Admin global stats are not a full warehouse aggregation.

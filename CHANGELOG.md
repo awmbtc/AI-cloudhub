@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.2.16
+
+Admin cross-user job listing and stats.
+
+### Admin / Jobs
+- `GET /v1/admin/jobs` with `user_id`, `status`, `limit` (default 100, max 500)
+- `GET /v1/admin/jobs/stats` (optional `user_id`; global capped at 500 newest)
+- `GET /v1/admin/jobs/{id}` any job by id
+- Store: `ListJobsAdmin`, `GetJobByID`; audit `admin.jobs.*`
+- docs/JOBS.md admin section
+
 ## v0.2.15
 
 Idempotency conflict (409), job stats, JOBS runbook.

@@ -131,6 +131,10 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("/v1/admin/users/", s.withAdmin(s.routeAdminUsers))
 	mux.HandleFunc("/v1/admin/audit", s.withAdmin(s.handleAdminAudit))
 	mux.HandleFunc("/v1/admin/policy", s.withAdmin(s.handleAdminPolicy))
+	if s.jobs != nil {
+		mux.HandleFunc("/v1/admin/jobs", s.withAdmin(s.handleAdminJobsList))
+		mux.HandleFunc("/v1/admin/jobs/", s.withAdmin(s.routeAdminJobsSub))
+	}
 	mux.HandleFunc("/v1/modules", s.method(http.MethodGet, s.handleModules))
 	// Stripe (or stub) payment webhook — verified via AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET
 	mux.HandleFunc("/v1/webhooks/stripe", s.handleStripeWebhook)
@@ -2347,6 +2351,57 @@ func (s *Server) routeAdminUsers(w http.ResponseWriter, r *http.Request, userID,
 	default:
 		writeErr(w, http.StatusNotFound, "not found")
 	}
+}
+
+// handleAdminJobsList: GET /v1/admin/jobs?user_id=&status=&limit=
+func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+	filt := job.AdminListFilter{
+		UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Limit:  limit,
+	}
+	items := s.jobs.AdminList(filt)
+	s.auth.Audit(adminID, "admin.jobs.list", "", fmt.Sprintf("n=%d user_id=%s status=%s", len(items), filt.UserID, filt.Status))
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items":   items,
+		"user_id": filt.UserID,
+		"status":  filt.Status,
+		"limit":   filt.Limit,
+		"count":   len(items),
+	})
+}
+
+// routeAdminJobsSub: GET /v1/admin/jobs/stats | GET /v1/admin/jobs/{id}
+func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/jobs/"), "/")
+	if path == "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if path == "stats" {
+		uid := strings.TrimSpace(r.URL.Query().Get("user_id"))
+		st := s.jobs.AdminStats(uid)
+		s.auth.Audit(adminID, "admin.jobs.stats", uid, fmt.Sprintf("total=%d", st.Total))
+		writeJSON(w, http.StatusOK, st)
+		return
+	}
+	// single job id
+	j, err := s.jobs.AdminGet(path)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.auth.Audit(adminID, "admin.jobs.get", j.ID, "user="+j.UserID)
+	writeJSON(w, http.StatusOK, j)
 }
 
 // parseLabelQuery parses repeated query values "key:value" into a map.

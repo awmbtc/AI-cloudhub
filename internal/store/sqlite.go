@@ -1061,6 +1061,49 @@ func (s *SQLite) GetJob(userID, id string) (*Job, error) {
 	return scanJob(row)
 }
 
+func (s *SQLite) GetJobByID(id string) (*Job, error) {
+	row := s.db.QueryRow(
+		`SELECT `+jobSelectCols+` FROM jobs WHERE id = ?`, id,
+	)
+	return scanJob(row)
+}
+
+func (s *SQLite) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT ` + jobSelectCols + ` FROM jobs WHERE 1=1`
+	var args []interface{}
+	if f.UserID != "" {
+		q += ` AND user_id = ?`
+		args = append(args, f.UserID)
+	}
+	if f.Status != "" {
+		q += ` AND status = ?`
+		args = append(args, f.Status)
+	}
+	q += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLite) GetJobByIdempotencyKey(userID, key string) (*Job, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {

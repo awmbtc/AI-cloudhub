@@ -877,6 +877,44 @@ func (p *Postgres) GetJob(userID, id string) (*Job, error) {
 	return scanJobPG(row)
 }
 
+func (p *Postgres) GetJobByID(id string) (*Job, error) {
+	row := p.db.QueryRow(
+		`SELECT `+jobSelectColsPG+` FROM jobs WHERE id=$1`, id,
+	)
+	return scanJobPG(row)
+}
+
+func (p *Postgres) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT ` + jobSelectColsPG + ` FROM jobs WHERE 1=1`
+	var args []interface{}
+	n := 1
+	if f.UserID != "" {
+		q += fmt.Sprintf(` AND user_id=$%d`, n)
+		args = append(args, f.UserID)
+		n++
+	}
+	if f.Status != "" {
+		q += fmt.Sprintf(` AND status=$%d`, n)
+		args = append(args, f.Status)
+		n++
+	}
+	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, n)
+	args = append(args, limit)
+	rows, err := p.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanJobRowsPG(rows)
+}
+
 func (p *Postgres) GetJobByIdempotencyKey(userID, key string) (*Job, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {

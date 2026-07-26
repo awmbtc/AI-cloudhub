@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.15
+  version: 0.2.16
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1748,6 +1748,97 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /v1/admin/jobs:
+    get:
+      tags: [admin]
+      summary: List jobs across users (admin)
+      operationId: adminListJobs
+      description: |
+        Cross-user BYOC job listing. Human admin session required (not agent tokens).
+        `limit` default 100, max 500.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, dispatched, running, succeeded, failed, cancelled]
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: Job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Job' }
+                  count: { type: integer }
+                  user_id: { type: string }
+                  status: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Admin required
+
+  /v1/admin/jobs/stats:
+    get:
+      tags: [admin]
+      summary: Job status counts (admin)
+      operationId: adminJobStats
+      description: |
+        Per-status counts. Optional `user_id`. Without user_id, counts the newest 500 jobs only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending: { type: integer }
+                  dispatched: { type: integer }
+                  running: { type: integer }
+                  succeeded: { type: integer }
+                  failed: { type: integer }
+                  cancelled: { type: integer }
+                  total: { type: integer }
+
+  /v1/admin/jobs/{id}:
+    get:
+      tags: [admin]
+      summary: Get any job by id (admin)
+      operationId: adminGetJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /v1/admin/audit:
     get:

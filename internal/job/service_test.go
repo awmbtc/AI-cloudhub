@@ -304,6 +304,28 @@ func TestJobStats(t *testing.T) {
 	}
 }
 
+func TestAdminListAndGet(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	j1, _, _ := svc.Create("u1", CreateInput{DriveID: "d", Command: []string{"a"}})
+	j2, _, _ := svc.Create("u2", CreateInput{DriveID: "d", Command: []string{"b"}})
+	all := svc.AdminList(AdminListFilter{Limit: 50})
+	if len(all) < 2 {
+		t.Fatalf("admin list %d", len(all))
+	}
+	only := svc.AdminList(AdminListFilter{UserID: "u1", Limit: 10})
+	if len(only) != 1 || only[0].ID != j1.ID {
+		t.Fatalf("filter user: %+v", only)
+	}
+	got, err := svc.AdminGet(j2.ID)
+	if err != nil || got.UserID != "u2" {
+		t.Fatalf("admin get: %v %+v", err, got)
+	}
+	st := svc.AdminStats("")
+	if st.Total < 2 {
+		t.Fatalf("admin stats %+v", st)
+	}
+}
+
 func TestCompleteNoopWhenCancelled(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j, _, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})

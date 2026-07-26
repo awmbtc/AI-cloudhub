@@ -165,6 +165,13 @@ type Job struct {
 	UpdatedAt         time.Time
 }
 
+// AdminJobFilter filters cross-user job listings (admin only).
+type AdminJobFilter struct {
+	UserID string // empty = all users
+	Status string // empty = all statuses
+	Limit  int    // 0 = default 100; capped at 500
+}
+
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).
 type Snapshot struct {
 	ID           string
@@ -345,9 +352,13 @@ type Store interface {
 	// Jobs (BYOC queue)
 	CreateJob(j *Job) error
 	GetJob(userID, id string) (*Job, error)
+	// GetJobByID returns a job by id without user scoping (admin).
+	GetJobByID(id string) (*Job, error)
 	// GetJobByIdempotencyKey returns a job for user with the given key (empty key = not found).
 	GetJobByIdempotencyKey(userID, key string) (*Job, error)
 	ListJobs(userID string) ([]*Job, error)
+	// ListJobsAdmin lists jobs across users with optional filters (admin).
+	ListJobsAdmin(f AdminJobFilter) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.
 	// claimedByAgentID / claimedByRunnerID may be empty.
