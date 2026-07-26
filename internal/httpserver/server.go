@@ -2376,15 +2376,39 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 	})
 }
 
-// routeAdminJobsSub: GET /v1/admin/jobs/stats | GET /v1/admin/jobs/{id}
+// routeAdminJobsSub: GET stats|/{id} ; POST /{id}/cancel
 func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
-	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/jobs/"), "/")
 	if path == "" {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) == 2 && parts[1] == "cancel" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var body struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		j, err := s.jobs.AdminCancel(parts[0], body.Note)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeErr(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		metrics.IncJobCancelled()
+		s.auth.Audit(adminID, "admin.jobs.cancel", j.ID, "user="+j.UserID+" note="+strings.TrimSpace(body.Note))
+		writeJSON(w, http.StatusOK, j)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if path == "stats" {

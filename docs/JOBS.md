@@ -118,15 +118,19 @@ make smoke-mcp
 ## Admin (role=admin, human session only)
 
 ```http
-GET /v1/admin/jobs?user_id=&status=&limit=
-GET /v1/admin/jobs/stats?user_id=
-GET /v1/admin/jobs/{id}
+GET  /v1/admin/jobs?user_id=&status=&limit=
+GET  /v1/admin/jobs/stats?user_id=
+GET  /v1/admin/jobs/{id}
+POST /v1/admin/jobs/{id}/cancel
+{ "note": "optional reason" }
 ```
 
 - Cross-user listing; `limit` default 100, max 500.
 - Global `stats` without `user_id` counts **up to 500 newest** jobs only (honest cap).
+- **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
+- Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - Agent tokens cannot call admin APIs.
-- Audit actions: `admin.jobs.list` / `admin.jobs.stats` / `admin.jobs.get`.
+- Audit: `admin.jobs.list` / `stats` / `get` / `cancel`.
 
 ## Honesty
 

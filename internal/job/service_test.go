@@ -326,6 +326,32 @@ func TestAdminListAndGet(t *testing.T) {
 	}
 }
 
+func TestAdminCancel(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	j, _, err := svc.Create("u-other", CreateInput{DriveID: "d", Command: []string{"long"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim("u-other", j.ID, "a", "r1"); err != nil {
+		t.Fatal(err)
+	}
+	done, err := svc.AdminCancel(j.ID, "stuck runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusCancelled {
+		t.Fatalf("status %s", done.Status)
+	}
+	if !strings.Contains(done.Note, "admin cancel: stuck runner") {
+		t.Fatalf("note %q", done.Note)
+	}
+	// idempotent
+	again, err := svc.AdminCancel(j.ID, "")
+	if err != nil || again.Status != StatusCancelled {
+		t.Fatalf("idempotent: %v %+v", err, again)
+	}
+}
+
 func TestCompleteNoopWhenCancelled(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j, _, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})

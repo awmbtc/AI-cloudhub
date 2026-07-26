@@ -953,10 +953,30 @@ func (s *Service) Cancel(userID, id string) (*Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("job not found")
 	}
+	return s.cancelStoreJob(sj, "")
+}
+
+// AdminCancel cancels any non-terminal job by id (no user ownership check).
+// optionalNote is appended as "admin cancel: …" when non-empty.
+func (s *Service) AdminCancel(id, optionalNote string) (*Job, error) {
+	sj, err := s.store.GetJobByID(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	return s.cancelStoreJob(sj, strings.TrimSpace(optionalNote))
+}
+
+func (s *Service) cancelStoreJob(sj *store.Job, adminNote string) (*Job, error) {
 	if sj.Status == string(StatusSucceeded) || sj.Status == string(StatusFailed) {
 		return nil, fmt.Errorf("job already finished")
 	}
+	if sj.Status == string(StatusCancelled) {
+		return jobFromStore(sj), nil // idempotent
+	}
 	sj.Status = string(StatusCancelled)
+	if adminNote != "" {
+		sj.Note = appendJobNote(sj.Note, "admin cancel: "+adminNote)
+	}
 	sj.HeartbeatAt = time.Time{}
 	sj.ClaimedAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()

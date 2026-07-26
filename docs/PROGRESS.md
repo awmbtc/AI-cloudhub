@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.16 已发布；admin 跨用户 job 视图
+## 总览：v0.2.17 已发布；admin cancel 任意 job
 
 | 阶段 | 状态 |
 |------|------|
@@ -423,3 +423,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/admin/jobs/stats`、`GET /v1/admin/jobs/{id}`
 - [x] store ListJobsAdmin / GetJobByID；审计 + JOBS.md
 - [x] 版本钉 **0.2.16** + tag
+
+### 本波（admin cancel）
+
+- [x] `POST /v1/admin/jobs/{id}/cancel` + optional note
+- [x] AdminCancel 幂等；metrics/audit；smoke
+- [x] 版本钉 **0.2.17** + tag

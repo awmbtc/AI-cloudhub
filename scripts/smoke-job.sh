@@ -336,3 +336,22 @@ code=$("${CURL[@]}" -o /tmp/aihub-admin-deny.json -w "%{http_code}" \
   "$API/v1/admin/jobs" -H "Authorization: Bearer $ATOK")
 test "$code" = "403"
 echo "admin jobs ok (agent denied $code)"
+echo "== admin cancel any job =="
+JADM=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"sleep\",\"999\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$JADM/claim" -H "Authorization: Bearer $ATOK" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/admin/jobs/$JADM/cancel" -H "Authorization: Bearer $TOK" \
+  -H 'Content-Type: application/json' -d '{"note":"smoke-admin-stop"}' \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="cancelled", d
+assert "admin cancel: smoke-admin-stop" in (d.get("note") or ""), d
+print("admin cancel ok", d["id"])
+'
+# agent cannot admin-cancel
+code=$("${CURL[@]}" -o /tmp/aihub-adm-cancel.json -w "%{http_code}" \
+  -X POST "$API/v1/admin/jobs/$JADM/cancel" -H "Authorization: Bearer $ATOK")
+test "$code" = "403"
+echo "admin cancel denied for agent ($code)"

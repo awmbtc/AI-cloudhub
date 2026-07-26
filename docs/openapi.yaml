@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.16
+  version: 0.2.17
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1837,6 +1837,42 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Job' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/admin/jobs/{id}/cancel:
+    post:
+      tags: [admin]
+      summary: Cancel any non-terminal job (admin)
+      operationId: adminCancelJob
+      description: |
+        Cancels a job regardless of owning user. Optional body `note` is appended as
+        `admin cancel: …`. Idempotent if already cancelled. Runners detect via status poll.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        '200':
+          description: Cancelled job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Admin required
         '404':
           $ref: '#/components/responses/NotFound'
 

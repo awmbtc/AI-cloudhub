@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.17
+
+Admin cancel any BYOC job.
+
+### Admin / Jobs
+- `POST /v1/admin/jobs/{id}/cancel` with optional `{note}` → append `admin cancel: …`
+- Idempotent if already cancelled; runner still picks up via cancel poll
+- Audit `admin.jobs.cancel`; metrics cancel counter
+
 ## v0.2.16
 
 Admin cross-user job listing and stats.
