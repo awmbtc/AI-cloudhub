@@ -3,7 +3,9 @@
 > 调研约 2026-07。免费额度以各厂商控制台为准，会变动。  
 > 产品目标：**Drive Map = 把对象存储定义成盘符（G: / /workspace）**。  
 > **本仓库 = AI-cloudhub（Go 自研 Workspace OS），不是魔改 MinIO。**  
-> 下表均为 **用户可接入的后端**；架构定稿见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+> 下表均为 **用户可接入的后端**；架构定稿见 [ARCHITECTURE.md](./ARCHITECTURE.md)。  
+>
+> **如何配置密钥（AK/SK）→ 见 [PROVIDERS.md](./PROVIDERS.md)。**
 
 ---
 

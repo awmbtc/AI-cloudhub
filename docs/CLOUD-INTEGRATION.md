@@ -2,6 +2,9 @@
 
 Copy-paste ops guides for **Aliyun OSS**, **Tencent COS**, **Qiniu Kodo**, and **Oracle OCI**.
 
+> **入门请先看：** [PROVIDERS.md](./PROVIDERS.md)（各厂商 AccessKey 怎么配、Provider + Drive 完整流程，中文）。  
+> 本文偏 **STS 进阶** 与排错。
+
 Full STS matrix / sources: [STS.md](./STS.md) · Policy: [POLICY.md](./POLICY.md) · Prod secrets: [PRODUCTION.md](./PRODUCTION.md) · Vendor catalog: [VENDORS.md](./VENDORS.md) · Agent path: [QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md).
 
 **Design contract (do not fight it):**

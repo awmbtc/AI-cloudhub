@@ -30,7 +30,8 @@
 | [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
 | [docs/STS-RUNBOOK.md](docs/STS-RUNBOOK.md) | **STS 联调剧本**（fail-open + live MinIO） |
-| [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：字段、env、curl、session.note） |
+| [docs/PROVIDERS.md](docs/PROVIDERS.md) | **对象存储密钥配置**（各厂商 AK/SK 怎么填、Provider+Drive 图文流程） |
+| [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：STS 进阶、env、session.note） |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
 | [docs/CUTOVER.md](docs/CUTOVER.md) | **上线 cutover** 一页清单 + `make prod-preflight` |
