@@ -244,11 +244,11 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 		t.Fatalf("truncated flags: out=%v err=%v", done.StdoutTruncated, done.StderrTruncated)
 	}
 	// list by status
-	succ := svc.List(uid, ListFilter{Status: "succeeded"})
+	succ, _ := svc.List(uid, ListFilter{Status: "succeeded"})
 	if len(succ) != 1 || succ[0].ID != j.ID {
 		t.Fatalf("list succeeded: %+v", succ)
 	}
-	run := svc.List(uid, ListFilter{Status: "running"})
+	run, _ := svc.List(uid, ListFilter{Status: "running"})
 	if len(run) != 0 {
 		t.Fatalf("list running want 0 got %d", len(run))
 	}
@@ -485,7 +485,7 @@ func TestLabelsAndRegionClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prod := svc.List(uid, ListFilter{Labels: map[string]string{"env": "prod"}})
+	prod, _ := svc.List(uid, ListFilter{Labels: map[string]string{"env": "prod"}})
 	if len(prod) != 1 || prod[0].Labels["env"] != "prod" {
 		t.Fatalf("label filter: %+v", prod)
 	}
@@ -735,17 +735,60 @@ func TestListFilterByAgent(t *testing.T) {
 	if _, err := svc.Claim(uid, j2.ID, "claimer-x", ""); err != nil {
 		t.Fatal(err)
 	}
-	onlyA1 := svc.List(uid, ListFilter{AgentID: "a1"})
+	onlyA1, _ := svc.List(uid, ListFilter{AgentID: "a1"})
 	if len(onlyA1) != 1 || onlyA1[0].AgentID != "a1" {
 		t.Fatalf("%+v", onlyA1)
 	}
-	byClaimer := svc.List(uid, ListFilter{ClaimedByAgentID: "claimer-x"})
+	byClaimer, _ := svc.List(uid, ListFilter{ClaimedByAgentID: "claimer-x"})
 	if len(byClaimer) != 1 || byClaimer[0].ID != j2.ID {
 		t.Fatalf("%+v", byClaimer)
 	}
-	all := svc.List(uid)
+	all, next := svc.List(uid)
 	if len(all) != 2 {
 		t.Fatalf("all=%d", len(all))
+	}
+	if next != "" {
+		t.Fatalf("unexpected next_cursor %q", next)
+	}
+}
+
+func TestListCursor(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-list-cur"
+	for i := 0; i < 5; i++ {
+		if _, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{fmt.Sprintf("x%d", i)}}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	p1, cur := svc.List(uid, ListFilter{Limit: 2})
+	if len(p1) != 2 || cur == "" {
+		t.Fatalf("page1 len=%d cur=%q", len(p1), cur)
+	}
+	p2, cur2 := svc.List(uid, ListFilter{Limit: 2, Cursor: cur})
+	if len(p2) != 2 {
+		t.Fatalf("page2 len=%d", len(p2))
+	}
+	seen := map[string]bool{}
+	for _, j := range p1 {
+		seen[j.ID] = true
+	}
+	for _, j := range p2 {
+		if seen[j.ID] {
+			t.Fatalf("overlap %s", j.ID)
+		}
+		seen[j.ID] = true
+	}
+	p3, cur3 := svc.List(uid, ListFilter{Limit: 2, Cursor: cur2})
+	if len(p3) != 1 || cur3 != "" {
+		t.Fatalf("page3 len=%d cur=%q", len(p3), cur3)
+	}
+	seen[p3[0].ID] = true
+	if len(seen) != 5 {
+		t.Fatalf("seen %d", len(seen))
+	}
+	if p1[0].CreatedAt.Before(p2[0].CreatedAt) {
+		t.Fatalf("order: p1 %v before p2 %v", p1[0].CreatedAt, p2[0].CreatedAt)
 	}
 }
 

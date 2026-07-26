@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +29,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.19"
+const serverVersion = "0.2.20"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -308,7 +309,7 @@ func toolRegistry() []toolMeta {
 			},
 		},
 		{
-			name: "list_jobs", description: "List BYOC jobs. Filters: status, agent_id, claimed_by_agent_id, labels (object). Requires job.run.",
+			name: "list_jobs", description: "List BYOC jobs. Filters: status, agent_id, claimed_by_agent_id, labels, limit, cursor. Keyset next_cursor. Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
@@ -318,6 +319,8 @@ func toolRegistry() []toolMeta {
 					"claimed_by_agent_id": map[string]interface{}{"type": "string"},
 					"region":              map[string]interface{}{"type": "string", "description": "Only with status=pending"},
 					"labels":              map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
+					"limit":               map[string]interface{}{"type": "integer", "description": "Page size default 100 max 500 (ignored for status=pending)"},
+					"cursor":              map[string]interface{}{"type": "string", "description": "Opaque next_cursor from previous page"},
 				},
 			},
 		},
@@ -757,11 +760,13 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			ClaimedByAgentID string            `json:"claimed_by_agent_id"`
 			Region           string            `json:"region"`
 			Labels           map[string]string `json:"labels"`
+			Limit            int               `json:"limit"`
+			Cursor           string            `json:"cursor"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
 		}
-		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region, args.Labels)
+		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region, args.Labels, args.Limit, args.Cursor)
 	case "job_stats":
 		return toolJobStats(api, token)
 	case "get_job":
@@ -1303,7 +1308,7 @@ func toolJobStats(api, token string) (interface{}, error) {
 	return toolResultJSON(parsed)
 }
 
-func toolListJobs(api, token, status, agentID, claimedBy, region string, labels map[string]string) (interface{}, error) {
+func toolListJobs(api, token, status, agentID, claimedBy, region string, labels map[string]string, limit int, cursor string) (interface{}, error) {
 	url := api + "/v1/jobs"
 	q := []string{}
 	if status != "" {
@@ -1317,6 +1322,12 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string, labels 
 	}
 	if region != "" {
 		q = append(q, "region="+region)
+	}
+	if limit > 0 {
+		q = append(q, "limit="+strconv.Itoa(limit))
+	}
+	if cursor != "" {
+		q = append(q, "cursor="+cursor)
 	}
 	for k, v := range labels {
 		if strings.TrimSpace(k) == "" {

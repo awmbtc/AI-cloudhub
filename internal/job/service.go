@@ -443,13 +443,17 @@ type ListFilter struct {
 	Status string
 	// Labels require all key=value pairs to match job labels.
 	Labels map[string]string
+	// Limit default 100, max 500. Cursor is opaque keyset from next_cursor.
+	Limit  int
+	Cursor string
 }
 
 // List returns jobs for user, optionally filtered by agent ids, status, and/or labels.
-func (s *Service) List(userID string, filter ...ListFilter) []*Job {
+// Order: created_at DESC, id DESC. When more pages exist, nextCursor is non-empty.
+func (s *Service) List(userID string, filter ...ListFilter) (items []*Job, nextCursor string) {
 	list, err := s.store.ListJobs(userID)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	var f ListFilter
 	if len(filter) > 0 {
@@ -472,7 +476,40 @@ func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 		}
 		out = append(out, jobFromStore(sj))
 	}
-	return out
+	// Stable keyset order (same as admin list).
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
+		trimmed := make([]*Job, 0, len(out))
+		for _, j := range out {
+			// keep rows strictly older than (ca, id) in DESC order
+			if j.CreatedAt.After(ca) {
+				continue
+			}
+			if j.CreatedAt.Equal(ca) && j.ID >= id {
+				continue
+			}
+			trimmed = append(trimmed, j)
+		}
+		out = trimmed
+	}
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if len(out) > limit {
+		last := out[limit-1]
+		nextCursor = encodeAdminCursor(last.CreatedAt, last.ID)
+		out = out[:limit]
+	}
+	return out, nextCursor
 }
 
 // ListPending returns claimable jobs (pending/dispatched).

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.19
+  version: 0.2.20
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -3512,7 +3512,9 @@ paths:
       operationId: listJobs
       description: |
         Returns jobs for the authenticated user. Query `status=pending` lists claimable
-        pending/dispatched jobs. Other status values exact-match filter (running, succeeded, …).
+        pending/dispatched jobs (no cursor). Other status values exact-match filter.
+        Non-pending lists use keyset order `created_at DESC, id DESC` with optional
+        `limit` (default 100, max 500) and opaque `cursor` / response `next_cursor`.
         Jobs run on **user runners only** — no platform pool.
       security:
         - bearerAuth: []
@@ -3540,6 +3542,16 @@ paths:
           required: false
           description: Only with status=pending — filter region_hint
           schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Page size (default 100, max 500); ignored when status=pending
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque keyset cursor from a previous next_cursor (non-pending list only)
+          schema: { type: string }
       responses:
         '200':
           description: Job list
@@ -3554,6 +3566,12 @@ paths:
                       $ref: '#/components/schemas/Job'
                   agent_id: { type: string }
                   claimed_by_agent_id: { type: string }
+                  status: { type: string }
+                  limit: { type: integer }
+                  count: { type: integer }
+                  next_cursor:
+                    type: string
+                    description: Present when another page exists (non-pending list)
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

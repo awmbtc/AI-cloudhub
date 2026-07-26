@@ -73,10 +73,13 @@ POST /v1/jobs/{id}/complete
 GET /v1/jobs?status=succeeded
 GET /v1/jobs?label=env:prod&label=team:ml
 GET /v1/jobs?status=pending&region=us-east
+GET /v1/jobs?limit=50&cursor=
 GET /v1/jobs/stats
 ```
 
-`stats` returns counts: `pending`, `dispatched`, `running`, `succeeded`, `failed`, `cancelled`, `total`.
+- Non-`pending` list: keyset pagination (`created_at DESC, id DESC`); `limit` default 100, max 500; response may include `next_cursor` / `count` / `limit`.
+- `status=pending` remains the claimable set (pending+dispatched), no cursor (full claimable list + optional `region`).
+- `stats` returns counts: `pending`, `dispatched`, `running`, `succeeded`, `failed`, `cancelled`, `total`.
 
 ## Webhook (optional)
 

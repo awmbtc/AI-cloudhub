@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.19 已发布；admin jobs keyset cursor 分页
+## 总览：v0.2.20 已发布；user jobs keyset cursor 分页
 
 | 阶段 | 状态 |
 |------|------|
@@ -441,3 +441,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/admin/jobs` keyset `cursor` / `next_cursor`（created_at DESC, id DESC）
 - [x] store memory/sqlite/postgres + service encode/decode + smoke
 - [x] 版本钉 **0.2.19** + tag
+
+### 本波（user list cursor）
+
+- [x] `GET /v1/jobs` keyset `limit`/`cursor`/`next_cursor`（pending 路径除外）
+- [x] MCP `list_jobs` limit/cursor；smoke + docs
+- [x] 版本钉 **0.2.20** + tag

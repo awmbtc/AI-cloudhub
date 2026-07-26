@@ -345,20 +345,36 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.jobs.ListPending(userID, region)})
 			return
 		}
+		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 		filt := job.ListFilter{
 			AgentID:          strings.TrimSpace(r.URL.Query().Get("agent_id")),
 			ClaimedByAgentID: strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
 			Status:           statusQ, // running|succeeded|failed|cancelled|dispatched
 			Labels:           parseLabelQuery(r.URL.Query()["label"]),
+			Limit:            limit,
+			Cursor:           strings.TrimSpace(r.URL.Query().Get("cursor")),
 		}
-		items := s.jobs.List(userID, filt)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		items, nextCursor := s.jobs.List(userID, filt)
+		effLimit := filt.Limit
+		if effLimit <= 0 {
+			effLimit = 100
+		}
+		if effLimit > 500 {
+			effLimit = 500
+		}
+		resp := map[string]interface{}{
 			"items":               items,
 			"agent_id":            filt.AgentID,
 			"claimed_by_agent_id": filt.ClaimedByAgentID,
 			"status":              filt.Status,
 			"labels":              filt.Labels,
-		})
+			"limit":               effLimit,
+			"count":               len(items),
+		}
+		if nextCursor != "" {
+			resp["next_cursor"] = nextCursor
+		}
+		writeJSON(w, http.StatusOK, resp)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

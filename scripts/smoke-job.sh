@@ -305,6 +305,19 @@ N2=$("${CURL[@]}" "$API/v1/jobs?claimed_by_agent_id=$AID" -H "Authorization: Bea
   | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["items"]))')
 test "$N2" -ge 2
 echo "list filter ok agent_id count=$N claimer count=$N2 (j3=$J3)"
+# user list keyset cursor
+UP1=$("${CURL[@]}" "$API/v1/jobs?limit=1" -H "Authorization: Bearer $TOK")
+UCUR=$(echo "$UP1" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert len(d["items"])==1 and d.get("next_cursor"), d
+print(d["next_cursor"])
+')
+UID1=$(echo "$UP1" | python3 -c 'import sys,json; print(json.load(sys.stdin)["items"][0]["id"])')
+UID2=$("${CURL[@]}" "$API/v1/jobs?limit=1&cursor=$UCUR" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d["items"])==1, d; print(d["items"][0]["id"])')
+test "$UID1" != "$UID2"
+echo "user list cursor ok page1=$UID1 page2=$UID2"
 
 echo "OK smoke-job durable BYOC + agent_id trace"
 

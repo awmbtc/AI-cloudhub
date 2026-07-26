@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.20
+
+User job list keyset pagination (`GET /v1/jobs` cursor / next_cursor).
+
+### Jobs
+- `GET /v1/jobs` supports `limit` (default 100, max 500) and opaque `cursor`; response may include `next_cursor` / `count`
+- Order: `created_at DESC, id DESC` (same keyset as admin list)
+- `status=pending` claimable list still unbounded (no cursor); MCP `list_jobs` accepts `limit` / `cursor`
+
 ## v0.2.19
 
 Admin jobs list keyset pagination (`cursor` / `next_cursor`).
