@@ -220,19 +220,39 @@ export AI_CLOUDHUB_POLL=2s
 ./.bin/hubd >/tmp/aihub-fuse-hubd.log 2>&1 &
 HUBD_PID=$!
 
-# Wait for mount to show file (up to ~20s)
+# Wait for mount to show file (up to ~25s). Avoid bare find/ls hanging on half-dead FUSE.
 found=0
-for i in $(seq 1 40); do
-  if [[ -f "$MP/fuse-hello.txt" ]] || [[ -f "$MP/ws/fuse-hello.txt" ]]; then
+for i in $(seq 1 50); do
+  if python3 -c '
+import os,sys
+mp=sys.argv[1]
+# non-blocking-ish: only top-level listdir with short timeout via alarm
+import signal
+def _t(*_):
+  raise TimeoutError()
+signal.signal(signal.SIGALRM, _t)
+signal.alarm(2)
+try:
+  names=os.listdir(mp)
+  signal.alarm(0)
+except Exception:
+  signal.alarm(0)
+  sys.exit(2)
+for n in names:
+  p=os.path.join(mp,n)
+  if n=="fuse-hello.txt" or (os.path.isfile(p) and os.path.getsize(p)>=0):
+    sys.exit(0)
+  if os.path.isdir(p):
+    try:
+      if any(True for _ in os.scandir(p)):
+        sys.exit(0)
+    except Exception:
+      pass
+sys.exit(1)
+' "$MP" 2>/dev/null; then
     found=1
     break
   fi
-  # also accept any file under MP
-  if find "$MP" -type f 2>/dev/null | grep -q .; then
-    found=1
-    break
-  fi
-  # hubd died?
   if ! kill -0 "$HUBD_PID" 2>/dev/null; then
     echo "hubd exited early:" >&2
     cat /tmp/aihub-fuse-hubd.log >&2 || true
@@ -268,44 +288,40 @@ else
 fi
 
 echo "files under mount:"
-find "$MP" -type f | head -20
-BODY=$(find "$MP" -name 'fuse-hello.txt' -print -quit 2>/dev/null | head -1)
-if [[ -z "$BODY" ]]; then
-  BODY=$(find "$MP" -type f | head -1)
-fi
-echo "sample file: $BODY"
-test -n "$BODY"
-test -s "$BODY"
-head -c 200 "$BODY"
-echo ""
-
-# Read via path — if this works through FUSE, good enough
-MP="$MP" python3 -c '
-import os
+BODY=$(MP="$MP" python3 -c '
+import os,sys
 mp=os.environ["MP"]
 files=[]
 for r,_,fs in os.walk(mp):
   for f in fs:
     files.append(os.path.join(r,f))
 assert files, "empty mount"
-print("walk ok n=%d" % len(files))
-'
+for p in files[:20]:
+  print(p, file=sys.stderr)
+print("walk ok n=%d" % len(files), file=sys.stderr)
+# prefer fuse-hello.txt
+for p in files:
+  if p.endswith("fuse-hello.txt"):
+    print(p)
+    raise SystemExit
+print(files[0])
+')
+echo "sample file: $BODY"
+test -n "$BODY"
+test -s "$BODY"
+head -c 200 "$BODY"
+echo ""
 
-ACT=$("${CURL[@]}" "$API/v1/bindings" -H "Authorization: Bearer $TOK" | BID="$BID" python3 -c '
-import sys,json,os
+ACT=$("${CURL[@]}" "$API/v1/bindings/$BID" -H "Authorization: Bearer $TOK" | python3 -c '
+import sys,json
 d=json.load(sys.stdin)
-items=d.get("items") if isinstance(d,dict) else d
-if items is None:
-  items=[]
-bid=os.environ["BID"]
-for b in items:
-  if b.get("id")==bid:
-    print(b.get("actual",""))
-    break
-else:
-  print("")
+print(d.get("actual") or "")
 ')
 echo "binding actual=$ACT"
+# Files on FUSE are the hard assert; report uses drive.write and should show mounted.
+if [[ "$ACT" != "mounted" ]]; then
+  echo "WARN: actual=$ACT (expected mounted; files already verified on FUSE)"
+fi
 
 echo "OK smoke-hubd-fuse mount=$MP binding=$BID actual=$ACT minio=$MINIO_EP"
 echo "See docs/HUBD.md — mode=mount FUSE path"

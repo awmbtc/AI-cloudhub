@@ -42,6 +42,8 @@ When tempted to add another Job ops admin button without a customer incident, **
 | `make smoke-hubd` | hubd check + dry-run (`docs/HUBD.md`) |
 | `make smoke-runner` | runner check + dry-run no claim (`docs/RUNNER.md`) |
 | `make smoke-runtime` | hubd + runner (`docs/RUNTIME.md`) |
+| `make smoke-hubd-fuse` | real FUSE mount (soft-skip; REQUIRE=1 hard) |
+| `make demo-local` | MinIO → local dir without FUSE |
 | `make prod-preflight` | production env checklist (no API required) |
 | `make smoke-prod-preflight` | preflight self-test (weak fail / strong pass) |
 | `make smoke-all` | above smokes **including** golden + stage-c + byoc + sts (**not** minio) |

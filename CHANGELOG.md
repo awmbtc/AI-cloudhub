@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.62
+
+Local runtime demo path close-out (post-reboot FUSE verified):
+
+- HUBD/RUNTIME/GOLDEN-PATH: FUSE PASS after macFUSE load
+- smoke-hubd-fuse: fix binding actual query (`?device_id=`)
+- Acceptance: golden + runtime + demo-local + fuse + sts live
+
 ## v0.2.61
 
 FUSE mount smoke tooling (honest):

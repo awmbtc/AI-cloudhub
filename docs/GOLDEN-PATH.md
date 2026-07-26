@@ -5,7 +5,9 @@
 > Runtime 总览：[RUNTIME.md](./RUNTIME.md)（hubd + runner）  
 > 自动化：`make smoke-golden` → `scripts/smoke-golden.sh`（无活桶）  
 > 活桶扩展：`make smoke-golden-minio` → `scripts/smoke-golden-minio.sh`  
-> 本机 Runtime：`make smoke-runtime`（= hubd + runner dry 路径）
+> 本机 Runtime：`make smoke-runtime`（= hubd + runner dry 路径）  
+> 真 FUSE：`AI_CLOUDHUB_SMOKE_FUSE_REQUIRE=1 make smoke-hubd-fuse`（见 [HUBD.md](./HUBD.md)）  
+> 无 FUSE：`make demo-local`
 
 ## 产品一句话
 

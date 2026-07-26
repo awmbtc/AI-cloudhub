@@ -102,14 +102,16 @@ make smoke-golden          # 控制面契约（无活桶）
 make smoke-hubd            # hubd check + dry-run
 make smoke-runner          # runner check + dry-run（不 claim）
 make smoke-runtime         # = smoke-hubd + smoke-runner
-# 可选：
+# 可选 / 有依赖时：
 make smoke-golden-minio    # 活桶 objects
 make smoke-sts / smoke-sts-live
+make demo-local            # 无 FUSE 同步到 ~/aihub-demo-workspace
+AI_CLOUDHUB_SMOKE_FUSE_REQUIRE=1 make smoke-hubd-fuse   # 真 FUSE（需官方 rclone + macFUSE）
 make prod-preflight
 ```
 
-人工真挂盘：装 rclone + FUSE → `hubd` 常驻（见 HUBD）。  
-人工真 job：`AI_CLOUDHUB_WORKER=1 .bin/runner`（见 RUNNER）。
+真挂盘：官方 rclone + macFUSE 已加载 → `smoke-hubd-fuse` 或 `hubd` 常驻（见 [HUBD.md](./HUBD.md)）。  
+真 job：`AI_CLOUDHUB_WORKER=1 .bin/runner`（见 [RUNNER.md](./RUNNER.md)）。
 
 ---
 

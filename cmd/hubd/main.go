@@ -780,9 +780,15 @@ func reportActual(api, token, bindingID, actual, lastErr string) error {
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.Printf("report actual %s=%s: %v", bindingID, actual, err)
 		return err
 	}
 	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		b, _ := io.ReadAll(res.Body)
+		log.Printf("report actual %s=%s HTTP %d: %s", bindingID, actual, res.StatusCode, string(b))
+		return fmt.Errorf("report HTTP %d: %s", res.StatusCode, string(b))
+	}
 	return nil
 }
 

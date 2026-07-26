@@ -85,10 +85,21 @@ AI_CLOUDHUB_SMOKE_FUSE_REQUIRE=1 make smoke-hubd-fuse
 make smoke-hubd-fuse
 ```
 
-**本机实测（2026-07）：**  
-- brew rclone → `mount is not supported … Homebrew` ❌  
-- 官方 rclone + hubd 报 `mounted`，但内核报 `file system is not available` → 挂载点仍空 ❌（扩展未真正启用）  
-- `make demo-local` / sync ✅  
+**本机实测：**
+
+| 条件 | 结果 |
+|------|------|
+| brew rclone | ❌ macOS 拒绝 mount |
+| 官方 rclone + macFUSE **未**加载 | ❌ `file system is not available` |
+| 官方 rclone + macFUSE **已**加载（重启后） | ✅ `make smoke-hubd-fuse`：挂载表 `macfuse`、文件可读、`actual=mounted` |
+| `make demo-local` / sync | ✅ 无 FUSE 兜底 |
+
+验收命令：
+
+```bash
+AI_CLOUDHUB_SMOKE_FUSE_REQUIRE=1 make smoke-hubd-fuse
+# 期望：OK smoke-hubd-fuse … actual=mounted
+```
 
 ---
 

@@ -57,7 +57,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.61`：FUSE smoke 工具 + 诚实边界 | ✅ |
+| **发布** | `v0.2.62`：本机 Runtime 全路径收口（含真 FUSE） | ✅ |
 
 ## 快速开始
 
