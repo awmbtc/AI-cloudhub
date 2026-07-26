@@ -2503,11 +2503,32 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// routeAdminJobWebhooksSub: GET /{id} | POST /{id}/retry
+// routeAdminJobWebhooksSub: POST /purge | GET /{id} | POST /{id}/retry
 func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/job-webhooks/"), "/")
 	if path == "" {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if path == "purge" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		// optional older_than_sec query (default = configured retain / 7d)
+		var older time.Duration
+		if sec, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("older_than_sec"))); err == nil && sec > 0 {
+			older = time.Duration(sec) * time.Second
+		}
+		n, err := s.jobs.AdminPurgeWebhooks(older)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.job_webhooks.purge", "", fmt.Sprintf("deleted=%d older_than_sec=%d", n, int(older.Seconds())))
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"deleted": n,
+		})
 		return
 	}
 	parts := strings.Split(path, "/")

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.23
+
+Job webhook outbox TTL purge for delivered/dead rows.
+
+### Jobs / Webhook
+- Auto-purge delivered (`delivered_at`) and dead (`updated_at`) older than `AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC` (default 7d; `0` disables)
+- Worker interval `AI_CLOUDHUB_JOB_WEBHOOK_PURGE_SEC` (default 60)
+- `POST /v1/admin/job-webhooks/purge?older_than_sec=` force purge (admin)
+- Metric `jobs_webhook_purged_total`; pending rows never auto-purged
+
 ## v0.2.22
 
 Admin list/get/retry for job webhook outbox.

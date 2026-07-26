@@ -69,6 +69,7 @@ All series are **counters** (monotonic within a process lifetime).
 | `aicloudhub_jobs_webhook_ok_total` | — | Terminal job webhooks delivered HTTP &lt;300 (durable outbox) |
 | `aicloudhub_jobs_webhook_fail_total` | — | Failed outbox delivery attempts (will retry if under max) |
 | `aicloudhub_jobs_webhook_dead_total` | — | Outbox rows marked dead after max attempts |
+| `aicloudhub_jobs_webhook_purged_total` | — | Delivered/dead outbox rows deleted by TTL purge |
 | `aicloudhub_rate_limited_total` | — | Requests rejected by rate limiting |
 | `aicloudhub_snapshots_created_total` | — | Metadata snapshots created |
 | `aicloudhub_marketplace_installs_total` | — | Successful marketplace installs |

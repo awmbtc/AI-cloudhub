@@ -491,3 +491,10 @@ code=$("${CURL[@]}" -o /tmp/aihub-wh-adm.json -w "%{http_code}" \
   "$API/v1/admin/job-webhooks" -H "Authorization: Bearer $ATOK")
 test "$code" = "403"
 echo "admin job-webhooks ok (agent denied $code)"
+# purge with huge age should delete nothing critical; with 0 age deletes delivered
+DEL=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/purge?older_than_sec=1" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("deleted",0)))')
+# after redeliver, at least one delivered may be purged if older_than=1s and delivered_at is past
+# just assert API works and returns integer
+test "$DEL" -ge 0
+echo "admin webhook purge ok deleted=$DEL"

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.22
+  version: 0.2.23
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -2028,6 +2028,33 @@ paths:
           description: Admin required
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /v1/admin/job-webhooks/purge:
+    post:
+      tags: [admin]
+      summary: Purge old delivered/dead webhook outbox rows (admin)
+      operationId: adminPurgeJobWebhooks
+      description: |
+        Deletes delivered and dead rows older than `older_than_sec` (default: configured
+        retain or 7 days). Pending rows are never purged.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: older_than_sec
+          in: query
+          schema: { type: integer, minimum: 1 }
+          description: Age threshold in seconds
+      responses:
+        '200':
+          description: Purge result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        '403':
+          description: Admin required
 
   /v1/admin/audit:
     get:

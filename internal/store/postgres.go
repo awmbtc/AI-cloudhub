@@ -1641,6 +1641,33 @@ func (p *Postgres) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, e
 	return out, rows.Err()
 }
 
+func (p *Postgres) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	cut := olderThan.UTC()
+	// CTE delete of oldest matching terminal rows.
+	res, err := p.db.Exec(
+		`WITH doomed AS (
+		   SELECT id FROM job_webhook_outbox
+		   WHERE (status = 'delivered' AND COALESCE(delivered_at, updated_at) < $1)
+		      OR (status = 'dead' AND updated_at < $1)
+		   ORDER BY COALESCE(delivered_at, updated_at) ASC
+		   LIMIT $2
+		 )
+		 DELETE FROM job_webhook_outbox WHERE id IN (SELECT id FROM doomed)`,
+		cut, limit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // IsPostgresDSN reports whether path is a postgres URL.
 func IsPostgresDSN(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))

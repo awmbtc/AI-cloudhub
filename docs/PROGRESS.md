@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.22 已发布；admin job-webhooks list/retry
+## 总览：v0.2.23 已发布；job webhook outbox TTL purge
 
 | 阶段 | 状态 |
 |------|------|
@@ -459,3 +459,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `GET /v1/admin/job-webhooks` list/get + `POST …/retry`
 - [x] store Get/ListWebhookOutbox；smoke + docs
 - [x] 版本钉 **0.2.22** + tag
+
+### 本波（webhook outbox purge）
+
+- [x] `PurgeWebhookOutbox` + retain/purge env；worker 周期清理
+- [x] `POST /v1/admin/job-webhooks/purge`；metrics purged
+- [x] 版本钉 **0.2.23** + tag

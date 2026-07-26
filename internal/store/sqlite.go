@@ -1809,6 +1809,54 @@ func (s *SQLite) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 	return out, rows.Err()
 }
 
+func (s *SQLite) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	cut := olderThan.UTC().Format(time.RFC3339Nano)
+	// Select ids then delete (SQLite DELETE ... LIMIT is fine on 3.x).
+	rows, err := s.db.Query(
+		`SELECT id FROM job_webhook_outbox
+		 WHERE (status = 'delivered' AND (
+		          (delivered_at IS NOT NULL AND delivered_at != '' AND delivered_at < ?)
+		          OR ((delivered_at IS NULL OR delivered_at = '') AND updated_at < ?)
+		       ))
+		    OR (status = 'dead' AND updated_at < ?)
+		 ORDER BY COALESCE(NULLIF(delivered_at,''), updated_at) ASC
+		 LIMIT ?`,
+		cut, cut, cut, limit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range ids {
+		res, err := s.db.Exec(`DELETE FROM job_webhook_outbox WHERE id = ?`, id)
+		if err != nil {
+			return n, err
+		}
+		aff, _ := res.RowsAffected()
+		n += int(aff)
+	}
+	return n, nil
+}
+
 func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
 	var sn Snapshot
 	var payload, created string

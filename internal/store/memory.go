@@ -1236,3 +1236,50 @@ func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 	}
 	return out, nil
 }
+
+func (m *Memory) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	type cand struct {
+		id  string
+		at  time.Time
+	}
+	var list []cand
+	for id, e := range m.webhooks {
+		switch e.Status {
+		case "delivered":
+			at := e.DeliveredAt
+			if at.IsZero() {
+				at = e.UpdatedAt
+			}
+			if at.Before(olderThan) {
+				list = append(list, cand{id: id, at: at})
+			}
+		case "dead":
+			if e.UpdatedAt.Before(olderThan) {
+				list = append(list, cand{id: id, at: e.UpdatedAt})
+			}
+		}
+	}
+	// oldest first
+	for i := 0; i < len(list); i++ {
+		for k := i + 1; k < len(list); k++ {
+			if list[k].at.Before(list[i].at) {
+				list[i], list[k] = list[k], list[i]
+			}
+		}
+	}
+	if len(list) > limit {
+		list = list[:limit]
+	}
+	for _, c := range list {
+		delete(m.webhooks, c.id)
+	}
+	return len(list), nil
+}

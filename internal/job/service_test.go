@@ -644,6 +644,63 @@ func TestWebhookOutboxDeliverAndRetry(t *testing.T) {
 	}
 }
 
+func TestWebhookOutboxPurge(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	now := time.Now().UTC()
+	// two delivered old, one recent, one pending (must keep)
+	old := now.Add(-2 * time.Hour)
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-old-1", JobID: "j1", UserID: "u", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: old, CreatedAt: old, UpdatedAt: old, NextAttemptAt: old,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-old-dead", JobID: "j2", UserID: "u", Event: "job.failed",
+		PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: old, UpdatedAt: old, NextAttemptAt: old,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-new", JobID: "j3", UserID: "u", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-pend", JobID: "j4", UserID: "u", Event: "job.cancelled",
+		PayloadJSON: []byte(`{}`), Status: "pending", CreatedAt: old, UpdatedAt: old, NextAttemptAt: old,
+	})
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC", "3600") // 1h
+	n, err := svc.PurgeWebhookOutbox(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("purged %d want 2", n)
+	}
+	if _, err := mem.GetWebhookOutbox("e-old-1"); err == nil {
+		t.Fatal("old delivered should be gone")
+	}
+	if _, err := mem.GetWebhookOutbox("e-old-dead"); err == nil {
+		t.Fatal("old dead should be gone")
+	}
+	if _, err := mem.GetWebhookOutbox("e-new"); err != nil {
+		t.Fatal("recent delivered kept")
+	}
+	if _, err := mem.GetWebhookOutbox("e-pend"); err != nil {
+		t.Fatal("pending kept")
+	}
+	// admin purge with short age
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-admin", JobID: "j5", UserID: "u", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now.Add(-10 * time.Second),
+		CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	n2, err := svc.AdminPurgeWebhooks(5 * time.Second)
+	if err != nil || n2 < 1 {
+		t.Fatalf("admin purge: n=%d err=%v", n2, err)
+	}
+	if _, err := mem.GetWebhookOutbox("e-admin"); err == nil {
+		t.Fatal("admin-purged row should be gone")
+	}
+}
+
 func TestAdminRetryWebhook(t *testing.T) {
 	var hits atomic.Int32
 	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

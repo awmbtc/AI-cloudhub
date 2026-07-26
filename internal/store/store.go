@@ -417,6 +417,9 @@ type Store interface {
 	GetWebhookOutbox(id string) (*WebhookOutbox, error)
 	// ListWebhookOutbox lists outbox rows (admin); optional status filter; newest created_at first.
 	ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, error)
+	// PurgeWebhookOutbox deletes delivered (by delivered_at) and dead (by updated_at) rows older than olderThan.
+	// limit caps rows deleted (0 = default 500, max 5000). Returns number deleted.
+	PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error)
 
 	Close() error
 }

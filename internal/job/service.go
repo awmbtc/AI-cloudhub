@@ -778,6 +778,45 @@ func jobWebhookPollInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+// jobWebhookRetain is how long delivered/dead rows are kept. Default 7d; 0 disables purge.
+func jobWebhookRetain() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC"))
+	if v == "" {
+		return 7 * 24 * time.Hour
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 7 * 24 * time.Hour
+	}
+	if n == 0 {
+		return 0
+	}
+	// clamp 1s .. 365d
+	if n < 1 {
+		n = 1
+	}
+	if n > 365*24*3600 {
+		n = 365 * 24 * 3600
+	}
+	return time.Duration(n) * time.Second
+}
+
+// jobWebhookPurgeInterval is how often the worker runs purge. Default 60s.
+func jobWebhookPurgeInterval() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_PURGE_SEC"))
+	if v == "" {
+		return 60 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 60 * time.Second
+	}
+	if n > 3600 {
+		n = 3600
+	}
+	return time.Duration(n) * time.Second
+}
+
 // webhookBackoff returns delay after the Nth failed attempt (1-based).
 // AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0 forces ~1ms (tests).
 func webhookBackoff(attempt int) time.Duration {
@@ -842,6 +881,7 @@ func (s *Service) notifyJobTerminal(j *Job) {
 }
 
 // StartWebhookWorker polls the durable outbox until ctx is cancelled.
+// Also purges old delivered/dead rows per AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC.
 // No-op when AI_CLOUDHUB_JOB_WEBHOOK_URL is unset.
 func (s *Service) StartWebhookWorker(ctx context.Context) {
 	if jobWebhookURL() == "" {
@@ -852,15 +892,60 @@ func (s *Service) StartWebhookWorker(ctx context.Context) {
 		defer tick.Stop()
 		// Immediate pass on start (recover after restart).
 		_ = s.ProcessWebhookOutbox(32)
+		_, _ = s.PurgeWebhookOutbox(0)
+		lastPurge := time.Now()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
 				_ = s.ProcessWebhookOutbox(32)
+				if time.Since(lastPurge) >= jobWebhookPurgeInterval() {
+					_, _ = s.PurgeWebhookOutbox(0)
+					lastPurge = time.Now()
+				}
 			}
 		}
 	}()
+}
+
+// PurgeWebhookOutbox deletes delivered/dead rows older than retain TTL.
+// olderThan zero uses AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC (0 env = no-op).
+// limit 0 uses 500. Returns deleted count.
+func (s *Service) PurgeWebhookOutbox(olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		olderThan = jobWebhookRetain()
+	}
+	if olderThan <= 0 {
+		return 0, nil
+	}
+	n, err := s.store.PurgeWebhookOutbox(time.Now().UTC().Add(-olderThan), 500)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		metrics.AddJobWebhookPurged(uint64(n))
+	}
+	return n, nil
+}
+
+// AdminPurgeWebhooks force-purges terminal outbox rows older than olderThan.
+// olderThan <= 0 uses configured retain (or 7d if retain disabled).
+func (s *Service) AdminPurgeWebhooks(olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		olderThan = jobWebhookRetain()
+		if olderThan <= 0 {
+			olderThan = 7 * 24 * time.Hour
+		}
+	}
+	n, err := s.store.PurgeWebhookOutbox(time.Now().UTC().Add(-olderThan), 2000)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		metrics.AddJobWebhookPurged(uint64(n))
+	}
+	return n, nil
 }
 
 // ProcessWebhookOutbox delivers due pending outbox rows (batch). Returns how many were delivered.

@@ -47,6 +47,7 @@ var (
 	JobsWebhookOK     atomic.Uint64
 	JobsWebhookFail   atomic.Uint64
 	JobsWebhookDead   atomic.Uint64
+	JobsWebhookPurged atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -150,6 +151,13 @@ func IncJobWebhookFail() { JobsWebhookFail.Add(1) }
 // IncJobWebhookDead increments outbox rows moved to dead after max attempts.
 func IncJobWebhookDead() { JobsWebhookDead.Add(1) }
 
+// AddJobWebhookPurged adds deleted delivered/dead outbox rows.
+func AddJobWebhookPurged(n uint64) {
+	if n > 0 {
+		JobsWebhookPurged.Add(n)
+	}
+}
+
 // Handler serves Prometheus text exposition (no auth).
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -237,4 +245,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_dead_total Terminal job webhooks moved to dead after max attempts\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_dead_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_dead_total %d\n", JobsWebhookDead.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_purged_total Terminal job webhook outbox rows deleted by TTL purge\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_purged_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_purged_total %d\n", JobsWebhookPurged.Load())
 }

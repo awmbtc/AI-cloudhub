@@ -88,10 +88,14 @@ export AI_CLOUDHUB_JOB_WEBHOOK_URL=https://hooks.example.com/jobs
 export AI_CLOUDHUB_JOB_WEBHOOK_SECRET=whsec_xxx          # optional HMAC
 export AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS=8            # default 8, max 32
 export AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC=2                # outbox worker poll
+export AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC=604800         # keep delivered/dead 7d; 0=never purge
+export AI_CLOUDHUB_JOB_WEBHOOK_PURGE_SEC=60              # worker purge interval
 # AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0                  # tests only: ~1ms retry
 ```
 
 On terminal status (`succeeded` / `failed` / `cancelled`), the control plane **enqueues** a row in `job_webhook_outbox` and a background worker delivers at-least-once (survives API restart). Receivers should de-dupe on `event_id`.
+
+**Retention**: delivered (by `delivered_at`) and dead (by `updated_at`) rows older than `RETAIN_SEC` are deleted by the worker (and via admin purge). Pending rows are never auto-purged.
 
 Body:
 
@@ -138,6 +142,7 @@ POST /v1/admin/jobs/{id}/release
 GET  /v1/admin/job-webhooks?status=&limit=
 GET  /v1/admin/job-webhooks/{id}
 POST /v1/admin/job-webhooks/{id}/retry
+POST /v1/admin/job-webhooks/purge?older_than_sec=
 ```
 
 - Cross-user listing; `limit` default 100, max 500.
@@ -146,9 +151,9 @@ POST /v1/admin/job-webhooks/{id}/retry
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
-- **Admin job-webhooks**: list/get outbox; `status=pending|delivered|dead`; retry requeues any row (including dead/delivered) with same `event_id`/`payload`, attempts reset to 0.
+- **Admin job-webhooks**: list/get outbox; `status=pending|delivered|dead`; retry requeues any row (including dead/delivered) with same `event_id`/`payload`, attempts reset to 0; **purge** deletes old delivered/dead (`older_than_sec` optional).
 - Agent tokens cannot call admin APIs.
-- Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry`.
+- Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry|purge`.
 
 ## Honesty
 
