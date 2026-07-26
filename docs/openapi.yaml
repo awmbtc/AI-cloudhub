@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.24
+  version: 0.2.25
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -2029,6 +2029,42 @@ paths:
           description: Admin required
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /v1/admin/job-webhooks/retry-all:
+    post:
+      tags: [admin]
+      summary: Batch requeue webhook outbox rows (admin)
+      operationId: adminRetryAllJobWebhooks
+      description: |
+        Requeues up to `limit` rows with the given `status` (default `dead`) to pending
+        with attempts=0. Kicks one delivery pass when any requeued.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, delivered, dead]
+            default: dead
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Batch requeue result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requeued: { type: integer }
+                  status: { type: string }
+                  limit: { type: integer }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Admin required
 
   /v1/admin/job-webhooks/purge:
     post:

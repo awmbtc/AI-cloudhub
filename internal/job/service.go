@@ -15,12 +15,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 	"github.com/google/uuid"
 )
+
+// serializes outbox delivery within one process (avoids concurrent fail clobbering success).
+var webhookProcessMu sync.Mutex
 
 // ErrIdempotencyConflict is returned when idempotency_key is reused with a different payload.
 var ErrIdempotencyConflict = errors.New("idempotency conflict: key reused with different payload")
@@ -956,7 +960,7 @@ func (s *Service) AdminPurgeWebhooks(olderThan time.Duration) (int, error) {
 }
 
 // ProcessWebhookOutbox delivers due pending outbox rows (batch). Returns how many were delivered.
-// Safe to call concurrently; deliveries are at-least-once (receivers should key on event_id).
+// Serialized per process; at-least-once across replicas (receivers should key on event_id).
 func (s *Service) ProcessWebhookOutbox(limit int) int {
 	url := jobWebhookURL()
 	if url == "" {
@@ -965,6 +969,8 @@ func (s *Service) ProcessWebhookOutbox(limit int) int {
 	if limit <= 0 {
 		limit = 32
 	}
+	webhookProcessMu.Lock()
+	defer webhookProcessMu.Unlock()
 	due, err := s.store.ListDueWebhookOutbox(time.Now().UTC(), limit)
 	if err != nil || len(due) == 0 {
 		return 0
@@ -977,15 +983,20 @@ func (s *Service) ProcessWebhookOutbox(limit int) int {
 		if row == nil {
 			continue
 		}
-		ok, derr := deliverWebhookOnce(client, url, secret, row)
+		// Skip if another path already finished this row.
+		fresh, err := s.store.GetWebhookOutbox(row.ID)
+		if err != nil || fresh.Status != "pending" {
+			continue
+		}
+		ok, derr := deliverWebhookOnce(client, url, secret, fresh)
 		now := time.Now().UTC()
-		row.Attempts++
-		row.UpdatedAt = now
+		fresh.Attempts++
+		fresh.UpdatedAt = now
 		if ok {
-			row.Status = "delivered"
-			row.DeliveredAt = now
-			row.LastError = ""
-			if err := s.store.UpdateWebhookOutbox(row); err == nil {
+			fresh.Status = "delivered"
+			fresh.DeliveredAt = now
+			fresh.LastError = ""
+			if err := s.store.UpdateWebhookOutbox(fresh); err == nil {
 				metrics.IncJobWebhook()
 				delivered++
 			}
@@ -996,15 +1007,15 @@ func (s *Service) ProcessWebhookOutbox(limit int) int {
 		if len(errMsg) > 500 {
 			errMsg = errMsg[:500]
 		}
-		row.LastError = errMsg
-		if row.Attempts >= maxAtt {
-			row.Status = "dead"
-			_ = s.store.UpdateWebhookOutbox(row)
+		fresh.LastError = errMsg
+		if fresh.Attempts >= maxAtt {
+			fresh.Status = "dead"
+			_ = s.store.UpdateWebhookOutbox(fresh)
 			metrics.IncJobWebhookDead()
 			continue
 		}
-		row.NextAttemptAt = now.Add(webhookBackoff(row.Attempts))
-		_ = s.store.UpdateWebhookOutbox(row)
+		fresh.NextAttemptAt = now.Add(webhookBackoff(fresh.Attempts))
+		_ = s.store.UpdateWebhookOutbox(fresh)
 	}
 	return delivered
 }
@@ -1107,6 +1118,22 @@ func (s *Service) AdminGetWebhook(id string) (*WebhookOutboxView, error) {
 	return webhookViewFromStore(e, true), nil
 }
 
+// requeueWebhookRow resets a row to pending for redelivery (same event_id/payload).
+func (s *Service) requeueWebhookRow(e *store.WebhookOutbox) error {
+	if e == nil {
+		return fmt.Errorf("webhook outbox not found")
+	}
+	now := time.Now().UTC()
+	e.Status = "pending"
+	e.Attempts = 0
+	// Slightly in the past so string/keyset due queries always pick it up immediately.
+	e.NextAttemptAt = now.Add(-time.Second)
+	e.LastError = ""
+	e.DeliveredAt = time.Time{}
+	e.UpdatedAt = now
+	return s.store.UpdateWebhookOutbox(e)
+}
+
 // AdminRetryWebhook requeues a dead/pending/delivered row for immediate delivery (admin).
 // Resets status to pending, attempts to 0, next_attempt_at to now; same event_id/payload.
 // Kicks ProcessWebhookOutbox asynchronously when WEBHOOK_URL is configured.
@@ -1115,20 +1142,49 @@ func (s *Service) AdminRetryWebhook(id string) (*WebhookOutboxView, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webhook outbox not found")
 	}
-	now := time.Now().UTC()
-	e.Status = "pending"
-	e.Attempts = 0
-	e.NextAttemptAt = now
-	e.LastError = ""
-	e.DeliveredAt = time.Time{}
-	e.UpdatedAt = now
-	if err := s.store.UpdateWebhookOutbox(e); err != nil {
+	if err := s.requeueWebhookRow(e); err != nil {
 		return nil, err
 	}
 	if jobWebhookURL() != "" {
 		go func() { _ = s.ProcessWebhookOutbox(8) }()
 	}
 	return webhookViewFromStore(e, true), nil
+}
+
+// AdminRetryWebhooksBatch requeues up to limit outbox rows with the given status (admin).
+// status defaults to "dead"; allowed: pending|delivered|dead. limit default 100, max 500.
+// Returns how many rows were requeued. Kicks one delivery pass when any requeued and URL set.
+func (s *Service) AdminRetryWebhooksBatch(status string, limit int) (int, error) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "dead"
+	}
+	switch status {
+	case "pending", "delivered", "dead":
+	default:
+		return 0, fmt.Errorf("status must be pending, delivered, or dead")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	list, err := s.store.ListWebhookOutbox(store.WebhookOutboxFilter{Status: status, Limit: limit})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range list {
+		if err := s.requeueWebhookRow(e); err != nil {
+			continue
+		}
+		n++
+	}
+	if n > 0 && jobWebhookURL() != "" {
+		go func() { _ = s.ProcessWebhookOutbox(32) }()
+	}
+	return n, nil
 }
 
 // VerifyJobWebhookSignature checks HMAC for receivers (exported for tests/docs).

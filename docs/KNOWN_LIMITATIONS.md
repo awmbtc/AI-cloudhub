@@ -79,7 +79,7 @@
 - Job idempotency：创建 `idempotency_key`（每用户唯一）；同 key+同 payload → 200 重放；同 key+不同 payload → **409**；见 [JOBS.md](./JOBS.md)。
 - Job cancel → runner：worker 轮询 GET job（`AI_CLOUDHUB_CANCEL_POLL` 默认 5s）；取消后 CommandContext kill；complete 对已 terminal 为 no-op。
 - Job runner 身份：claim 可带 `X-AI-Cloudhub-Runner-Id` / body `runner_id`；runner 默认 `AI_CLOUDHUB_RUNNER_ID` 或 hostname。
-- Job webhook（可选）：durable outbox `job_webhook_outbox` + worker；envelope `{event_id,event,occurred_at,job}`；HMAC optional；at-least-once（按 event_id 去重）；失败退避后 `dead`；admin list/get/retry/purge；delivered/dead 默认保留 7 天（`AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC`，`0` 关闭自动 purge）；pending 不自动删。
+- Job webhook（可选）：durable outbox `job_webhook_outbox` + worker；envelope `{event_id,event,occurred_at,job}`；HMAC optional；at-least-once（按 event_id 去重）；失败退避后 `dead`；admin list/get/retry/retry-all/purge；delivered/dead 默认保留 7 天（`AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC`，`0` 关闭自动 purge）；pending 不自动删；retry-all 单次最多 500 条。
 - Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。
 
 ## 产品

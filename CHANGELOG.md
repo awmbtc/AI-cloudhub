@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.25
+
+Admin batch requeue for job webhook outbox.
+
+### Admin / Webhook
+- `POST /v1/admin/job-webhooks/retry-all?status=&limit=` (default status=dead, limit 100 max 500)
+- Returns `{requeued, status, limit}`; kicks one delivery pass when any requeued
+- Audit `admin.job_webhooks.retry_all`
+
 ## v0.2.24
 
 Full job status count aggregation (no 500-row scan cap).

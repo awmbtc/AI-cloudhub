@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.24 已发布；job stats 全库 COUNT 聚合
+## 总览：v0.2.25 已发布；admin job-webhooks retry-all
 
 | 阶段 | 状态 |
 |------|------|
@@ -470,3 +470,8 @@ curl -s localhost:8080/v1/runtime/check
 
 - [x] store `CountJobsByStatus`；Stats/AdminStats 去 500 上限
 - [x] docs/openapi/KNOWN_LIMITATIONS；版本钉 **0.2.24** + tag
+
+### 本波（webhook retry-all）
+
+- [x] `POST /v1/admin/job-webhooks/retry-all` 批量 requeue
+- [x] 版本钉 **0.2.25** + tag

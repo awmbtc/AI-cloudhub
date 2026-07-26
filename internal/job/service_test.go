@@ -740,6 +740,45 @@ func TestWebhookOutboxPurge(t *testing.T) {
 	}
 }
 
+func TestAdminRetryWebhooksBatch(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+			ID: fmt.Sprintf("dead-%d", i), JobID: "j", UserID: "u", Event: "job.failed",
+			PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+		})
+	}
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "del-1", JobID: "j", UserID: "u", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	n, err := svc.AdminRetryWebhooksBatch("dead", 10)
+	if err != nil || n != 3 {
+		t.Fatalf("batch dead: n=%d err=%v", n, err)
+	}
+	if len(svc.AdminListWebhooks("dead", 10)) != 0 {
+		t.Fatal("dead should be empty")
+	}
+	if len(svc.AdminListWebhooks("pending", 10)) != 3 {
+		t.Fatalf("pending want 3 got %d", len(svc.AdminListWebhooks("pending", 10)))
+	}
+	// default status is dead
+	n0, err := svc.AdminRetryWebhooksBatch("", 10)
+	if err != nil || n0 != 0 {
+		t.Fatalf("empty dead batch: n=%d err=%v", n0, err)
+	}
+	// delivered batch
+	n2, err := svc.AdminRetryWebhooksBatch("delivered", 10)
+	if err != nil || n2 != 1 {
+		t.Fatalf("batch delivered: n=%d err=%v", n2, err)
+	}
+	if _, err := svc.AdminRetryWebhooksBatch("nope", 10); err == nil {
+		t.Fatal("expected invalid status")
+	}
+}
+
 func TestAdminRetryWebhook(t *testing.T) {
 	var hits atomic.Int32
 	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

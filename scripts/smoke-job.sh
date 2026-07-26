@@ -53,6 +53,10 @@ cleanup() {
     kill "$API_PID" 2>/dev/null || true
     wait "$API_PID" 2>/dev/null || true
   fi
+  if [[ -n "${WH_PID:-}" ]]; then
+    kill "$WH_PID" 2>/dev/null || true
+    wait "$WH_PID" 2>/dev/null || true
+  fi
   rm -f "$DB" "${DB}-wal" "${DB}-shm"
 }
 trap cleanup EXIT
@@ -413,22 +417,29 @@ WH_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0));
 WH_HIT=/tmp/aihub-wh-hit-$$.json
 rm -f "$WH_HIT"
 python3 - "$WH_PORT" "$WH_HIT" <<'PY' &
-import json, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 port, path = int(sys.argv[1]), sys.argv[2]
 class H(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n)
         open(path, "wb").write(body)
-        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
-    def log_message(self, *a): pass
-HTTPServer(("127.0.0.1", port), H).serve_forever()
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+    def log_message(self, *a):
+        pass
+ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 PY
 WH_PID=$!
 export AI_CLOUDHUB_JOB_WEBHOOK_URL="http://127.0.0.1:${WH_PORT}/hook"
 export AI_CLOUDHUB_JOB_WEBHOOK_SECRET="smoke-whsec"
 export AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC=1
+export AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0
+# give receiver a moment to bind
+sleep 0.15
 start_api
 JWH=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"]}" \
@@ -441,8 +452,6 @@ for _ in $(seq 1 40); do
   if [[ -s "$WH_HIT" ]]; then ok=1; break; fi
   sleep 0.15
 done
-kill "$WH_PID" 2>/dev/null || true
-wait "$WH_PID" 2>/dev/null || true
 test "$ok" = "1"
 python3 -c '
 import json,sys
@@ -479,22 +488,30 @@ d=json.load(sys.stdin)
 assert d["status"]=="pending" and d["attempts"]==0, d
 print("admin webhook retry ok", d["id"])
 '
-# wait redeliver
-for _ in $(seq 1 40); do
+# wait redeliver (serialized Process + worker)
+st=""
+for _ in $(seq 1 50); do
   st=$("${CURL[@]}" "$API/v1/admin/job-webhooks/$WID" -H "Authorization: Bearer $TOK" \
-    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))')
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))' || true)
   if [[ "$st" == "delivered" ]]; then break; fi
-  sleep 0.15
+  sleep 0.2
 done
 test "$st" = "delivered"
 code=$("${CURL[@]}" -o /tmp/aihub-wh-adm.json -w "%{http_code}" \
   "$API/v1/admin/job-webhooks" -H "Authorization: Bearer $ATOK")
 test "$code" = "403"
 echo "admin job-webhooks ok (agent denied $code)"
-# purge with huge age should delete nothing critical; with 0 age deletes delivered
+# retry-all requeues delivered (batch) then empty dead batch
+RQ=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/retry-all?status=delivered&limit=50" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "requeued" in d, d; print(int(d["requeued"]))')
+test "$RQ" -ge 1
+RQ0=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/retry-all?status=dead&limit=10" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("status")=="dead", d; print(int(d["requeued"]))')
+test "$RQ0" = "0"
+echo "admin webhook retry-all ok requeued=$RQ dead_batch=$RQ0"
 DEL=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/purge?older_than_sec=1" -H "Authorization: Bearer $TOK" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("deleted",0)))')
-# after redeliver, at least one delivered may be purged if older_than=1s and delivered_at is past
-# just assert API works and returns integer
 test "$DEL" -ge 0
 echo "admin webhook purge ok deleted=$DEL"
+kill "$WH_PID" 2>/dev/null || true
+wait "$WH_PID" 2>/dev/null || true

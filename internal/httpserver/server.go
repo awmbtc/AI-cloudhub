@@ -2503,7 +2503,7 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// routeAdminJobWebhooksSub: POST /purge | GET /{id} | POST /{id}/retry
+// routeAdminJobWebhooksSub: POST /purge | POST /retry-all | GET /{id} | POST /{id}/retry
 func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/job-webhooks/"), "/")
 	if path == "" {
@@ -2528,6 +2528,36 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 		s.auth.Audit(adminID, "admin.job_webhooks.purge", "", fmt.Sprintf("deleted=%d older_than_sec=%d", n, int(older.Seconds())))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": n,
+		})
+		return
+	}
+	if path == "retry-all" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		status := strings.TrimSpace(r.URL.Query().Get("status"))
+		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+		n, err := s.jobs.AdminRetryWebhooksBatch(status, limit)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if status == "" {
+			status = "dead"
+		}
+		eff := limit
+		if eff <= 0 {
+			eff = 100
+		}
+		if eff > 500 {
+			eff = 500
+		}
+		s.auth.Audit(adminID, "admin.job_webhooks.retry_all", "", fmt.Sprintf("requeued=%d status=%s limit=%d", n, status, eff))
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"requeued": n,
+			"status":   status,
+			"limit":    eff,
 		})
 		return
 	}
