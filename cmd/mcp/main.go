@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.12"
+const serverVersion = "0.2.13"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -308,7 +308,7 @@ func toolRegistry() []toolMeta {
 			},
 		},
 		{
-			name: "list_jobs", description: "List BYOC jobs. Filters: status (pending=claimable set; or running|succeeded|failed|cancelled|dispatched), agent_id, claimed_by_agent_id. Requires job.run.",
+			name: "list_jobs", description: "List BYOC jobs. Filters: status, agent_id, claimed_by_agent_id, labels (object). Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
@@ -317,6 +317,7 @@ func toolRegistry() []toolMeta {
 					"agent_id":            map[string]interface{}{"type": "string"},
 					"claimed_by_agent_id": map[string]interface{}{"type": "string"},
 					"region":              map[string]interface{}{"type": "string", "description": "Only with status=pending"},
+					"labels":              map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
 				},
 			},
 		},
@@ -347,17 +348,19 @@ func toolRegistry() []toolMeta {
 					"timeout_sec":  map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
 					"max_attempts": map[string]interface{}{"type": "integer", "description": "Max claims before lease expiry fails job (0=unlimited)"},
 					"priority":     map[string]interface{}{"type": "integer", "description": "Higher claimed first (default 0, clamped ±1000)"},
+					"labels":       map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Optional string labels (max 16)"},
 				},
 				"required": []string{"drive_id", "command"},
 			},
 		},
 		{
-			name: "claim_next_job", description: "Claim highest-priority pending BYOC job (policy-filtered). Optional runner_id. Requires job.run.",
+			name: "claim_next_job", description: "Claim highest-priority pending BYOC job (policy-filtered). Optional runner_id and region. Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"runner_id": map[string]interface{}{"type": "string", "description": "Optional BYOC runner identity (header X-AI-Cloudhub-Runner-Id)"},
+					"runner_id": map[string]interface{}{"type": "string", "description": "Optional BYOC runner identity"},
+					"region":    map[string]interface{}{"type": "string", "description": "Only claim jobs with matching region_hint"},
 				},
 			},
 		},
@@ -743,15 +746,16 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		})
 	case "list_jobs":
 		var args struct {
-			Status           string `json:"status"`
-			AgentID          string `json:"agent_id"`
-			ClaimedByAgentID string `json:"claimed_by_agent_id"`
-			Region           string `json:"region"`
+			Status           string            `json:"status"`
+			AgentID          string            `json:"agent_id"`
+			ClaimedByAgentID string            `json:"claimed_by_agent_id"`
+			Region           string            `json:"region"`
+			Labels           map[string]string `json:"labels"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
 		}
-		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region)
+		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region, args.Labels)
 	case "get_job":
 		var args struct {
 			JobID string `json:"job_id"`
@@ -772,9 +776,10 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			RegionHint  string   `json:"region_hint"`
 			Note        string   `json:"note"`
 			ConnectorID string   `json:"connector_id"`
-			TimeoutSec  int      `json:"timeout_sec"`
-			MaxAttempts int      `json:"max_attempts"`
-			Priority    int      `json:"priority"`
+			TimeoutSec  int               `json:"timeout_sec"`
+			MaxAttempts int               `json:"max_attempts"`
+			Priority    int               `json:"priority"`
+			Labels      map[string]string `json:"labels"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -782,13 +787,14 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
 			return nil, fmt.Errorf("drive_id and command required")
 		}
-		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec, args.MaxAttempts, args.Priority)
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec, args.MaxAttempts, args.Priority, args.Labels)
 	case "claim_next_job":
 		var args struct {
 			RunnerID string `json:"runner_id"`
+			Region   string `json:"region"`
 		}
 		_ = decodeArgs(argsJSON, &args)
-		return toolClaimNextJob(api, token, args.RunnerID)
+		return toolClaimNextJob(api, token, args.RunnerID, args.Region)
 	case "complete_job":
 		var args struct {
 			JobID           string `json:"job_id"`
@@ -1275,7 +1281,7 @@ func toolObjectPost(api, token, driveID, action string, payload map[string]inter
 	return toolResultJSON(parsed)
 }
 
-func toolListJobs(api, token, status, agentID, claimedBy, region string) (interface{}, error) {
+func toolListJobs(api, token, status, agentID, claimedBy, region string, labels map[string]string) (interface{}, error) {
 	url := api + "/v1/jobs"
 	q := []string{}
 	if status != "" {
@@ -1289,6 +1295,12 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string) (interf
 	}
 	if region != "" {
 		q = append(q, "region="+region)
+	}
+	for k, v := range labels {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		q = append(q, "label="+k+":"+v)
 	}
 	if len(q) > 0 {
 		url += "?" + strings.Join(q, "&")
@@ -1305,7 +1317,7 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string) (interf
 	return toolResultJSON(parsed)
 }
 
-func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec, maxAttempts, priority int) (interface{}, error) {
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec, maxAttempts, priority int, labels map[string]string) (interface{}, error) {
 	payload := map[string]interface{}{
 		"drive_id": driveID,
 		"command":  command,
@@ -1334,6 +1346,9 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	if priority != 0 {
 		payload["priority"] = priority
 	}
+	if len(labels) > 0 {
+		payload["labels"] = labels
+	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
 	if err != nil {
 		return nil, err
@@ -1346,17 +1361,26 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	return toolResultJSON(parsed)
 }
 
-func toolClaimNextJob(api, token, runnerID string) (interface{}, error) {
-	// Prefer header for runner id; also send body for clients that only forward JSON.
+func toolClaimNextJob(api, token, runnerID, region string) (interface{}, error) {
 	headers := map[string]string{}
 	if rid := strings.TrimSpace(runnerID); rid != "" {
 		headers["X-AI-Cloudhub-Runner-Id"] = rid
 	}
-	var payload interface{}
-	if rid := strings.TrimSpace(runnerID); rid != "" {
-		payload = map[string]string{"runner_id": rid}
+	if reg := strings.TrimSpace(region); reg != "" {
+		headers["X-AI-Cloudhub-Region"] = reg
 	}
-	body, code, err := httpDoHeaders(http.MethodPost, api+"/v1/jobs/next/claim", token, payload, headers)
+	payload := map[string]string{}
+	if rid := strings.TrimSpace(runnerID); rid != "" {
+		payload["runner_id"] = rid
+	}
+	if reg := strings.TrimSpace(region); reg != "" {
+		payload["region"] = reg
+	}
+	var bodyPayload interface{}
+	if len(payload) > 0 {
+		bodyPayload = payload
+	}
+	body, code, err := httpDoHeaders(http.MethodPost, api+"/v1/jobs/next/claim", token, bodyPayload, headers)
 	if err != nil {
 		return nil, err
 	}

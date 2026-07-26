@@ -285,6 +285,7 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE jobs ADD COLUMN max_attempts INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN priority INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN claimed_by_runner_id TEXT`,
+		`ALTER TABLE jobs ADD COLUMN labels_json TEXT`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1015,7 +1016,7 @@ func parseTime(s string) time.Time {
 
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
-		 COALESCE(claimed_by_runner_id,''), COALESCE(priority,0),
+		 COALESCE(claimed_by_runner_id,''), COALESCE(priority,0), COALESCE(labels_json,''),
 		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), COALESCE(claimed_at,''),
 		 COALESCE(timeout_sec,0), COALESCE(attempt_count,0), COALESCE(max_attempts,0),
 		 COALESCE(stdout,''), COALESCE(stderr,''),
@@ -1031,11 +1032,12 @@ func (s *SQLite) CreateJob(j *Job) error {
 	if !j.ClaimedAt.IsZero() {
 		ca = j.ClaimedAt.UTC().Format(time.RFC3339Nano)
 	}
+	labels := string(j.LabelsJSON)
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, claimed_by_runner_id, priority, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, attempt_count, max_attempts, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, claimed_by_runner_id, priority, labels_json, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, attempt_count, max_attempts, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, labels, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
 		j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
@@ -1125,13 +1127,13 @@ func (s *SQLite) UpdateJob(j *Job) error {
 	}
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
-		 agent_id=?, claimed_by_agent_id=?, connector_id=?, claimed_by_runner_id=?, priority=?,
+		 agent_id=?, claimed_by_agent_id=?, connector_id=?, claimed_by_runner_id=?, priority=?, labels_json=?,
 		 exit_code=?, duration_ms=?, heartbeat_at=?,
 		 claimed_at=?, timeout_sec=?, attempt_count=?, max_attempts=?, stdout=?, stderr=?,
 		 stdout_truncated=?, stderr_truncated=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, string(j.LabelsJSON),
 		nullInt(j.ExitCode), j.DurationMs, hb,
 		ca, j.TimeoutSec, j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr,
 		boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
@@ -1590,9 +1592,10 @@ func scanJob(row scannable) (*Job, error) {
 	var exitCode sql.NullInt64
 	var durationMs int64
 	var timeoutSec, attemptCount, maxAttempts, priority, outTrunc, errTrunc int
+	var labels string
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &j.ClaimedByRunnerID, &priority,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &j.ClaimedByRunnerID, &priority, &labels,
 		&exitCode, &durationMs, &heartbeat, &claimedAt,
 		&timeoutSec, &attemptCount, &maxAttempts, &stdout, &stderr, &outTrunc, &errTrunc,
 		&created, &updated,
@@ -1615,6 +1618,9 @@ func scanJob(row scannable) (*Job, error) {
 		j.ClaimedAt = parseTime(claimedAt)
 	}
 	j.Priority = priority
+	if strings.TrimSpace(labels) != "" {
+		j.LabelsJSON = []byte(labels)
+	}
 	j.TimeoutSec = timeoutSec
 	j.AttemptCount = attemptCount
 	j.MaxAttempts = maxAttempts

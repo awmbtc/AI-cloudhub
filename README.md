@@ -50,7 +50,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.12` 多架构二进制；job priority + runner_id + webhook HMAC | ✅ |
+| **发布** | `v0.2.13` 多架构二进制；job labels + region claim + webhook event_id | ✅ |
 
 ## 快速开始
 

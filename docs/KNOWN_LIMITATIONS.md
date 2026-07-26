@@ -72,8 +72,10 @@
 - Job hard timeout：`timeout_sec`（创建）或全局 `AI_CLOUDHUB_JOB_TIMEOUT_SEC`；从 `claimed_at` 起算，超时在 claim 路径 fail（exit 124 + note）。runner 侧 `CommandContext` 杀进程。
 - Job attempts：`attempt_count` 每次 claim +1；`max_attempts>0` 时 lease 过期且次数耗尽 → fail（不再 re-queue）。
 - Job priority：`priority` 更高先 claim（同优先级 FIFO）；默认 0，夹紧 ±1000。
+- Job labels：创建 `labels` 字符串 map；list 用重复 query `label=key:value`（全匹配）。
+- Job region claim：`X-AI-Cloudhub-Region` / body `region` / runner `AI_CLOUDHUB_REGION` 只 claim 匹配 `region_hint` 的 job。
 - Job runner 身份：claim 可带 `X-AI-Cloudhub-Runner-Id` / body `runner_id`；runner 默认 `AI_CLOUDHUB_RUNNER_ID` 或 hostname。
-- Job webhook（可选）：`AI_CLOUDHUB_JOB_WEBHOOK_URL` terminal 异步 POST；`AI_CLOUDHUB_JOB_WEBHOOK_SECRET` 时 HMAC-SHA256 签 `timestamp.body`（头 `X-AI-Cloudhub-Timestamp` / `X-AI-Cloudhub-Signature: sha256=…`）。非可靠投递。
+- Job webhook（可选）：POST envelope `{event_id,event,occurred_at,job}`；头 `X-AI-Cloudhub-Event-Id` / `Event`；`AI_CLOUDHUB_JOB_WEBHOOK_SECRET` 时 HMAC 签 `timestamp.body`。非可靠投递。
 - Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。
 
 ## 产品

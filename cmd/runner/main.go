@@ -241,6 +241,9 @@ func claimNext(api, token string) (*jobDTO, error) {
 	if rid := runnerIdentity(); rid != "" {
 		req.Header.Set("X-AI-Cloudhub-Runner-Id", rid)
 	}
+	if region := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_REGION")); region != "" {
+		req.Header.Set("X-AI-Cloudhub-Region", region)
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err

@@ -138,6 +138,8 @@ type Job struct {
 	ClaimedByRunnerID string
 	// Priority higher values claim first (default 0).
 	Priority int
+	// LabelsJSON optional string map (JSON object) for filtering.
+	LabelsJSON []byte
 	// ExitCode set on complete when runner reports process exit (nil = not reported).
 	ExitCode *int
 	// DurationMs wall time of runner execution in milliseconds (0 = not reported).

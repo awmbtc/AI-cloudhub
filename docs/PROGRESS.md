@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.12 已发布；priority / runner_id / webhook HMAC
+## 总览：v0.2.13 已发布；labels / region claim / webhook event_id
 
 | 阶段 | 状态 |
 |------|------|
@@ -396,3 +396,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `priority` claim 排序；`claimed_by_runner_id` header/body + runner env
 - [x] webhook `AI_CLOUDHUB_JOB_WEBHOOK_SECRET` HMAC-SHA256（timestamp.body）
 - [x] MCP/OpenAPI/smoke；版本钉 **0.2.12** + tag
+
+### 本波（labels + region claim + webhook envelope）
+
+- [x] job `labels` store/API/list `label=k:v`；MCP create/list
+- [x] claim region filter（header/body/`AI_CLOUDHUB_REGION`）
+- [x] webhook envelope `event_id` + Event headers
+- [x] 版本钉 **0.2.13** + tag

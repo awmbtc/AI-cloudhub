@@ -554,6 +554,9 @@ func cloneJob(j *Job) *Job {
 	if j.CommandJSON != nil {
 		cp.CommandJSON = append([]byte(nil), j.CommandJSON...)
 	}
+	if j.LabelsJSON != nil {
+		cp.LabelsJSON = append([]byte(nil), j.LabelsJSON...)
+	}
 	if j.ExitCode != nil {
 		v := *j.ExitCode
 		cp.ExitCode = &v

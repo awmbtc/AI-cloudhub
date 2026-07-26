@@ -46,10 +46,10 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_restore_plan` | drive.read\|write | restore guidance: CLI + optional presign + api path |
 | `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
-| `list_jobs` | job.run | `GET /v1/jobs` — `status=pending` claimable set, or exact status; agent filters |
-| `get_job` | job.run | `GET /v1/jobs/{id}` (exit/duration/heartbeat/stdout/stderr when set) |
-| `create_job` | job.run | BYOC；可选 `timeout_sec` / `max_attempts` / `priority` (D-001) |
-| `claim_next_job` | job.run | 最高 priority claim；可选 `runner_id` |
+| `list_jobs` | job.run | status / agent / labels 过滤 |
+| `get_job` | job.run | 含 exit/duration/labels/stdout… |
+| `create_job` | job.run | BYOC；可选 timeout / max_attempts / priority / labels |
+| `claim_next_job` | job.run | priority claim；可选 `runner_id` + `region` |
 | `complete_job` | job.run | complete — optional exit/duration/stdout/stderr + `*_truncated` |
 | `heartbeat_job` | job.run | `POST /v1/jobs/{id}/heartbeat` — refresh lease while running |
 | `cancel_job` | job.run | `POST /v1/jobs/{id}/cancel` |

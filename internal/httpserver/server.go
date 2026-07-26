@@ -335,6 +335,7 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			AgentID:          strings.TrimSpace(r.URL.Query().Get("agent_id")),
 			ClaimedByAgentID: strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
 			Status:           statusQ, // running|succeeded|failed|cancelled|dispatched
+			Labels:           parseLabelQuery(r.URL.Query()["label"]),
 		}
 		items := s.jobs.List(userID, filt)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -342,6 +343,7 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			"agent_id":            filt.AgentID,
 			"claimed_by_agent_id": filt.ClaimedByAgentID,
 			"status":              filt.Status,
+			"labels":              filt.Labels,
 		})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -399,14 +401,22 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		if pr := principalFrom(r); pr != nil {
 			claimedBy = pr.AgentID
 		}
-		// Optional BYOC runner identity (header preferred; body.runner_id fallback).
+		// Optional BYOC runner identity / region (header preferred; body fallback).
 		runnerID := strings.TrimSpace(r.Header.Get("X-AI-Cloudhub-Runner-Id"))
+		region := strings.TrimSpace(r.Header.Get("X-AI-Cloudhub-Region"))
+		if region == "" {
+			region = strings.TrimSpace(r.URL.Query().Get("region"))
+		}
+		var claimBody struct {
+			RunnerID string `json:"runner_id"`
+			Region   string `json:"region"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&claimBody)
 		if runnerID == "" {
-			var claimBody struct {
-				RunnerID string `json:"runner_id"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&claimBody)
 			runnerID = strings.TrimSpace(claimBody.RunnerID)
+		}
+		if region == "" {
+			region = strings.TrimSpace(claimBody.Region)
 		}
 		if len(runnerID) > 128 {
 			runnerID = runnerID[:128]
@@ -415,7 +425,7 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		var err error
 		if id == "next" {
 			// Skip + release jobs whose drive the agent cannot access.
-			j, err = s.jobs.ClaimNextFiltered(userID, claimedBy, runnerID, s.agentJobDriveDenyReason(r))
+			j, err = s.jobs.ClaimNextFiltered(userID, claimedBy, runnerID, region, s.agentJobDriveDenyReason(r))
 		} else {
 			// Known id: pre-check drive when possible, claim, then re-check + release on deny.
 			driveID := ""
@@ -2313,6 +2323,33 @@ func (s *Server) routeAdminUsers(w http.ResponseWriter, r *http.Request, userID,
 	default:
 		writeErr(w, http.StatusNotFound, "not found")
 	}
+}
+
+// parseLabelQuery parses repeated query values "key:value" into a map.
+func parseLabelQuery(vals []string) map[string]string {
+	if len(vals) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(vals))
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		i := strings.IndexByte(v, ':')
+		if i <= 0 || i >= len(v)-1 {
+			continue
+		}
+		k := strings.TrimSpace(v[:i])
+		val := strings.TrimSpace(v[i+1:])
+		if k != "" {
+			out[k] = val
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {

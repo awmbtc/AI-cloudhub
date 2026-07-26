@@ -48,6 +48,8 @@ type Job struct {
 	ClaimedByRunnerID   string `json:"claimed_by_runner_id,omitempty"`  // optional runner host/worker id
 	// Priority higher claims first (default 0).
 	Priority int `json:"priority,omitempty"`
+	// Labels optional key/value tags for filtering (capped size).
+	Labels map[string]string `json:"labels,omitempty"`
 	// ExitCode process exit when reported by runner (nil = not set).
 	ExitCode *int `json:"exit_code,omitempty"`
 	// DurationMs runner wall time in milliseconds (0 = not reported).
@@ -86,6 +88,8 @@ type CreateInput struct {
 	MaxAttempts int `json:"max_attempts"`
 	// Priority higher values are claimed first (clamped; default 0).
 	Priority int `json:"priority"`
+	// Labels optional string map tags (max 16 keys, short values).
+	Labels map[string]string `json:"labels"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -172,6 +176,10 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	if priority < -1000 {
 		priority = -1000
 	}
+	labelsJSON, err := encodeJobLabels(in.Labels)
+	if err != nil {
+		return nil, err
+	}
 	sj := &store.Job{
 		ID:          uuid.NewString(),
 		UserID:      userID,
@@ -185,6 +193,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		ConnectorID: strings.TrimSpace(in.ConnectorID),
 		AgentID:     strings.TrimSpace(in.AgentID),
 		Priority:    priority,
+		LabelsJSON:  labelsJSON,
 		TimeoutSec:  timeoutSec,
 		MaxAttempts: maxAttempts,
 		CreatedAt:   now,
@@ -212,9 +221,11 @@ type ListFilter struct {
 	// Status exact match (pending|dispatched|running|succeeded|failed|cancelled).
 	// Empty = all. Note: HTTP status=pending still uses ListPending (includes dispatched).
 	Status string
+	// Labels require all key=value pairs to match job labels.
+	Labels map[string]string
 }
 
-// List returns jobs for user, optionally filtered by agent ids and/or status.
+// List returns jobs for user, optionally filtered by agent ids, status, and/or labels.
 func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 	list, err := s.store.ListJobs(userID)
 	if err != nil {
@@ -234,6 +245,9 @@ func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 			continue
 		}
 		if status != "" && sj.Status != status {
+			continue
+		}
+		if len(f.Labels) > 0 && !jobLabelsMatch(sj.LabelsJSON, f.Labels) {
 			continue
 		}
 		out = append(out, jobFromStore(sj))
@@ -261,8 +275,9 @@ func (s *Service) ListPending(userID, region string) []*Job {
 
 // ClaimNext claims the highest-priority then oldest pending job (BYOC worker).
 // claimedByAgentID / claimedByRunnerID may be empty.
+// region non-empty only claims jobs whose region_hint matches (empty-hint jobs never match a set region).
 // Stale running jobs (no heartbeat within lease) are reclaimed first.
-func (s *Service) ClaimNext(userID, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
+func (s *Service) ClaimNext(userID, claimedByAgentID, claimedByRunnerID, region string) (*Job, error) {
 	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
@@ -271,6 +286,7 @@ func (s *Service) ClaimNext(userID, claimedByAgentID, claimedByRunnerID string) 
 	if len(list) == 0 {
 		return nil, fmt.Errorf("no pending jobs")
 	}
+	region = strings.TrimSpace(region)
 	// Priority DESC, then oldest created_at (memory map order is undefined).
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Priority != list[j].Priority {
@@ -282,12 +298,18 @@ func (s *Service) ClaimNext(userID, claimedByAgentID, claimedByRunnerID string) 
 		if j.Status != string(StatusPending) && j.Status != string(StatusDispatched) {
 			continue
 		}
+		if region != "" && strings.TrimSpace(j.RegionHint) != region {
+			continue
+		}
 		claimed, err := s.store.ClaimPendingJob(userID, j.ID, claimedByAgentID, claimedByRunnerID)
 		if err != nil {
 			// Already claimed or gone — try next.
 			continue
 		}
 		return jobFromStore(claimed), nil
+	}
+	if region != "" {
+		return nil, fmt.Errorf("no pending jobs in region %q", region)
 	}
 	return nil, fmt.Errorf("no pending jobs")
 }
@@ -451,9 +473,18 @@ func (s *Service) failMaxAttempts(userID, id string, attempt, max int) (*Job, er
 	return j, nil
 }
 
-// notifyJobTerminal best-effort POSTs job JSON to AI_CLOUDHUB_JOB_WEBHOOK_URL (async).
+// webhookEvent is the envelope POSTed to AI_CLOUDHUB_JOB_WEBHOOK_URL.
+type webhookEvent struct {
+	EventID    string    `json:"event_id"`
+	Event      string    `json:"event"` // job.succeeded | job.failed | job.cancelled
+	OccurredAt time.Time `json:"occurred_at"`
+	Job        *Job      `json:"job"`
+}
+
+// notifyJobTerminal best-effort POSTs event envelope to AI_CLOUDHUB_JOB_WEBHOOK_URL (async).
 // When AI_CLOUDHUB_JOB_WEBHOOK_SECRET is set, signs with HMAC-SHA256 over "timestamp.body"
 // and sets X-AI-Cloudhub-Timestamp + X-AI-Cloudhub-Signature: sha256=<hex>.
+// Also sets X-AI-Cloudhub-Event-Id and X-AI-Cloudhub-Event for receivers.
 func notifyJobTerminal(j *Job) {
 	if j == nil {
 		return
@@ -462,7 +493,22 @@ func notifyJobTerminal(j *Job) {
 	if url == "" {
 		return
 	}
-	payload, err := json.Marshal(j)
+	evName := "job." + string(j.Status)
+	switch j.Status {
+	case StatusSucceeded:
+		evName = "job.succeeded"
+	case StatusFailed:
+		evName = "job.failed"
+	case StatusCancelled:
+		evName = "job.cancelled"
+	}
+	ev := webhookEvent{
+		EventID:    uuid.NewString(),
+		Event:      evName,
+		OccurredAt: time.Now().UTC(),
+		Job:        j,
+	}
+	payload, err := json.Marshal(ev)
 	if err != nil {
 		return
 	}
@@ -475,6 +521,7 @@ func notifyJobTerminal(j *Job) {
 		_, _ = mac.Write(payload)
 		sig = "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}
+	eventID := ev.EventID
 	go func() {
 		client := &http.Client{Timeout: 5 * time.Second}
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
@@ -484,6 +531,8 @@ func notifyJobTerminal(j *Job) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "AI-cloudhub-job-webhook/1")
 		req.Header.Set("X-AI-Cloudhub-Timestamp", ts)
+		req.Header.Set("X-AI-Cloudhub-Event-Id", eventID)
+		req.Header.Set("X-AI-Cloudhub-Event", evName)
 		if sig != "" {
 			req.Header.Set("X-AI-Cloudhub-Signature", sig)
 		}
@@ -562,9 +611,9 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 // Jobs are filtered **before** claim using the pending list (avoids reclaim loops).
 // After a successful atomic claim, allow is re-checked; on deny the job is
 // ReleaseToPending and the scan continues. If allow is nil, behaves like ClaimNext.
-func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID string, allow func(driveID string) string) (*Job, error) {
+func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID, region string, allow func(driveID string) string) (*Job, error) {
 	if allow == nil {
-		return s.ClaimNext(userID, claimedByAgentID, claimedByRunnerID)
+		return s.ClaimNext(userID, claimedByAgentID, claimedByRunnerID, region)
 	}
 	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
@@ -574,6 +623,7 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID 
 	if len(list) == 0 {
 		return nil, fmt.Errorf("no pending jobs")
 	}
+	region = strings.TrimSpace(region)
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Priority != list[j].Priority {
 			return list[i].Priority > list[j].Priority
@@ -584,6 +634,9 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID 
 	var skipped int
 	for _, cand := range list {
 		if cand.Status != string(StatusPending) && cand.Status != string(StatusDispatched) {
+			continue
+		}
+		if region != "" && strings.TrimSpace(cand.RegionHint) != region {
 			continue
 		}
 		if reason := allow(cand.DriveID); reason != "" {
@@ -759,16 +812,17 @@ func jobFromStore(sj *store.Job) *Job {
 		ClaimedByAgentID:  sj.ClaimedByAgentID,
 		ClaimedByRunnerID: sj.ClaimedByRunnerID,
 		Priority:          sj.Priority,
+		Labels:            decodeJobLabels(sj.LabelsJSON),
 		DurationMs:        sj.DurationMs,
 		TimeoutSec:        sj.TimeoutSec,
 		AttemptCount:      sj.AttemptCount,
 		MaxAttempts:       sj.MaxAttempts,
-		Stdout:           sj.Stdout,
-		Stderr:           sj.Stderr,
-		StdoutTruncated:  sj.StdoutTruncated,
-		StderrTruncated:  sj.StderrTruncated,
-		CreatedAt:        sj.CreatedAt,
-		UpdatedAt:        sj.UpdatedAt,
+		Stdout:            sj.Stdout,
+		Stderr:            sj.Stderr,
+		StdoutTruncated:   sj.StdoutTruncated,
+		StderrTruncated:   sj.StderrTruncated,
+		CreatedAt:         sj.CreatedAt,
+		UpdatedAt:         sj.UpdatedAt,
 	}
 	if sj.ExitCode != nil {
 		v := *sj.ExitCode
@@ -783,4 +837,54 @@ func jobFromStore(sj *store.Job) *Job {
 		j.ClaimedAt = &t
 	}
 	return j
+}
+
+// encodeJobLabels validates and JSON-encodes labels (max 16 keys, short values).
+func encodeJobLabels(in map[string]string) ([]byte, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > 16 {
+		return nil, fmt.Errorf("labels: at most 16 keys")
+	}
+	clean := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" {
+			return nil, fmt.Errorf("labels: empty key")
+		}
+		if len(k) > 64 || len(v) > 256 {
+			return nil, fmt.Errorf("labels: key max 64 / value max 256 chars")
+		}
+		clean[k] = v
+	}
+	return json.Marshal(clean)
+}
+
+func decodeJobLabels(raw []byte) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil || len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+func jobLabelsMatch(raw []byte, want map[string]string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	have := decodeJobLabels(raw)
+	if have == nil {
+		return false
+	}
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }

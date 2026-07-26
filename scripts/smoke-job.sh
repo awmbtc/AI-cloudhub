@@ -140,6 +140,33 @@ print("priority claim high ok", d["id"])
   -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
 "${CURL[@]}" -X POST "$API/v1/jobs/$JLOW/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
 
+echo "== labels + region claim =="
+JREG=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"region_hint\":\"us-east\",\"labels\":{\"env\":\"prod\"}}" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("labels",{}).get("env")=="prod", d; print(d["id"])')
+"${CURL[@]}" "$API/v1/jobs?label=env:prod" -H "Authorization: Bearer $ATOK" \
+  | python3 -c '
+import sys,json
+items=json.load(sys.stdin).get("items") or []
+assert any(i.get("id")=="'"$JREG"'" for i in items), items
+print("label filter ok", len(items))
+'
+# wrong region should not claim
+code=$("${CURL[@]}" -o /tmp/aihub-claim-reg.json -w "%{http_code}" -X POST "$API/v1/jobs/next/claim" \
+  -H "Authorization: Bearer $ATOK" -H 'X-AI-Cloudhub-Region: eu-west')
+test "$code" != "200" || { echo "expected no claim for eu-west got $code"; cat /tmp/aihub-claim-reg.json; exit 1; }
+CREG=$("${CURL[@]}" -X POST "$API/v1/jobs/next/claim" -H "Authorization: Bearer $ATOK" \
+  -H 'X-AI-Cloudhub-Region: us-east' -H 'X-AI-Cloudhub-Runner-Id: reg-r')
+echo "$CREG" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["id"]=="'"$JREG"'", d
+assert d.get("region_hint")=="us-east", d
+print("region claim ok")
+'
+"${CURL[@]}" -X POST "$API/v1/jobs/$JREG/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
+
 echo "== heartbeat while running =="
 HB=$("${CURL[@]}" -X POST "$API/v1/jobs/$JID/heartbeat" -H "Authorization: Bearer $ATOK")
 echo "$HB" | python3 -c '

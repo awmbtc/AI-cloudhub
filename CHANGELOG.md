@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.13
+
+Job labels, region-aware claim, webhook event envelope.
+
+### Jobs
+- `labels` map on create; list filter via repeated `label=key:value`
+- Claim next region filter: `X-AI-Cloudhub-Region` / body `region` / runner `AI_CLOUDHUB_REGION`
+- Webhook body is envelope `{event_id,event,occurred_at,job}` with Event-Id / Event headers
+
 ## v0.2.12
 
 Job priority queue, runner identity on claim, webhook HMAC.

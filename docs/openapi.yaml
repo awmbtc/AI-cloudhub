@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.12
+  version: 0.2.13
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -717,6 +717,10 @@ components:
         claimed_by_runner_id:
           type: string
           description: Optional BYOC runner host/worker id from claim
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: Optional string tags (max 16 keys)
         stdout:
           type: string
           description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
@@ -766,6 +770,10 @@ components:
         priority:
           type: integer
           description: Higher values are claimed first (clamped ±1000)
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: Optional labels for filtering
 
     JobComplete:
       type: object

@@ -67,7 +67,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			j, err := svc.ClaimNext(uid, "", "")
+			j, err := svc.ClaimNext(uid, "", "", "")
 			if err != nil {
 				return
 			}
@@ -90,7 +90,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	}
 
 	// Second ClaimNext must fail — no pending left.
-	if _, err := svc.ClaimNext(uid, "", ""); err == nil {
+	if _, err := svc.ClaimNext(uid, "", "", ""); err == nil {
 		t.Fatal("expected ClaimNext to fail when nothing pending")
 	}
 
@@ -114,14 +114,14 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 		}
 		ids = append(ids, j.ID)
 	}
-	first, err := svc.ClaimNext(uid, "", "")
+	first, err := svc.ClaimNext(uid, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID != ids[0] {
 		t.Fatalf("expected oldest %s, got %s", ids[0], first.ID)
 	}
-	second, err := svc.ClaimNext(uid, "", "")
+	second, err := svc.ClaimNext(uid, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,6 +257,45 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	}
 }
 
+func TestLabelsAndRegionClaim(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-lab"
+	_, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"a"}, RegionHint: "us-east",
+		Labels: map[string]string{"env": "prod", "team": "ml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"b"}, RegionHint: "eu-west",
+		Labels: map[string]string{"env": "dev"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod := svc.List(uid, ListFilter{Labels: map[string]string{"env": "prod"}})
+	if len(prod) != 1 || prod[0].Labels["env"] != "prod" {
+		t.Fatalf("label filter: %+v", prod)
+	}
+	// region claim only eu
+	got, err := svc.ClaimNext(uid, "", "r1", "eu-west")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RegionHint != "eu-west" {
+		t.Fatalf("region %s", got.RegionHint)
+	}
+	if _, err := svc.ClaimNext(uid, "", "", "eu-west"); err == nil {
+		t.Fatal("expected no more eu jobs")
+	}
+	// us still pending
+	us, err := svc.ClaimNext(uid, "", "", "us-east")
+	if err != nil || us.RegionHint != "us-east" {
+		t.Fatalf("us claim: %v %+v", err, us)
+	}
+}
+
 func TestClaimPriorityOrder(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-pri"
@@ -268,7 +307,7 @@ func TestClaimPriorityOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.ClaimNext(uid, "", "runner-a")
+	first, err := svc.ClaimNext(uid, "", "runner-a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +317,7 @@ func TestClaimPriorityOrder(t *testing.T) {
 	if first.ClaimedByRunnerID != "runner-a" {
 		t.Fatalf("runner_id %q", first.ClaimedByRunnerID)
 	}
-	second, err := svc.ClaimNext(uid, "", "")
+	second, err := svc.ClaimNext(uid, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +484,7 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	}
 	time.Sleep(80 * time.Millisecond)
 	// Oldest reclaimed job first, then we can claim again.
-	next, err := svc.ClaimNext(uid, "a2", "")
+	next, err := svc.ClaimNext(uid, "a2", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +549,7 @@ func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.ClaimNextFiltered(uid, "runner-bot", "", func(driveID string) string {
+	got, err := svc.ClaimNextFiltered(uid, "runner-bot", "", "", func(driveID string) string {
 		if driveID == "forbidden" {
 			return "drive not allowed for agent"
 		}
@@ -541,7 +580,7 @@ func TestClaimNextFilteredAllDenied(t *testing.T) {
 	if _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.ClaimNextFiltered(uid, "bot", "", func(string) string { return "blocked" })
+	_, err := svc.ClaimNextFiltered(uid, "bot", "", "", func(string) string { return "blocked" })
 	if err == nil || !strings.Contains(err.Error(), "no claimable") {
 		t.Fatalf("err=%v", err)
 	}
