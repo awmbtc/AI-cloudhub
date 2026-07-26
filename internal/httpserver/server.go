@@ -223,9 +223,10 @@ func (s *Server) method(m string, h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"status":  "ok",
 		"product": "AI-cloudhub",
+		"version": version.Version,
 		"batch_a": []string{"s3", "r2", "minio"},
 		"batch_b": []string{"b2", "oss", "cos"},
 		"batch_c": []string{"qiniu", "oracle"},
@@ -251,8 +252,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"connectors_catalog", "marketplace_checkout",
 			"job_agent_id", "mcp_jobs", "binding_agent_gate", "devices_human_only", "smoke_mcp",
 		},
-		"version": version.Version,
-	})
+	}
+	if s.jobs != nil {
+		if c, err := s.jobs.WebhookOutboxStats(); err == nil && c != nil {
+			body["webhook_outbox"] = map[string]int{
+				"pending": c.Pending, "delivered": c.Delivered, "dead": c.Dead, "total": c.Total,
+			}
+		}
+		st := s.jobs.AdminStats("")
+		body["jobs"] = map[string]int{
+			"pending": st.Pending, "running": st.Running, "succeeded": st.Succeeded,
+			"failed": st.Failed, "cancelled": st.Cancelled, "total": st.Total,
+		}
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleRuntimeCheck(w http.ResponseWriter, r *http.Request) {
@@ -773,11 +786,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Scrape-time refresh of webhook outbox queue depth gauges.
+	// Scrape-time refresh of job + webhook outbox gauges.
 	if s.jobs != nil {
 		if c, err := s.jobs.WebhookOutboxStats(); err == nil && c != nil {
 			metrics.SetWebhookOutboxGauges(uint64(c.Pending), uint64(c.Delivered), uint64(c.Dead))
 		}
+		st := s.jobs.AdminStats("")
+		metrics.SetJobStatusGauges(uint64(st.Pending), uint64(st.Running), uint64(st.Succeeded), uint64(st.Failed), uint64(st.Cancelled))
 	}
 	metrics.Handler(w, r)
 }
@@ -2421,13 +2436,59 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 		return
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) == 2 && (parts[1] == "cancel" || parts[1] == "release") {
+	// POST /v1/admin/jobs/reclaim — global or per-user lease/timeout reclaim
+	if path == "reclaim" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		uid := strings.TrimSpace(r.URL.Query().Get("user_id"))
+		var (
+			n   int
+			err error
+		)
+		if uid != "" {
+			n, err = s.jobs.ReclaimStale(uid)
+		} else {
+			n, err = s.jobs.ReclaimStaleAll()
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.jobs.reclaim", uid, fmt.Sprintf("n=%d", n))
+		writeJSON(w, http.StatusOK, map[string]interface{}{"reclaimed": n, "user_id": uid})
+		return
+	}
+	// POST /v1/admin/jobs/purge-terminal?older_than_sec=
+	if path == "purge-terminal" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var older time.Duration
+		if sec, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("older_than_sec"))); err == nil && sec > 0 {
+			older = time.Duration(sec) * time.Second
+		}
+		n, err := s.jobs.AdminPurgeTerminalJobs(older)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.jobs.purge_terminal", "", fmt.Sprintf("deleted=%d", n))
+		writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": n})
+		return
+	}
+	if len(parts) == 2 && (parts[1] == "cancel" || parts[1] == "release" || parts[1] == "complete") {
 		if r.Method != http.MethodPost {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var body struct {
-			Note string `json:"note"`
+			Note       string `json:"note"`
+			OK         *bool  `json:"ok"`
+			ExitCode   *int   `json:"exit_code"`
+			DurationMs int64  `json:"duration_ms"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		var (
@@ -2446,6 +2507,20 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 			if err == nil {
 				metrics.IncJobLeaseReclaim() // reuse reclaim counter for ops force-release
 				s.auth.Audit(adminID, "admin.jobs.release", j.ID, "user="+j.UserID+" note="+strings.TrimSpace(body.Note))
+			}
+		case "complete":
+			ok := true
+			if body.OK != nil {
+				ok = *body.OK
+			}
+			j, err = s.jobs.AdminComplete(parts[0], job.CompleteInput{
+				OK: ok, Note: body.Note, ExitCode: body.ExitCode, DurationMs: body.DurationMs,
+			})
+			if err == nil {
+				if ok {
+					metrics.IncJobCompleted()
+				}
+				s.auth.Audit(adminID, "admin.jobs.complete", j.ID, "user="+j.UserID+" ok="+fmt.Sprint(ok))
 			}
 		}
 		if err != nil {
@@ -2524,11 +2599,27 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// routeAdminJobWebhooksSub: POST /purge | POST /retry-all | GET /{id} | POST /{id}/retry
+// routeAdminJobWebhooksSub: GET /stats | POST /purge | POST /retry-all | GET /{id} | POST /{id}/retry
 func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/job-webhooks/"), "/")
 	if path == "" {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if path == "stats" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		c, err := s.jobs.WebhookOutboxStats()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.job_webhooks.stats", "", fmt.Sprintf("total=%d", c.Total))
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pending": c.Pending, "delivered": c.Delivered, "dead": c.Dead, "total": c.Total,
+		})
 		return
 	}
 	if path == "purge" {

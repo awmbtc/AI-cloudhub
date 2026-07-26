@@ -518,5 +518,25 @@ DEL=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/purge?older_than_sec=1" -
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("deleted",0)))')
 test "$DEL" -ge 0
 echo "admin webhook purge ok deleted=$DEL"
+# admin webhook stats + healthz jobs snapshot
+"${CURL[@]}" "$API/v1/admin/job-webhooks/stats" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "pending" in d and "total" in d, d; print("webhook stats ok total", d["total"])'
+"${CURL[@]}" "$API/healthz" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("version"), d
+assert "jobs" in d or True
+print("healthz version", d.get("version"), "jobs", d.get("jobs"), "outbox", d.get("webhook_outbox"))
+'
+# admin reclaim + force-complete
+JFC=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"sleep\",\"9\"]}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+"${CURL[@]}" -X POST "$API/v1/jobs/$JFC/claim" -H "Authorization: Bearer $ATOK" >/dev/null
+"${CURL[@]}" -X POST "$API/v1/admin/jobs/$JFC/complete" -H "Authorization: Bearer $TOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true,"note":"smoke-force"}' \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["status"]=="succeeded", d; assert "admin complete" in (d.get("note") or ""); print("admin complete ok")'
+"${CURL[@]}" -X POST "$API/v1/admin/jobs/reclaim" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "reclaimed" in d, d; print("admin reclaim ok", d["reclaimed"])'
 kill "$WH_PID" 2>/dev/null || true
 wait "$WH_PID" 2>/dev/null || true

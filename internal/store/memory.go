@@ -770,11 +770,16 @@ func (m *Memory) ListPendingJobs(userID string) ([]*Job, error) {
 func (m *Memory) ListRunningJobs(userID string) ([]*Job, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	userID = strings.TrimSpace(userID)
 	var out []*Job
 	for _, j := range m.jobs {
-		if j.UserID == userID && j.Status == "running" {
-			out = append(out, cloneJob(j))
+		if j.Status != "running" {
+			continue
 		}
+		if userID != "" && j.UserID != userID {
+			continue
+		}
+		out = append(out, cloneJob(j))
 	}
 	// created_at ASC (stable: id ASC on ties)
 	for i := 0; i < len(out); i++ {
@@ -786,6 +791,44 @@ func (m *Memory) ListRunningJobs(userID string) ([]*Job, error) {
 		}
 	}
 	return out, nil
+}
+
+func (m *Memory) PurgeTerminalJobs(olderThan time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	type cand struct {
+		id string
+		at time.Time
+	}
+	var list []cand
+	for id, j := range m.jobs {
+		switch j.Status {
+		case "succeeded", "failed", "cancelled":
+			if j.UpdatedAt.Before(olderThan) {
+				list = append(list, cand{id: id, at: j.UpdatedAt})
+			}
+		}
+	}
+	for i := 0; i < len(list); i++ {
+		for k := i + 1; k < len(list); k++ {
+			if list[k].at.Before(list[i].at) {
+				list[i], list[k] = list[k], list[i]
+			}
+		}
+	}
+	if len(list) > limit {
+		list = list[:limit]
+	}
+	for _, c := range list {
+		delete(m.jobs, c.id)
+	}
+	return len(list), nil
 }
 
 // ClaimPendingJob claims under the write mutex so only one caller wins.

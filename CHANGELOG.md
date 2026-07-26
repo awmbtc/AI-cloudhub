@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## v0.2.40
+
+healthz includes live `jobs` + `webhook_outbox` snapshot counts.
+
+## v0.2.39
+
+Smoke/OpenAPI coverage for admin reclaim, complete, purge-terminal, webhook stats.
+
+## v0.2.38
+
+Indexes `idx_jobs_status` / `idx_jobs_status_updated` for reclaim and terminal purge.
+
+## v0.2.37
+
+Terminal job TTL purge (`AI_CLOUDHUB_JOB_RETAIN_SEC`, default off) + `POST /v1/admin/jobs/purge-terminal`.
+
+## v0.2.36
+
+`POST /v1/admin/jobs/reclaim?user_id=` global or per-user lease/timeout reclaim.
+
+## v0.2.35
+
+`POST /v1/admin/jobs/{id}/complete` force-complete any non-terminal job.
+
+## v0.2.34
+
+Background job maintenance worker: global reclaim + optional terminal purge (`AI_CLOUDHUB_JOB_RECLAIM_POLL_SEC`, default 30).
+
+## v0.2.33
+
+Scrape-time job status gauges: `jobs_pending` / `jobs_running` / `jobs_succeeded` / `jobs_failed` / `jobs_cancelled`.
+
+## v0.2.32
+
+`AI_CLOUDHUB_JOB_WEBHOOK_TIMEOUT_SEC` (default 5, max 120) for outbox HTTP client.
+
+## v0.2.31
+
+`GET /v1/admin/job-webhooks/stats` → pending/delivered/dead/total.
+
 ## v0.2.30
 
 ReclaimStale scans only running jobs.

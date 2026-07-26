@@ -52,6 +52,13 @@ var (
 	JobsWebhookPendingGauge   atomic.Uint64
 	JobsWebhookDeliveredGauge atomic.Uint64
 	JobsWebhookDeadGauge      atomic.Uint64
+	// Job status gauges (scrape-time).
+	JobsRunningGauge    atomic.Uint64
+	JobsPendingGauge    atomic.Uint64
+	JobsSucceededGauge  atomic.Uint64
+	JobsFailedGauge     atomic.Uint64
+	JobsCancelledGauge  atomic.Uint64
+	JobsPurged          atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -170,6 +177,22 @@ func SetWebhookOutboxGauges(pending, delivered, dead uint64) {
 	JobsWebhookDeadGauge.Store(dead)
 }
 
+// SetJobStatusGauges sets current BYOC job counts by status (global).
+func SetJobStatusGauges(pending, running, succeeded, failed, cancelled uint64) {
+	JobsPendingGauge.Store(pending)
+	JobsRunningGauge.Store(running)
+	JobsSucceededGauge.Store(succeeded)
+	JobsFailedGauge.Store(failed)
+	JobsCancelledGauge.Store(cancelled)
+}
+
+// AddJobsPurged adds deleted terminal jobs from TTL purge.
+func AddJobsPurged(n uint64) {
+	if n > 0 {
+		JobsPurged.Add(n)
+	}
+}
+
 // Handler serves Prometheus text exposition (no auth).
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -269,4 +292,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_dead Job webhook outbox rows currently dead-lettered (not yet purged)\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_dead gauge\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_dead %d\n", JobsWebhookDeadGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_pending Current BYOC jobs in pending status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_pending gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_pending %d\n", JobsPendingGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_running Current BYOC jobs in running status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_running gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_running %d\n", JobsRunningGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_succeeded Current BYOC jobs in succeeded status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_succeeded gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_succeeded %d\n", JobsSucceededGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_failed Current BYOC jobs in failed status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_failed gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_failed %d\n", JobsFailedGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_cancelled Current BYOC jobs in cancelled status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_cancelled gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_cancelled %d\n", JobsCancelledGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_purged_total Terminal jobs deleted by TTL purge\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_purged_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_purged_total %d\n", JobsPurged.Load())
 }

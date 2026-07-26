@@ -412,7 +412,7 @@ type Store interface {
 	// ListJobsAdmin lists jobs across users with optional filters (admin).
 	ListJobsAdmin(f AdminJobFilter) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
-	// ListRunningJobs returns only running jobs for a user (for lease/timeout reclaim).
+	// ListRunningJobs returns only running jobs. Empty userID = all users (global reclaim).
 	// Ordered by created_at ASC so older claims are examined first.
 	ListRunningJobs(userID string) ([]*Job, error)
 	// CountJobsByStatus returns full per-status aggregation (empty userID = all users).
@@ -422,6 +422,9 @@ type Store interface {
 	// Returns the updated job, or an error if not found / not claimable.
 	ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error)
 	UpdateJob(j *Job) error
+	// PurgeTerminalJobs deletes succeeded/failed/cancelled jobs with updated_at < olderThan.
+	// limit 0 = default 500, max 5000. Returns number deleted.
+	PurgeTerminalJobs(olderThan time.Time, limit int) (int, error)
 
 	// Snapshots (metadata only)
 	CreateSnapshot(s *Snapshot) error

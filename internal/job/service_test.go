@@ -740,6 +740,44 @@ func TestWebhookOutboxPurge(t *testing.T) {
 	}
 }
 
+func TestAdminCompleteAndReclaimAllAndPurge(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	svc.SetLease(50 * time.Millisecond)
+	j, _, err := svc.Create("u-ac", CreateInput{DriveID: "d", Command: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim("u-ac", j.ID, "a", "r"); err != nil {
+		t.Fatal(err)
+	}
+	done, err := svc.AdminComplete(j.ID, CompleteInput{OK: true, Note: "ops"})
+	if err != nil || done.Status != StatusSucceeded {
+		t.Fatalf("admin complete: %v %+v", err, done)
+	}
+	if !strings.Contains(done.Note, "admin complete: ops") {
+		t.Fatalf("note %q", done.Note)
+	}
+	// lease reclaim all
+	j2, _, _ := svc.Create("u-ac2", CreateInput{DriveID: "d", Command: []string{"y"}})
+	_, _ = svc.Claim("u-ac2", j2.ID, "", "")
+	time.Sleep(80 * time.Millisecond)
+	n, err := svc.ReclaimStaleAll()
+	if err != nil || n < 1 {
+		t.Fatalf("reclaim all n=%d err=%v", n, err)
+	}
+	// terminal purge
+	t.Setenv("AI_CLOUDHUB_JOB_RETAIN_SEC", "1")
+	time.Sleep(1100 * time.Millisecond)
+	// force older updated_at via complete already old enough
+	pn, err := svc.AdminPurgeTerminalJobs(time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pn < 1 {
+		t.Fatalf("purge terminal n=%d", pn)
+	}
+}
+
 func TestAdminRetryWebhooksBatch(t *testing.T) {
 	mem := store.NewMemory()
 	svc := NewService(mem)

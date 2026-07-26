@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.30 已发布；三刀 parallel：outbox gauges + event filter + ListRunningJobs
+## 总览：v0.2.40 已发布；十刀（0.2.31–0.2.40）ops/reclaim/purge/healthz
 
 | 阶段 | 状态 |
 |------|------|
@@ -492,3 +492,17 @@ curl -s localhost:8080/v1/runtime/check
 - [x] **0.2.29** admin webhooks `?event=` list + retry-all
 - [x] **0.2.30** `ListRunningJobs` + ReclaimStale 不再全表 ListJobs
 - [x] tags **v0.2.28** / **v0.2.29** / **v0.2.30**
+
+### 本波（十刀 0.2.31–0.2.40）
+
+- [x] 0.2.31 admin job-webhooks/stats
+- [x] 0.2.32 WEBHOOK_TIMEOUT_SEC
+- [x] 0.2.33 job status gauges
+- [x] 0.2.34 global reclaim worker
+- [x] 0.2.35 admin force-complete
+- [x] 0.2.36 admin jobs/reclaim
+- [x] 0.2.37 terminal job purge + JOB_RETAIN_SEC
+- [x] 0.2.38 jobs status indexes
+- [x] 0.2.39 smoke/docs/openapi
+- [x] 0.2.40 healthz jobs + webhook_outbox
+- [x] tags **v0.2.31** … **v0.2.40**

@@ -769,6 +769,22 @@ func jobWebhookPollInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+// jobWebhookHTTPTimeout is POST timeout per delivery attempt. Default 5s.
+func jobWebhookHTTPTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_TIMEOUT_SEC"))
+	if v == "" {
+		return 5 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 5 * time.Second
+	}
+	if n > 120 {
+		n = 120
+	}
+	return time.Duration(n) * time.Second
+}
+
 // jobWebhookRetain is how long delivered/dead rows are kept. Default 7d; 0 disables purge.
 func jobWebhookRetain() time.Duration {
 	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC"))
@@ -973,7 +989,7 @@ func (s *Service) ProcessWebhookOutbox(limit int) int {
 	}
 	maxAtt := jobWebhookMaxAttempts()
 	secret := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET"))
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: jobWebhookHTTPTimeout()}
 	delivered := 0
 	for _, row := range due {
 		if row == nil {
@@ -1199,6 +1215,177 @@ func (s *Service) AdminRetryWebhooksBatch(f AdminWebhookFilter) (int, error) {
 		go func() { _ = s.ProcessWebhookOutbox(32) }()
 	}
 	return n, nil
+}
+
+// ReclaimStaleAll reclaims lease/timeout for all running jobs (empty-user ListRunningJobs).
+func (s *Service) ReclaimStaleAll() (int, error) {
+	list, err := s.store.ListRunningJobs("")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	now := time.Now().UTC()
+	var leaseCutoff time.Time
+	if s.lease > 0 {
+		leaseCutoff = now.Add(-s.lease)
+	}
+	for _, sj := range list {
+		if sj == nil || Status(sj.Status) != StatusRunning {
+			continue
+		}
+		uid, id := sj.UserID, sj.ID
+		if sec := effectiveTimeoutSec(sj.TimeoutSec); sec > 0 {
+			start := sj.ClaimedAt
+			if start.IsZero() {
+				start = sj.HeartbeatAt
+			}
+			if start.IsZero() {
+				start = sj.UpdatedAt
+			}
+			if !start.IsZero() && now.After(start.Add(time.Duration(sec)*time.Second)) {
+				if _, err := s.failTimeout(uid, id, sec); err == nil {
+					metrics.IncJobTimeout()
+					n++
+				}
+				continue
+			}
+		}
+		if s.lease <= 0 {
+			continue
+		}
+		hb := sj.HeartbeatAt
+		if hb.IsZero() {
+			hb = sj.ClaimedAt
+		}
+		if hb.IsZero() {
+			hb = sj.UpdatedAt
+		}
+		if hb.IsZero() || !hb.Before(leaseCutoff) {
+			continue
+		}
+		if sj.MaxAttempts > 0 && sj.AttemptCount >= sj.MaxAttempts {
+			if _, err := s.failMaxAttempts(uid, id, sj.AttemptCount, sj.MaxAttempts); err == nil {
+				metrics.IncJobMaxAttempts()
+				n++
+			}
+			continue
+		}
+		if _, err := s.ReleaseToPending(uid, id, "lease expired"); err == nil {
+			metrics.IncJobLeaseReclaim()
+			n++
+		}
+	}
+	return n, nil
+}
+
+// StartJobMaintenanceWorker runs periodic global reclaim + optional terminal job purge.
+// AI_CLOUDHUB_JOB_RECLAIM_POLL_SEC default 30 (0 disables worker).
+// AI_CLOUDHUB_JOB_RETAIN_SEC >0 purges terminal jobs older than that.
+func (s *Service) StartJobMaintenanceWorker(ctx context.Context) {
+	poll := jobReclaimPollInterval()
+	if poll <= 0 {
+		return
+	}
+	go func() {
+		tick := time.NewTicker(poll)
+		defer tick.Stop()
+		_, _ = s.ReclaimStaleAll()
+		_, _ = s.PurgeTerminalJobs(0)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				_, _ = s.ReclaimStaleAll()
+				_, _ = s.PurgeTerminalJobs(0)
+			}
+		}
+	}()
+}
+
+func jobReclaimPollInterval() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_RECLAIM_POLL_SEC"))
+	if v == "" {
+		return 30 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 30 * time.Second
+	}
+	if n == 0 {
+		return 0
+	}
+	if n > 3600 {
+		n = 3600
+	}
+	return time.Duration(n) * time.Second
+}
+
+func jobTerminalRetain() time.Duration {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_RETAIN_SEC"))
+	if v == "" || v == "0" {
+		return 0 // disabled by default (honest: ops opt-in)
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0
+	}
+	if n > 365*24*3600 {
+		n = 365 * 24 * 3600
+	}
+	return time.Duration(n) * time.Second
+}
+
+// PurgeTerminalJobs deletes old succeeded/failed/cancelled jobs. olderThan 0 uses JOB_RETAIN_SEC.
+func (s *Service) PurgeTerminalJobs(olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		olderThan = jobTerminalRetain()
+	}
+	if olderThan <= 0 {
+		return 0, nil
+	}
+	n, err := s.store.PurgeTerminalJobs(time.Now().UTC().Add(-olderThan), 500)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		metrics.AddJobsPurged(uint64(n))
+	}
+	return n, nil
+}
+
+// AdminPurgeTerminalJobs force-purges terminal jobs older than olderThan (default 30d if retain unset).
+func (s *Service) AdminPurgeTerminalJobs(olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		olderThan = jobTerminalRetain()
+		if olderThan <= 0 {
+			olderThan = 30 * 24 * time.Hour
+		}
+	}
+	n, err := s.store.PurgeTerminalJobs(time.Now().UTC().Add(-olderThan), 2000)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		metrics.AddJobsPurged(uint64(n))
+	}
+	return n, nil
+}
+
+// AdminComplete force-completes any non-terminal job (admin).
+func (s *Service) AdminComplete(id string, in CompleteInput) (*Job, error) {
+	sj, err := s.store.GetJobByID(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	note := strings.TrimSpace(in.Note)
+	if note == "" {
+		note = "admin force complete"
+	} else {
+		note = "admin complete: " + note
+	}
+	in.Note = note
+	return s.Complete(sj.UserID, sj.ID, in)
 }
 
 // VerifyJobWebhookSignature checks HMAC for receivers (exported for tests/docs).

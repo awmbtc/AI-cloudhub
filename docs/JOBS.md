@@ -92,6 +92,9 @@ export AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS=8            # default 8, max 32
 export AI_CLOUDHUB_JOB_WEBHOOK_POLL_SEC=2                # outbox worker poll
 export AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC=604800         # keep delivered/dead 7d; 0=never purge
 export AI_CLOUDHUB_JOB_WEBHOOK_PURGE_SEC=60              # worker purge interval
+export AI_CLOUDHUB_JOB_WEBHOOK_TIMEOUT_SEC=5             # HTTP client timeout per attempt
+export AI_CLOUDHUB_JOB_RECLAIM_POLL_SEC=30               # global lease/timeout reclaim worker; 0=off
+export AI_CLOUDHUB_JOB_RETAIN_SEC=0                      # terminal job purge TTL; 0=off (default)
 # AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0                  # tests only: ~1ms retry
 ```
 
@@ -141,6 +144,13 @@ POST /v1/admin/jobs/{id}/cancel
 POST /v1/admin/jobs/{id}/release
 { "note": "optional reason" }
 
+POST /v1/admin/jobs/{id}/complete
+{ "ok": true, "note": "optional", "exit_code": 0 }
+
+POST /v1/admin/jobs/reclaim?user_id=
+POST /v1/admin/jobs/purge-terminal?older_than_sec=
+
+GET  /v1/admin/job-webhooks/stats
 GET  /v1/admin/job-webhooks?status=&job_id=&user_id=&event=&limit=
 GET  /v1/admin/job-webhooks/{id}
 POST /v1/admin/job-webhooks/{id}/retry
@@ -154,9 +164,12 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
-- **Admin job-webhooks**: list/get outbox; filters `status` / `job_id` / `user_id` / `event` (`job.succeeded`|`job.failed`|`job.cancelled`, or any `job.*`); retry requeues any row (same `event_id`/`payload`, attempts=0); **retry-all** batch requeue (default `status=dead`, same filters, limit default 100 max 500); **purge** deletes old delivered/dead (`older_than_sec` optional).
+- **Admin complete** force-terminates any non-terminal job (`admin complete: …`).
+- **Admin reclaim** runs lease/timeout reclaim globally or for `user_id` (also background every `JOB_RECLAIM_POLL_SEC`).
+- **Admin purge-terminal** deletes old succeeded/failed/cancelled (`JOB_RETAIN_SEC` or `older_than_sec`).
+- **Admin job-webhooks**: **stats**; list/get/retry/retry-all/purge; filters include `event`.
 - Agent tokens cannot call admin APIs.
-- Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry|retry_all|purge`.
+- Audit: `admin.jobs.*` / `admin.job_webhooks.*`.
 
 ## Honesty
 

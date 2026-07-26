@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   user_id TEXT,
@@ -258,6 +260,8 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS labels_json TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT`)
 	_, _ = p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_user_idempotency ON jobs(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''`)
+	_, _ = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at)`)
+	_, _ = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`)
 	return nil
 }
 
@@ -1072,17 +1076,54 @@ func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 }
 
 func (p *Postgres) ListRunningJobs(userID string) ([]*Job, error) {
-	rows, err := p.db.Query(
-		`SELECT `+jobSelectColsPG+` FROM jobs
-		 WHERE user_id=$1 AND status='running'
-		 ORDER BY created_at ASC, id ASC`,
-		userID,
+	userID = strings.TrimSpace(userID)
+	var (
+		rows *sql.Rows
+		err  error
 	)
+	if userID != "" {
+		rows, err = p.db.Query(
+			`SELECT `+jobSelectColsPG+` FROM jobs
+			 WHERE user_id=$1 AND status='running'
+			 ORDER BY created_at ASC, id ASC`,
+			userID,
+		)
+	} else {
+		rows, err = p.db.Query(
+			`SELECT `+jobSelectColsPG+` FROM jobs
+			 WHERE status='running'
+			 ORDER BY created_at ASC, id ASC`,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanJobRowsPG(rows)
+}
+
+func (p *Postgres) PurgeTerminalJobs(olderThan time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	res, err := p.db.Exec(
+		`WITH doomed AS (
+		   SELECT id FROM jobs
+		   WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1
+		   ORDER BY updated_at ASC
+		   LIMIT $2
+		 )
+		 DELETE FROM jobs WHERE id IN (SELECT id FROM doomed)`,
+		olderThan.UTC(), limit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // ClaimPendingJob atomically claims via UPDATE ... WHERE status still claimable RETURNING.
