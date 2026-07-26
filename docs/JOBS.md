@@ -64,6 +64,7 @@ POST /v1/jobs/{id}/complete
 - Region header/body / runner `AI_CLOUDHUB_REGION`: only jobs with matching `region_hint`.
 - Runner identity: `AI_CLOUDHUB_RUNNER_ID` or hostname → `claimed_by_runner_id`.
 - Lease: no heartbeat within `AI_CLOUDHUB_JOB_LEASE_SEC` → release to pending (or max_attempts fail).
+- Reclaim (`ReclaimStale` on claim paths): store `ListRunningJobs` only (status=`running`, `created_at ASC`) — not full `ListJobs`.
 - Cancel: `POST /v1/jobs/{id}/cancel`. Runner polls GET job (`AI_CLOUDHUB_CANCEL_POLL`, default 5s) and kills agent.
 - Complete on already-terminal job is a **no-op** (keeps cancelled/succeeded/failed).
 
@@ -140,10 +141,10 @@ POST /v1/admin/jobs/{id}/cancel
 POST /v1/admin/jobs/{id}/release
 { "note": "optional reason" }
 
-GET  /v1/admin/job-webhooks?status=&job_id=&user_id=&limit=
+GET  /v1/admin/job-webhooks?status=&job_id=&user_id=&event=&limit=
 GET  /v1/admin/job-webhooks/{id}
 POST /v1/admin/job-webhooks/{id}/retry
-POST /v1/admin/job-webhooks/retry-all?status=dead&job_id=&user_id=&limit=
+POST /v1/admin/job-webhooks/retry-all?status=dead&job_id=&user_id=&event=&limit=
 POST /v1/admin/job-webhooks/purge?older_than_sec=
 ```
 
@@ -153,7 +154,7 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
-- **Admin job-webhooks**: list/get outbox; filters `status` / `job_id` / `user_id`; retry requeues any row (same `event_id`/`payload`, attempts=0); **retry-all** batch requeue (default `status=dead`, same filters, limit default 100 max 500); **purge** deletes old delivered/dead (`older_than_sec` optional).
+- **Admin job-webhooks**: list/get outbox; filters `status` / `job_id` / `user_id` / `event` (`job.succeeded`|`job.failed`|`job.cancelled`, or any `job.*`); retry requeues any row (same `event_id`/`payload`, attempts=0); **retry-all** batch requeue (default `status=dead`, same filters, limit default 100 max 500); **purge** deletes old delivered/dead (`older_than_sec` optional).
 - Agent tokens cannot call admin APIs.
 - Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry|retry_all|purge`.
 

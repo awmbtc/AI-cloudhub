@@ -773,6 +773,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Scrape-time refresh of webhook outbox queue depth gauges.
+	if s.jobs != nil {
+		if c, err := s.jobs.WebhookOutboxStats(); err == nil && c != nil {
+			metrics.SetWebhookOutboxGauges(uint64(c.Pending), uint64(c.Delivered), uint64(c.Dead))
+		}
+	}
 	metrics.Handler(w, r)
 }
 
@@ -2474,7 +2480,7 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 	writeJSON(w, http.StatusOK, j)
 }
 
-// handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&job_id=&user_id=&limit=
+// handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&job_id=&user_id=&event=&limit=
 func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2486,10 +2492,16 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, "status must be pending, delivered, or dead")
 		return
 	}
+	event := strings.TrimSpace(r.URL.Query().Get("event"))
+	if event != "" && !validJobWebhookEvent(event) {
+		writeErr(w, http.StatusBadRequest, "event must be job.succeeded, job.failed, job.cancelled, or job.*")
+		return
+	}
 	filt := job.AdminWebhookFilter{
 		Status: status,
 		JobID:  strings.TrimSpace(r.URL.Query().Get("job_id")),
 		UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
+		Event:  event,
 		Limit:  limit,
 	}
 	items := s.jobs.AdminListWebhooks(filt)
@@ -2500,12 +2512,13 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 	if eff > 500 {
 		eff = 500
 	}
-	s.auth.Audit(adminID, "admin.job_webhooks.list", filt.JobID, fmt.Sprintf("n=%d status=%s job_id=%s user_id=%s", len(items), status, filt.JobID, filt.UserID))
+	s.auth.Audit(adminID, "admin.job_webhooks.list", filt.JobID, fmt.Sprintf("n=%d status=%s job_id=%s user_id=%s event=%s", len(items), status, filt.JobID, filt.UserID, event))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items":   items,
 		"status":  status,
 		"job_id":  filt.JobID,
 		"user_id": filt.UserID,
+		"event":   event,
 		"limit":   eff,
 		"count":   len(items),
 	})
@@ -2545,11 +2558,17 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 			return
 		}
 		status := strings.TrimSpace(r.URL.Query().Get("status"))
+		event := strings.TrimSpace(r.URL.Query().Get("event"))
+		if event != "" && !validJobWebhookEvent(event) {
+			writeErr(w, http.StatusBadRequest, "event must be job.succeeded, job.failed, job.cancelled, or job.*")
+			return
+		}
 		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 		filt := job.AdminWebhookFilter{
 			Status: status,
 			JobID:  strings.TrimSpace(r.URL.Query().Get("job_id")),
 			UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
+			Event:  event,
 			Limit:  limit,
 		}
 		n, err := s.jobs.AdminRetryWebhooksBatch(filt)
@@ -2567,12 +2586,13 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 		if eff > 500 {
 			eff = 500
 		}
-		s.auth.Audit(adminID, "admin.job_webhooks.retry_all", filt.JobID, fmt.Sprintf("requeued=%d status=%s job_id=%s user_id=%s limit=%d", n, status, filt.JobID, filt.UserID, eff))
+		s.auth.Audit(adminID, "admin.job_webhooks.retry_all", filt.JobID, fmt.Sprintf("requeued=%d status=%s job_id=%s user_id=%s event=%s limit=%d", n, status, filt.JobID, filt.UserID, event, eff))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"requeued": n,
 			"status":   status,
 			"job_id":   filt.JobID,
 			"user_id":  filt.UserID,
+			"event":    event,
 			"limit":    eff,
 		})
 		return
@@ -2607,6 +2627,18 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 	}
 	s.auth.Audit(adminID, "admin.job_webhooks.get", v.ID, "job="+v.JobID)
 	writeJSON(w, http.StatusOK, v)
+}
+
+// validJobWebhookEvent reports whether event is a known terminal job webhook event
+// (job.succeeded|job.failed|job.cancelled) or any non-empty job.* name.
+func validJobWebhookEvent(event string) bool {
+	switch event {
+	case "job.succeeded", "job.failed", "job.cancelled":
+		return true
+	default:
+		// allow forward-compatible job.* event names
+		return strings.HasPrefix(event, "job.") && len(event) > len("job.")
+	}
 }
 
 // parseLabelQuery parses repeated query values "key:value" into a map.

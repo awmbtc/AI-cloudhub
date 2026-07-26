@@ -1279,6 +1279,26 @@ func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 	return out, rows.Err()
 }
 
+func (s *SQLite) ListRunningJobs(userID string) ([]*Job, error) {
+	rows, err := s.db.Query(
+		`SELECT `+jobSelectCols+` FROM jobs WHERE user_id = ? AND status = 'running'
+		 ORDER BY created_at ASC, id ASC`, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // ClaimPendingJob atomically claims via UPDATE ... WHERE status still claimable RETURNING.
 func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -1901,6 +1921,10 @@ func (s *SQLite) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 		q += ` AND user_id = ?`
 		args = append(args, strings.TrimSpace(f.UserID))
 	}
+	if strings.TrimSpace(f.Event) != "" {
+		q += ` AND event = ?`
+		args = append(args, strings.TrimSpace(f.Event))
+	}
 	q += ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.Query(q, args...)
@@ -1917,6 +1941,32 @@ func (s *SQLite) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLite) CountWebhookOutbox() (*WebhookOutboxCounts, error) {
+	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM job_webhook_outbox GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var c WebhookOutboxCounts
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		switch status {
+		case "pending":
+			c.Pending += n
+		case "delivered":
+			c.Delivered += n
+		case "dead":
+			c.Dead += n
+		}
+		c.Total += n
+	}
+	return &c, rows.Err()
 }
 
 func (s *SQLite) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {

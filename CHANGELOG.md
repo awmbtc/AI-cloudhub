@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## v0.2.30
+
+ReclaimStale scans only running jobs.
+
+### Jobs
+- Store `ListRunningJobs(userID)` on memory/sqlite/postgres
+- `ReclaimStale` no longer `ListJobs` (all statuses) for lease/timeout reclaim
+
+## v0.2.29
+
+Admin job-webhooks filter by event type.
+
+### Admin / Webhook
+- `GET /v1/admin/job-webhooks?event=` and `POST …/retry-all?event=`
+- Allowed: `job.succeeded` | `job.failed` | `job.cancelled` | other `job.*`
+- Combines with status / job_id / user_id filters
+
+## v0.2.28
+
+Prometheus gauges for job webhook outbox queue depth.
+
+### Metrics / Jobs
+- Store `CountWebhookOutbox` (pending/delivered/dead) on memory/sqlite/postgres
+- `GET /metrics` scrape-time refresh: `aicloudhub_jobs_webhook_pending` / `_delivered` / `_dead` gauges
+- Complements lifetime counters `jobs_webhook_ok|fail|dead|purged_total`
+
 ## v0.2.27
 
 User job list filter push-down to store.

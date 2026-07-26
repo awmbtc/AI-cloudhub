@@ -412,6 +412,9 @@ type Store interface {
 	// ListJobsAdmin lists jobs across users with optional filters (admin).
 	ListJobsAdmin(f AdminJobFilter) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
+	// ListRunningJobs returns only running jobs for a user (for lease/timeout reclaim).
+	// Ordered by created_at ASC so older claims are examined first.
+	ListRunningJobs(userID string) ([]*Job, error)
 	// CountJobsByStatus returns full per-status aggregation (empty userID = all users).
 	CountJobsByStatus(userID string) (*JobStatusCounts, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.
@@ -470,8 +473,18 @@ type Store interface {
 	// PurgeWebhookOutbox deletes delivered (by delivered_at) and dead (by updated_at) rows older than olderThan.
 	// limit caps rows deleted (0 = default 500, max 5000). Returns number deleted.
 	PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error)
+	// CountWebhookOutbox returns full per-status aggregation of outbox rows (no row cap).
+	CountWebhookOutbox() (*WebhookOutboxCounts, error)
 
 	Close() error
+}
+
+// WebhookOutboxCounts is a full aggregation of job_webhook_outbox rows by status.
+type WebhookOutboxCounts struct {
+	Pending   int
+	Delivered int
+	Dead      int
+	Total     int
 }
 
 // WebhookOutboxFilter filters admin outbox listings.
@@ -479,6 +492,7 @@ type WebhookOutboxFilter struct {
 	Status string // empty = all; pending|delivered|dead
 	JobID  string // empty = all jobs
 	UserID string // empty = all users
+	Event  string // empty = all; e.g. job.succeeded|job.failed|job.cancelled
 	Limit  int    // 0 = default 100; max 500
 }
 

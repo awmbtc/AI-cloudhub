@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.27
+  version: 0.2.30
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1950,7 +1950,7 @@ paths:
       summary: List job webhook outbox rows (admin)
       operationId: adminListJobWebhooks
       description: |
-        Durable terminal webhook outbox. Filter by `status`, `job_id`, and/or `user_id`.
+        Durable terminal webhook outbox. Filter by `status`, `job_id`, `user_id`, and/or `event`.
         List items omit payload; use get-by-id for full envelope.
       security:
         - bearerAuth: []
@@ -1966,6 +1966,14 @@ paths:
         - name: user_id
           in: query
           schema: { type: string }
+        - name: event
+          in: query
+          schema:
+            type: string
+            example: job.failed
+          description: |
+            Filter by webhook event name. Allowed: `job.succeeded`, `job.failed`,
+            `job.cancelled`, or any non-empty `job.*` name.
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500 }
@@ -1984,7 +1992,10 @@ paths:
                   status: { type: string }
                   job_id: { type: string }
                   user_id: { type: string }
+                  event: { type: string }
                   limit: { type: integer }
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           description: Admin required
 
@@ -2045,7 +2056,7 @@ paths:
       operationId: adminRetryAllJobWebhooks
       description: |
         Requeues up to `limit` rows with the given `status` (default `dead`) to pending
-        with attempts=0. Optional `job_id` / `user_id` scope. Kicks one delivery pass when any requeued.
+        with attempts=0. Optional `job_id` / `user_id` / `event` scope. Kicks one delivery pass when any requeued.
       security:
         - bearerAuth: []
       parameters:
@@ -2061,6 +2072,14 @@ paths:
         - name: user_id
           in: query
           schema: { type: string }
+        - name: event
+          in: query
+          schema:
+            type: string
+            example: job.failed
+          description: |
+            Scope requeue by webhook event name. Allowed: `job.succeeded`, `job.failed`,
+            `job.cancelled`, or any non-empty `job.*` name.
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
@@ -2076,6 +2095,7 @@ paths:
                   status: { type: string }
                   job_id: { type: string }
                   user_id: { type: string }
+                  event: { type: string }
                   limit: { type: integer }
         '400':
           $ref: '#/components/responses/BadRequest'

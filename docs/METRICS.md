@@ -49,35 +49,48 @@ Prefer Bearer over `?token=` so tokens do not land in access logs.
 
 ## Metric table
 
-All series are **counters** (monotonic within a process lifetime).
+Most series are **counters** (monotonic within a process lifetime). Webhook outbox depth series are **gauges** refreshed on each scrape when the jobs service is wired.
 
-| Metric | Labels | Meaning |
-|--------|--------|---------|
-| `aicloudhub_http_requests_total` | — | HTTP hits that pass the server’s request counter path (authenticated + public tracked hits) |
-| `aicloudhub_sessions_issued_total` | — | Mount / STS sessions issued (drive session + refresh paths that call `IncSession`) |
-| `aicloudhub_sts_source_total` | `source` | Sessions broken down by STS credential source (see labels below) |
-| `aicloudhub_jobs_created_total` | — | BYOC jobs created |
-| `aicloudhub_jobs_claimed_total` | — | BYOC jobs claimed by a user runner |
-| `aicloudhub_jobs_completed_total` | — | BYOC jobs completed |
-| `aicloudhub_jobs_cancelled_total` | — | BYOC jobs cancelled |
-| `aicloudhub_jobs_with_connector_created_total` | — | Jobs created with non-empty `connector_id` |
-| `aicloudhub_jobs_completed_with_connector_total` | — | Completions for jobs that had `connector_id` |
-| `aicloudhub_jobs_timeout_total` | — | Jobs failed by hard wall-clock timeout |
-| `aicloudhub_jobs_lease_reclaim_total` | — | Running jobs released to pending after lease expiry |
-| `aicloudhub_jobs_max_attempts_total` | — | Jobs failed when lease expired and `max_attempts` reached |
-| `aicloudhub_jobs_heartbeat_total` | — | Successful job lease heartbeats |
-| `aicloudhub_jobs_webhook_ok_total` | — | Terminal job webhooks delivered HTTP &lt;300 (durable outbox) |
-| `aicloudhub_jobs_webhook_fail_total` | — | Failed outbox delivery attempts (will retry if under max) |
-| `aicloudhub_jobs_webhook_dead_total` | — | Outbox rows marked dead after max attempts |
-| `aicloudhub_jobs_webhook_purged_total` | — | Delivered/dead outbox rows deleted by TTL purge |
-| `aicloudhub_rate_limited_total` | — | Requests rejected by rate limiting |
-| `aicloudhub_snapshots_created_total` | — | Metadata snapshots created |
-| `aicloudhub_marketplace_installs_total` | — | Successful marketplace installs |
-| `aicloudhub_marketplace_checkouts_total` | — | Successful checkouts |
-| `aicloudhub_marketplace_paid_total` | — | Purchases marked paid (pay stub or Stripe webhook) |
-| `aicloudhub_connectors_created_total` | — | Connector bindings registered |
-| `aicloudhub_memory_puts_total` | — | Memory Kernel puts via API |
-| `aicloudhub_memory_searches_total` | — | Vector memory searches |
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `aicloudhub_http_requests_total` | counter | — | HTTP hits that pass the server’s request counter path (authenticated + public tracked hits) |
+| `aicloudhub_sessions_issued_total` | counter | — | Mount / STS sessions issued (drive session + refresh paths that call `IncSession`) |
+| `aicloudhub_sts_source_total` | counter | `source` | Sessions broken down by STS credential source (see labels below) |
+| `aicloudhub_jobs_created_total` | counter | — | BYOC jobs created |
+| `aicloudhub_jobs_claimed_total` | counter | — | BYOC jobs claimed by a user runner |
+| `aicloudhub_jobs_completed_total` | counter | — | BYOC jobs completed |
+| `aicloudhub_jobs_cancelled_total` | counter | — | BYOC jobs cancelled |
+| `aicloudhub_jobs_with_connector_created_total` | counter | — | Jobs created with non-empty `connector_id` |
+| `aicloudhub_jobs_completed_with_connector_total` | counter | — | Completions for jobs that had `connector_id` |
+| `aicloudhub_jobs_timeout_total` | counter | — | Jobs failed by hard wall-clock timeout |
+| `aicloudhub_jobs_lease_reclaim_total` | counter | — | Running jobs released to pending after lease expiry |
+| `aicloudhub_jobs_max_attempts_total` | counter | — | Jobs failed when lease expired and `max_attempts` reached |
+| `aicloudhub_jobs_heartbeat_total` | counter | — | Successful job lease heartbeats |
+| `aicloudhub_jobs_webhook_ok_total` | counter | — | Terminal job webhooks delivered HTTP &lt;300 (durable outbox) |
+| `aicloudhub_jobs_webhook_fail_total` | counter | — | Failed outbox delivery attempts (will retry if under max) |
+| `aicloudhub_jobs_webhook_dead_total` | counter | — | Outbox rows marked dead after max attempts (lifetime counter) |
+| `aicloudhub_jobs_webhook_purged_total` | counter | — | Delivered/dead outbox rows deleted by TTL purge |
+| `aicloudhub_jobs_webhook_pending` | gauge | — | Current pending outbox rows (queue depth; scrape-time `CountWebhookOutbox`) |
+| `aicloudhub_jobs_webhook_delivered` | gauge | — | Current delivered outbox rows not yet purged |
+| `aicloudhub_jobs_webhook_dead` | gauge | — | Current dead-letter outbox rows not yet purged |
+| `aicloudhub_rate_limited_total` | counter | — | Requests rejected by rate limiting |
+| `aicloudhub_snapshots_created_total` | counter | — | Metadata snapshots created |
+| `aicloudhub_marketplace_installs_total` | counter | — | Successful marketplace installs |
+| `aicloudhub_marketplace_checkouts_total` | counter | — | Successful checkouts |
+| `aicloudhub_marketplace_paid_total` | counter | — | Purchases marked paid (pay stub or Stripe webhook) |
+| `aicloudhub_connectors_created_total` | counter | — | Connector bindings registered |
+| `aicloudhub_memory_puts_total` | counter | — | Memory Kernel puts via API |
+| `aicloudhub_memory_searches_total` | counter | — | Vector memory searches |
+
+### Webhook outbox gauges
+
+On each `GET /metrics`, when the jobs service is available, the server calls `store.CountWebhookOutbox()` and sets:
+
+- `aicloudhub_jobs_webhook_pending`
+- `aicloudhub_jobs_webhook_delivered`
+- `aicloudhub_jobs_webhook_dead`
+
+These are **current row counts** in `job_webhook_outbox` (not rates). They fall as rows are delivered/purged. If jobs is not wired, gauges stay at last stored value (typically `0` at process start).
 
 ### `aicloudhub_sts_source_total` label values
 
@@ -109,9 +122,9 @@ What exists today is intentionally small:
 - **No** per-route or per-status HTTP labels  
 - **No** Go runtime / process metrics from `prometheus/client_golang`  
 - **No** multi-replica shared counters (each API process has its own set)  
-- **No** gauges for open sessions, queue depth, or mount health  
+- **No** gauges for open sessions or mount health (webhook outbox depth gauges are the exception)  
 
-Use these counters for coarse traffic and STS-source mix; pair with logs/audit for detail.
+Use these counters for coarse traffic and STS-source mix; pair with logs/audit for detail. Webhook backlog: `aicloudhub_jobs_webhook_pending` (and dead/delivered for residual terminal rows).
 
 ## Example Prometheus scrape config
 
@@ -206,6 +219,30 @@ Throughput snapshot (created vs completed):
 ```promql
 rate(aicloudhub_jobs_created_total[5m])
 - rate(aicloudhub_jobs_completed_total[5m])
+```
+
+### Job webhook outbox depth
+
+```promql
+aicloudhub_jobs_webhook_pending
+```
+
+```promql
+aicloudhub_jobs_webhook_dead
+```
+
+```promql
+aicloudhub_jobs_webhook_delivered
+```
+
+Delivery success/fail rates (counters):
+
+```promql
+rate(aicloudhub_jobs_webhook_ok_total[5m])
+```
+
+```promql
+rate(aicloudhub_jobs_webhook_fail_total[5m])
 ```
 
 ### Rate limits & snapshots

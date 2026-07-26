@@ -48,6 +48,10 @@ var (
 	JobsWebhookFail   atomic.Uint64
 	JobsWebhookDead   atomic.Uint64
 	JobsWebhookPurged atomic.Uint64
+	// Webhook outbox queue depth gauges (refreshed on /metrics scrape when jobs service is wired).
+	JobsWebhookPendingGauge   atomic.Uint64
+	JobsWebhookDeliveredGauge atomic.Uint64
+	JobsWebhookDeadGauge      atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -158,6 +162,14 @@ func AddJobWebhookPurged(n uint64) {
 	}
 }
 
+// SetWebhookOutboxGauges sets current outbox queue depth gauges (pending/delivered/dead).
+// Call from /metrics scrape path when store counts are available.
+func SetWebhookOutboxGauges(pending, delivered, dead uint64) {
+	JobsWebhookPendingGauge.Store(pending)
+	JobsWebhookDeliveredGauge.Store(delivered)
+	JobsWebhookDeadGauge.Store(dead)
+}
+
 // Handler serves Prometheus text exposition (no auth).
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -248,4 +260,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_purged_total Terminal job webhook outbox rows deleted by TTL purge\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_purged_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_purged_total %d\n", JobsWebhookPurged.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_pending Job webhook outbox rows currently pending delivery\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_pending gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_pending %d\n", JobsWebhookPendingGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_delivered Job webhook outbox rows currently delivered (not yet purged)\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_delivered gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_delivered %d\n", JobsWebhookDeliveredGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_dead Job webhook outbox rows currently dead-lettered (not yet purged)\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_dead gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_dead %d\n", JobsWebhookDeadGauge.Load())
 }

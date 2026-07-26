@@ -4,7 +4,7 @@ Goal: from a clean clone to **agent token → MCP tools → optional hubd mount 
 
 This is the short path. Full tool tables live in [MCP.md](./MCP.md); production hardening in [PRODUCTION.md](./PRODUCTION.md); policy in [POLICY.md](./POLICY.md). Automated regression: `make smoke-agent` / `make smoke-mcp` / **`make smoke-quickstart-agent`**.
 
-**Verified on v0.2.27** (local SQLite, free high port, no live MinIO): register → agent token → MCP `whoami` / `list_drives` → create/claim/complete job → `ensure_mounted_hint` → offline Qiniu `object_presign_get` (`method=qiniu_download`).
+**Verified on v0.2.30** (local SQLite, free high port, no live MinIO): register → agent token → MCP `whoami` / `list_drives` → create/claim/complete job → `ensure_mounted_hint` → offline Qiniu `object_presign_get` (`method=qiniu_download`).
 
 ---
 
@@ -52,7 +52,7 @@ In another shell:
 ```bash
 export API=http://127.0.0.1:8080   # match HTTP_ADDR
 export NO_PROXY=127.0.0.1,localhost
-curl -sS --noproxy '*' "$API/healthz"   # expect "version":"0.2.27" (or your build)
+curl -sS --noproxy '*' "$API/healthz"   # expect "version":"0.2.30" (or your build)
 curl -sS --noproxy '*' "$API/readyz"
 ```
 

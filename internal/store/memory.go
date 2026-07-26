@@ -767,6 +767,27 @@ func (m *Memory) ListPendingJobs(userID string) ([]*Job, error) {
 	return out, nil
 }
 
+func (m *Memory) ListRunningJobs(userID string) ([]*Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Job
+	for _, j := range m.jobs {
+		if j.UserID == userID && j.Status == "running" {
+			out = append(out, cloneJob(j))
+		}
+	}
+	// created_at ASC (stable: id ASC on ties)
+	for i := 0; i < len(out); i++ {
+		for k := i + 1; k < len(out); k++ {
+			if out[k].CreatedAt.Before(out[i].CreatedAt) ||
+				(out[k].CreatedAt.Equal(out[i].CreatedAt) && out[k].ID < out[i].ID) {
+				out[i], out[k] = out[k], out[i]
+			}
+		}
+	}
+	return out, nil
+}
+
 // ClaimPendingJob claims under the write mutex so only one caller wins.
 func (m *Memory) ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
 	m.mu.Lock()
@@ -1307,6 +1328,7 @@ func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 	status := strings.TrimSpace(f.Status)
 	jobID := strings.TrimSpace(f.JobID)
 	userID := strings.TrimSpace(f.UserID)
+	event := strings.TrimSpace(f.Event)
 	var out []*WebhookOutbox
 	for _, e := range m.webhooks {
 		if status != "" && e.Status != status {
@@ -1316,6 +1338,9 @@ func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 			continue
 		}
 		if userID != "" && e.UserID != userID {
+			continue
+		}
+		if event != "" && e.Event != event {
 			continue
 		}
 		out = append(out, cloneWebhookOutbox(e))
@@ -1332,6 +1357,27 @@ func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (m *Memory) CountWebhookOutbox() (*WebhookOutboxCounts, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var c WebhookOutboxCounts
+	for _, e := range m.webhooks {
+		if e == nil {
+			continue
+		}
+		c.Total++
+		switch e.Status {
+		case "pending":
+			c.Pending++
+		case "delivered":
+			c.Delivered++
+		case "dead":
+			c.Dead++
+		}
+	}
+	return &c, nil
 }
 
 func (m *Memory) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {

@@ -1071,6 +1071,20 @@ func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 	return scanJobRowsPG(rows)
 }
 
+func (p *Postgres) ListRunningJobs(userID string) ([]*Job, error) {
+	rows, err := p.db.Query(
+		`SELECT `+jobSelectColsPG+` FROM jobs
+		 WHERE user_id=$1 AND status='running'
+		 ORDER BY created_at ASC, id ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanJobRowsPG(rows)
+}
+
 // ClaimPendingJob atomically claims via UPDATE ... WHERE status still claimable RETURNING.
 func (p *Postgres) ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
 	now := time.Now().UTC()
@@ -1728,6 +1742,11 @@ func (p *Postgres) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, e
 		args = append(args, strings.TrimSpace(f.UserID))
 		n++
 	}
+	if strings.TrimSpace(f.Event) != "" {
+		q += fmt.Sprintf(` AND event=$%d`, n)
+		args = append(args, strings.TrimSpace(f.Event))
+		n++
+	}
 	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, n)
 	args = append(args, limit)
 	rows, err := p.db.Query(q, args...)
@@ -1744,6 +1763,32 @@ func (p *Postgres) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, e
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (p *Postgres) CountWebhookOutbox() (*WebhookOutboxCounts, error) {
+	rows, err := p.db.Query(`SELECT status, COUNT(*)::int FROM job_webhook_outbox GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var c WebhookOutboxCounts
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		switch status {
+		case "pending":
+			c.Pending += n
+		case "delivered":
+			c.Delivered += n
+		case "dead":
+			c.Dead += n
+		}
+		c.Total += n
+	}
+	return &c, rows.Err()
 }
 
 func (p *Postgres) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error) {

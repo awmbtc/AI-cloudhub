@@ -599,8 +599,9 @@ func (s *Service) Heartbeat(userID, id string) (*Job, error) {
 // ReclaimStale fails timed-out running jobs and releases lease-expired ones.
 // Returns how many jobs were transitioned (timeout fail or lease release).
 // Lease reclaim is a no-op when lease is disabled.
+// Uses ListRunningJobs so reclaim does not scan all job statuses for the user.
 func (s *Service) ReclaimStale(userID string) (int, error) {
-	list, err := s.store.ListJobs(userID)
+	list, err := s.store.ListRunningJobs(userID)
 	if err != nil {
 		return 0, err
 	}
@@ -899,6 +900,22 @@ func (s *Service) StartWebhookWorker(ctx context.Context) {
 	}()
 }
 
+// WebhookOutboxStats returns full outbox counts by status (pending/delivered/dead).
+// Used by /metrics scrape to refresh queue-depth gauges.
+func (s *Service) WebhookOutboxStats() (*store.WebhookOutboxCounts, error) {
+	if s == nil || s.store == nil {
+		return &store.WebhookOutboxCounts{}, nil
+	}
+	c, err := s.store.CountWebhookOutbox()
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return &store.WebhookOutboxCounts{}, nil
+	}
+	return c, nil
+}
+
 // PurgeWebhookOutbox deletes delivered/dead rows older than retain TTL.
 // olderThan zero uses AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC (0 env = no-op).
 // limit 0 uses 500. Returns deleted count.
@@ -1076,6 +1093,7 @@ type AdminWebhookFilter struct {
 	Status string // empty = all (list) or dead (batch retry default)
 	JobID  string
 	UserID string
+	Event  string // empty = all; e.g. job.succeeded|job.failed|job.cancelled
 	Limit  int
 }
 
@@ -1085,6 +1103,7 @@ func (s *Service) AdminListWebhooks(f AdminWebhookFilter) []*WebhookOutboxView {
 		Status: strings.TrimSpace(f.Status),
 		JobID:  strings.TrimSpace(f.JobID),
 		UserID: strings.TrimSpace(f.UserID),
+		Event:  strings.TrimSpace(f.Event),
 		Limit:  f.Limit,
 	})
 	if err != nil {
@@ -1140,7 +1159,7 @@ func (s *Service) AdminRetryWebhook(id string) (*WebhookOutboxView, error) {
 }
 
 // AdminRetryWebhooksBatch requeues up to limit outbox rows matching filter (admin).
-// Status defaults to "dead"; allowed: pending|delivered|dead. Optional JobID/UserID scope.
+// Status defaults to "dead"; allowed: pending|delivered|dead. Optional JobID/UserID/Event scope.
 // Limit default 100, max 500. Kicks one delivery pass when any requeued and URL set.
 func (s *Service) AdminRetryWebhooksBatch(f AdminWebhookFilter) (int, error) {
 	status := strings.TrimSpace(f.Status)
@@ -1163,6 +1182,7 @@ func (s *Service) AdminRetryWebhooksBatch(f AdminWebhookFilter) (int, error) {
 		Status: status,
 		JobID:  strings.TrimSpace(f.JobID),
 		UserID: strings.TrimSpace(f.UserID),
+		Event:  strings.TrimSpace(f.Event),
 		Limit:  limit,
 	})
 	if err != nil {

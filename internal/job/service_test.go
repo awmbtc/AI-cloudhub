@@ -816,6 +816,58 @@ func TestAdminWebhookFilterByJobID(t *testing.T) {
 	}
 }
 
+func TestAdminWebhookFilterByEvent(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	now := time.Now().UTC()
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-ok", JobID: "j1", UserID: "u1", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-fail", JobID: "j2", UserID: "u1", Event: "job.failed",
+		PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-cancel", JobID: "j3", UserID: "u1", Event: "job.cancelled",
+		PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e-fail-2", JobID: "j4", UserID: "u2", Event: "job.failed",
+		PayloadJSON: []byte(`{}`), Status: "pending", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+
+	failed := svc.AdminListWebhooks(AdminWebhookFilter{Event: "job.failed", Limit: 10})
+	if len(failed) != 2 {
+		t.Fatalf("job.failed want 2 got %d", len(failed))
+	}
+	for _, v := range failed {
+		if v.Event != "job.failed" {
+			t.Fatalf("unexpected event %q id=%s", v.Event, v.ID)
+		}
+	}
+	ok := svc.AdminListWebhooks(AdminWebhookFilter{Event: "job.succeeded", Limit: 10})
+	if len(ok) != 1 || ok[0].ID != "e-ok" {
+		t.Fatalf("succeeded: %+v", ok)
+	}
+	// event + status
+	deadFail := svc.AdminListWebhooks(AdminWebhookFilter{Event: "job.failed", Status: "dead", Limit: 10})
+	if len(deadFail) != 1 || deadFail[0].ID != "e-fail" {
+		t.Fatalf("failed+dead: %+v", deadFail)
+	}
+	// batch retry scoped by event
+	n, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Status: "dead", Event: "job.failed", Limit: 10})
+	if err != nil || n != 1 {
+		t.Fatalf("retry failed dead: n=%d err=%v", n, err)
+	}
+	if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "dead", Event: "job.cancelled", Limit: 10})) != 1 {
+		t.Fatal("cancelled dead should remain")
+	}
+	if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "pending", Event: "job.failed", Limit: 10})) != 2 {
+		t.Fatal("both failed should be pending after requeue of e-fail")
+	}
+}
+
 func TestAdminRetryWebhook(t *testing.T) {
 	var hits atomic.Int32
 	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1081,6 +1133,70 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	}
 	if next.Status != StatusRunning {
 		t.Fatalf("status %s", next.Status)
+	}
+}
+
+// TestReclaimStaleUsesRunningOnly ensures reclaim ignores non-running jobs and still
+// transitions lease-expired running work (via ListRunningJobs, not full ListJobs).
+func TestReclaimStaleUsesRunningOnly(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	svc.SetLease(50 * time.Millisecond)
+	uid := "u-run-only"
+
+	// Terminal / pending noise that must not be scanned as reclaim targets.
+	for i, st := range []Status{StatusPending, StatusSucceeded, StatusFailed, StatusCancelled} {
+		j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"noise"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sj, err := mem.GetJob(uid, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sj.Status = string(st)
+		sj.UpdatedAt = time.Now().UTC().Add(-time.Hour)
+		sj.HeartbeatAt = time.Now().UTC().Add(-time.Hour)
+		if err := mem.UpdateJob(sj); err != nil {
+			t.Fatal(err)
+		}
+		_ = i
+	}
+
+	running, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"live"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, running.ID, "a", ""); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	n, err := svc.ReclaimStale(uid)
+	if err != nil || n != 1 {
+		t.Fatalf("reclaim n=%d err=%v want 1", n, err)
+	}
+	got, err := svc.Get(uid, running.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusPending {
+		t.Fatalf("status %s want pending", got.Status)
+	}
+	// Noise jobs unchanged.
+	all, err := mem.ListJobs(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("job count %d", len(all))
+	}
+	runOnly, err := mem.ListRunningJobs(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runOnly) != 0 {
+		t.Fatalf("expected no running after reclaim, got %d", len(runOnly))
 	}
 }
 

@@ -70,7 +70,7 @@
 - Job 为 BYOC 队列，**禁止**平台大规模 Runner 池（D-001）。
 - Admin 跨用户 job 列表：`GET /v1/admin/jobs*`（人 admin only）；keyset `cursor`/`next_cursor`（created_at DESC, id DESC）；stats 为全库 `COUNT GROUP BY status`（无 500 行上限）。
 - User job 列表：`GET /v1/jobs` keyset（default limit 100）；agent/status/labels/cursor 下推 store；`status=pending` 仍为 claimable 全集（无 cursor）。
-- Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
+- Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。`ReclaimStale` 仅 `ListRunningJobs`（不扫用户全部 job）。
 - Job hard timeout：`timeout_sec`（创建）或全局 `AI_CLOUDHUB_JOB_TIMEOUT_SEC`；从 `claimed_at` 起算，超时在 claim 路径 fail（exit 124 + note）。runner 侧 `CommandContext` 杀进程。
 - Job attempts：`attempt_count` 每次 claim +1；`max_attempts>0` 时 lease 过期且次数耗尽 → fail（不再 re-queue）。
 - Job priority：`priority` 更高先 claim（同优先级 FIFO）；默认 0，夹紧 ±1000。
@@ -79,7 +79,7 @@
 - Job idempotency：创建 `idempotency_key`（每用户唯一）；同 key+同 payload → 200 重放；同 key+不同 payload → **409**；见 [JOBS.md](./JOBS.md)。
 - Job cancel → runner：worker 轮询 GET job（`AI_CLOUDHUB_CANCEL_POLL` 默认 5s）；取消后 CommandContext kill；complete 对已 terminal 为 no-op。
 - Job runner 身份：claim 可带 `X-AI-Cloudhub-Runner-Id` / body `runner_id`；runner 默认 `AI_CLOUDHUB_RUNNER_ID` 或 hostname。
-- Job webhook（可选）：durable outbox `job_webhook_outbox` + worker；envelope `{event_id,event,occurred_at,job}`；HMAC optional；at-least-once（按 event_id 去重）；失败退避后 `dead`；admin list/get/retry/retry-all/purge；delivered/dead 默认保留 7 天（`AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC`，`0` 关闭自动 purge）；pending 不自动删；retry-all 单次最多 500 条。
+- Job webhook（可选）：durable outbox `job_webhook_outbox` + worker；envelope `{event_id,event,occurred_at,job}`；HMAC optional；at-least-once（按 event_id 去重）；失败退避后 `dead`；admin list/get/retry/retry-all/purge；delivered/dead 默认保留 7 天（`AI_CLOUDHUB_JOB_WEBHOOK_RETAIN_SEC`，`0` 关闭自动 purge）；pending 不自动删；retry-all 单次最多 500 条；`/metrics` 有 pending/delivered/dead **gauge**（scrape 时 `CountWebhookOutbox`，非跨副本聚合）。
 - Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。
 
 ## 产品

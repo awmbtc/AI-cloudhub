@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.27 已发布；user jobs list 过滤下推 store
+## 总览：v0.2.30 已发布；三刀 parallel：outbox gauges + event filter + ListRunningJobs
 
 | 阶段 | 状态 |
 |------|------|
@@ -485,3 +485,10 @@ curl -s localhost:8080/v1/runtime/check
 
 - [x] `ListJobsPage` agent/status/labels/cursor/limit 下推
 - [x] 版本钉 **0.2.27** + tag
+
+### 本波（三刀 parallel 0.2.28–0.2.30）
+
+- [x] **0.2.28** outbox gauges：`CountWebhookOutbox` + scrape-time pending/delivered/dead
+- [x] **0.2.29** admin webhooks `?event=` list + retry-all
+- [x] **0.2.30** `ListRunningJobs` + ReclaimStale 不再全表 ListJobs
+- [x] tags **v0.2.28** / **v0.2.29** / **v0.2.30**
