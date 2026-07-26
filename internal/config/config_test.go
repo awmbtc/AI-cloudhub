@@ -39,10 +39,12 @@ func TestValidateShortJWT(t *testing.T) {
 
 func TestValidateStrongOK(t *testing.T) {
 	c := Config{
-		HTTPAddr:  ":8080",
-		JWTSecret: "this-is-a-long-enough-jwt-secret",
-		MasterKey: "some-master-key-material",
-		Strict:    true,
+		HTTPAddr:     ":8080",
+		JWTSecret:    "0123456789abcdef0123456789abcdef", // 32 chars
+		MasterKey:    "some-master-key-material",
+		Strict:       true,
+		MetricsToken: "metrics-token",
+		AdminCIDRs:   []string{"127.0.0.1"},
 	}
 	r := c.Validate()
 	if !r.OK() {
@@ -50,6 +52,23 @@ func TestValidateStrongOK(t *testing.T) {
 	}
 	if len(r.Warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", r.Warnings)
+	}
+}
+
+func TestValidateStrictProdWarnings(t *testing.T) {
+	c := Config{
+		HTTPAddr:  ":8080",
+		JWTSecret: "this-is-a-long-enough-jwt", // >=16, <32
+		MasterKey: "some-master-key-material",
+		Strict:    true,
+		// MetricsToken empty, AdminCIDRs empty
+	}
+	r := c.Validate()
+	if !r.OK() {
+		t.Fatalf("should not hard-fail: %v", r.Errors)
+	}
+	if len(r.Warnings) < 2 {
+		t.Fatalf("expected STRICT prod warnings (metrics/admin/jwt), got %v", r.Warnings)
 	}
 }
 

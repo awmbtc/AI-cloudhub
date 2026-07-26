@@ -155,14 +155,17 @@ Compose: postgres/redis/api healthchecks; api depends on healthy DB/Redis.
 
 ## Cutover checklist (copy/paste)
 
+**Full runbook:** [CUTOVER.md](./CUTOVER.md) · self-test: `make smoke-prod-preflight`
+
 1. [ ] `make prod-preflight` green (or only expected warnings)  
 2. [ ] Postgres + Redis for multi-replica API  
 3. [ ] TLS at edge; API on loopback; metrics token set  
 4. [ ] First admin created; `ALLOW_REGISTER=0`  
 5. [ ] Policy file / OPA / PDP URL as required by your org  
 6. [ ] Stripe webhook secret if using paid marketplace  
-7. [ ] User runners installed (rclone + optional git/psql clients) — **not** platform pool  
-8. [ ] `make smoke-all` + `make smoke-byoc` on a canary host  
+7. [ ] Job webhook: URL and HMAC secret **paired** (or both unset)  
+8. [ ] User runners installed (rclone + optional git/psql clients) — **not** platform pool  
+9. [ ] `make smoke-all` + `make smoke-golden` on a canary host  
 
 ## What we intentionally do not run in “platform production”
 

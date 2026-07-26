@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.55
+
+Production discipline (D-003 P1 — not Job ops):
+
+- Stronger `scripts/prod-preflight.sh`: admin CIDR, HSTS, webhook URL+secret pairing, metrics probe, bind/PG password hints
+- `docs/CUTOVER.md` one-page cutover runbook
+- `make smoke-prod-preflight` self-test (weak FAIL / strong PASS)
+- STRICT config warnings: metrics token, admin CIDRs, JWT prefer 32+
+- compose prod default VERSION 0.2.55
+
 ## v0.2.54
 
 Stage C Memory vertical (scoped project):

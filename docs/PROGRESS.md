@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.54（D-003 三类开工：安全 / 真路径 / Stage C 立项）
+## 总览：v0.2.55（+ 生产纪律 cutover）
 
 | 阶段 | 状态 |
 |------|------|
@@ -535,4 +535,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] **0.2.53** 真 MinIO 黄金路径：`make smoke-golden-minio`（session + objects + BYOC job）
 - [x] **0.2.54** Stage C Memory 立项 + TTL/delete/k 限制：`docs/STAGE-C-SCOPE-MEMORY.md`
 - [x] tags **v0.2.52** … **v0.2.54**；版本钉 **0.2.54**
+
+### 本波（v0.2.55 · 生产纪律）
+
+- [x] prod-preflight 加强（webhook 成对、admin CIDR、metrics 探活、HSTS…）
+- [x] `docs/CUTOVER.md` + `make smoke-prod-preflight`
+- [x] STRICT 启动警告：metrics / admin CIDR / JWT≥32 建议
+- [x] 版本钉 **0.2.55** + tag
+
 

@@ -29,6 +29,7 @@
 | [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：字段、env、curl、session.note） |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
+| [docs/CUTOVER.md](docs/CUTOVER.md) | **上线 cutover** 一页清单 + `make prod-preflight` |
 | [docs/METRICS.md](docs/METRICS.md) | Prometheus `/metrics` 说明 · scrape · Grafana 查询 |
 | [docs/JOBS.md](docs/JOBS.md) | BYOC job 队列 runbook（claim/lease/webhook/idempotency） |
 | [docs/MEMORY.md](docs/MEMORY.md) · [MARKETPLACE.md](docs/MARKETPLACE.md) · [MODULES.md](docs/MODULES.md) · [STAGE-C.md](docs/STAGE-C.md) | Stage C：Memory / 市场 / 模块 / Lineage·Graph·Connectors |
@@ -52,7 +53,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.54`：Job 安全 + 真 MinIO 黄金路径 + Stage C Memory 立项 | ✅ |
+| **发布** | `v0.2.55`：生产 cutover / preflight 纪律 | ✅ |
 
 ## 快速开始
 

@@ -202,6 +202,15 @@ func (c Config) Validate() ValidationResult {
 	if c.Strict && c.AllowRegister {
 		r.Warnings = append(r.Warnings, "AI_CLOUDHUB_ALLOW_REGISTER is true under STRICT; consider false after bootstrap")
 	}
+	if c.Strict && strings.TrimSpace(c.MetricsToken) == "" {
+		r.Warnings = append(r.Warnings, "AI_CLOUDHUB_METRICS_TOKEN unset under STRICT — /metrics is public")
+	}
+	if c.Strict && len(c.AdminCIDRs) == 0 {
+		r.Warnings = append(r.Warnings, "AI_CLOUDHUB_ADMIN_CIDRS empty under STRICT — admin APIs not IP-restricted")
+	}
+	if c.Strict && len(sec) >= MinJWTSecretLen && len(sec) < 32 && sec != DefaultJWTSecret {
+		r.Warnings = append(r.Warnings, "JWT_SECRET length < 32 under STRICT — prefer openssl rand -hex 32")
+	}
 	if c.TokenTTL > 0 && c.TokenTTL < time.Hour {
 		r.Warnings = append(r.Warnings, "AI_CLOUDHUB_TOKEN_TTL_HOURS < 1h is very short")
 	}
