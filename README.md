@@ -52,7 +52,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.51` 主线收口（D-003 Job freeze + 黄金路径 `make smoke-golden`） | ✅ |
+| **发布** | `v0.2.54`：Job 安全 + 真 MinIO 黄金路径 + Stage C Memory 立项 | ✅ |
 
 ## 快速开始
 

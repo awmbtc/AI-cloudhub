@@ -74,3 +74,55 @@ func TestCanAccessDrive(t *testing.T) {
 		t.Fatal("human")
 	}
 }
+
+// TestEngineJobRunScopeAndDrive: agents need job.run; optional drive allowlist applies to job.run.
+func TestEngineJobRunScopeAndDrive(t *testing.T) {
+	e := NewEngine()
+	// Missing scope
+	d := e.Evaluate(Request{
+		AgentID: "a1",
+		Scopes:  []string{"drive.read"},
+		Action:  ActionJobRun,
+		DriveID: "d1",
+	})
+	if d.Allow {
+		t.Fatal("job.run without scope should deny")
+	}
+	// Scope ok, all drives
+	d = e.Evaluate(Request{
+		AgentID: "a1",
+		Scopes:  []string{"job.run"},
+		Action:  ActionJobRun,
+		DriveID: "d1",
+	})
+	if !d.Allow {
+		t.Fatal(d.Reason)
+	}
+	// Scope ok, drive not in allowlist
+	d = e.Evaluate(Request{
+		AgentID:         "a1",
+		Scopes:          []string{"job.run"},
+		Action:          ActionJobRun,
+		DriveID:         "d-other",
+		AllowedDriveIDs: []string{"d1"},
+	})
+	if d.Allow {
+		t.Fatal("drive not allowed should deny")
+	}
+	// Scope + allowed drive
+	d = e.Evaluate(Request{
+		AgentID:         "a1",
+		Scopes:          []string{"job.run"},
+		Action:          ActionJobRun,
+		DriveID:         "d1",
+		AllowedDriveIDs: []string{"d1"},
+	})
+	if !d.Allow {
+		t.Fatal(d.Reason)
+	}
+	// Humans skip agent scope checks
+	d = e.Evaluate(Request{Action: ActionJobRun, DriveID: "d1"})
+	if !d.Allow {
+		t.Fatal(d.Reason)
+	}
+}

@@ -2,7 +2,8 @@
 
 > **主线收口后的唯一默认演示剧本。**  
 > 决策：[D-003](./DECISIONS.md) · 进度：[PROGRESS.md](./PROGRESS.md)  
-> 自动化：`make smoke-golden` → `scripts/smoke-golden.sh`
+> 自动化：`make smoke-golden` → `scripts/smoke-golden.sh`（无活桶）  
+> 活桶扩展：`make smoke-golden-minio` → `scripts/smoke-golden-minio.sh`
 
 ## 产品一句话
 
@@ -31,8 +32,8 @@
 ⑦ healthz / readyz 健康
 ```
 
-本仓库 **不要求** 黄金路径里起真 MinIO 写对象；P0 契约在 **无活桶** 时仍可验 session/manifest。  
-真桶联调见 `make smoke-minio` / [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md)。
+本仓库 **默认黄金路径不要求** 起真 MinIO 写对象；P0 契约在 **无活桶** 时仍可验 session/manifest。  
+需要「真用户路径」时用下方 **Live MinIO path**；细粒度清单/snapshot 另见 `make smoke-minio` / [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md)。
 
 ---
 
@@ -56,7 +57,60 @@ make smoke-golden
 | `make smoke` / `smoke-p0` | Provider → Drive → Binding → Session |
 | `make smoke-quickstart-agent` | Agent + MCP + Job |
 | `make smoke-job` | Job 全量 ops（**已 freeze，不必当主线**） |
-| `make smoke-minio` | 活 MinIO 对象清单（可选） |
+| `make smoke-minio` | 活 MinIO 对象清单 + snapshot（可选） |
+| `make smoke-golden-minio` | 活 MinIO 黄金路径：session + inventory + BYOC job（可选） |
+
+---
+
+## Live MinIO path
+
+扩展默认黄金路径：在 **真实 MinIO 桶** 上走完 register → provider → drive → binding/session → **GET objects（硬断言）** → agent → BYOC job create/claim/complete。
+
+**活契约边界（诚实说明）：**
+
+| 本 smoke 验什么 | 不验什么 |
+|-----------------|----------|
+| 控制面登记 + STS session/manifest | hubd 真 FUSE 挂载 |
+| `GET /v1/drives/{id}/objects` 看到 seed 对象 | rclone 进程 / 本地 mount 点 |
+| BYOC job 队列契约（create → claim → complete） | 平台 runner 池（D-001 禁止） |
+
+`hubd` **没有** dry/check 模式可在无 FUSE 时代替挂载；启动即检查 rclone，mount 需本机 FUSE/WinFsp。真挂载人工步骤：
+
+```bash
+# 1) 先跑 smoke 或手建 provider/drive/binding，记下 API + human token
+export AI_CLOUDHUB_API=http://127.0.0.1:<port>
+export AI_CLOUDHUB_TOKEN=<human-jwt>
+export AI_CLOUDHUB_DEVICE_ID=laptop-1
+# 2) 本机已装 rclone（+ macFUSE / WinFsp / Linux FUSE）
+./.bin/hubd
+```
+
+自动化（推荐）：
+
+```bash
+export CGO_ENABLED=0
+make smoke-golden-minio
+# 期望末行：OK golden-minio …
+# 若本机无法拉起 MinIO：SKIP: … 且 exit 0
+# 强制失败：AI_CLOUDHUB_SMOKE_MINIO_REQUIRE=1 make smoke-golden-minio
+```
+
+等价：
+
+```bash
+./scripts/smoke-golden-minio.sh
+# 或接已有 MinIO：
+MINIO_ENDPOINT=http://127.0.0.1:9000 ./scripts/smoke-golden-minio.sh
+```
+
+| 行为 | 说明 |
+|------|------|
+| MinIO 探测 | 优先 `MINIO_ENDPOINT` / `127.0.0.1:9000`，否则下载官方 binary 到 `.bin/minio-server` 并临时起服 |
+| 写对象 | `go run ./scripts/minio-seed`（EnsureBucket + Put） |
+| soft-skip | 起不了 MinIO → `SKIP: …` exit **0**（不拖垮 `smoke-all`） |
+| hard require | `AI_CLOUDHUB_SMOKE_MINIO_REQUIRE=1` 时起不了则 exit **1** |
+
+**不在 `make smoke-all` 里硬依赖**（与 `smoke-minio` 同策略：可选 live 目标）。
 
 ---
 
@@ -90,4 +144,4 @@ make smoke-golden
 
 ## 版本
 
-Verified against binary **0.2.51** (`internal/version`).
+Verified against binary **0.2.54** (`internal/version`). Offline path: `make smoke-golden`. Live MinIO: `make smoke-golden-minio`.

@@ -37,6 +37,7 @@ When tempted to add another Job ops admin button without a customer incident, **
 | `make smoke-sts` | offline multi-cloud STS path + `go test ./internal/sts` |
 | `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
 | `make smoke-golden` | **Product golden path** (D-003 / `docs/GOLDEN-PATH.md`) |
+| `make smoke-golden-minio` | Live MinIO golden path (optional soft-skip) |
 | `make prod-preflight` | production env checklist (no API required) |
 | `make smoke-all` | above smokes **including** golden + stage-c + byoc + sts (**not** minio) |
 | Windows dry-check | `scripts/windows/smoke-windows.ps1` + `install-deps.ps1 -CheckOnly` |
@@ -72,7 +73,7 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 - Golden path (mainline demo): `docs/GOLDEN-PATH.md`
 - Limits: `docs/KNOWN_LIMITATIONS.md`
 - Production cutover: `docs/PRODUCTION.md` + `make prod-preflight`
-- Stage C: `docs/STAGE-C.md` · connectors: `docs/CONNECTORS.md`
+- Stage C: `docs/STAGE-C.md` · Memory scope: `docs/STAGE-C-SCOPE-MEMORY.md` · connectors: `docs/CONNECTORS.md`
 - OpenAPI: `docs/openapi.yaml` (includes Stage C paths)
 - MCP tools: `docs/MCP.md`
 

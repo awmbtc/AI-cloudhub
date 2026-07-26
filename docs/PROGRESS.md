@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.51 主线收口（D-003）
+## 总览：v0.2.54（D-003 三类开工：安全 / 真路径 / Stage C 立项）
 
 | 阶段 | 状态 |
 |------|------|
@@ -528,3 +528,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] [GOLDEN-PATH.md](./GOLDEN-PATH.md) + `make smoke-golden` / `scripts/smoke-golden.sh`
 - [x] PROGRESS / README / AGENTS 对齐收口口径
 - [x] 版本钉 **0.2.51** + tag
+
+### 本波（v0.2.52–v0.2.54 · 三 agent 并行）
+
+- [x] **0.2.52** Job 安全：跨用户隔离 / job.run / drive 白名单 / output 硬顶 / webhook 密钥不泄露
+- [x] **0.2.53** 真 MinIO 黄金路径：`make smoke-golden-minio`（session + objects + BYOC job）
+- [x] **0.2.54** Stage C Memory 立项 + TTL/delete/k 限制：`docs/STAGE-C-SCOPE-MEMORY.md`
+- [x] tags **v0.2.52** … **v0.2.54**；版本钉 **0.2.54**
+

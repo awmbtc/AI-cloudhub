@@ -113,11 +113,34 @@ func (s *Server) routeMemorySub(w http.ResponseWriter, r *http.Request, userID, 
 		}
 		writeJSON(w, http.StatusOK, e)
 	case http.MethodDelete:
+		// Ownership check before delete (agents only their agent_id rows).
+		e, err := s.memory.Get(userID, id)
+		if err != nil {
+			// Fall through to store delete for already-expired / race: still 404 if missing.
+			if err2 := s.memory.Delete(userID, id); err2 != nil {
+				writeErr(w, http.StatusNotFound, err2.Error())
+				return
+			}
+			s.auth.Audit(userID, "memory.delete", id, "expired_or_missing_get")
+			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+			return
+		}
+		if pr := principalFrom(r); pr != nil && pr.AgentID != "" && e.AgentID != "" && e.AgentID != pr.AgentID {
+			writeErr(w, http.StatusForbidden, "memory not owned by agent")
+			return
+		}
 		if err := s.memory.Delete(userID, id); err != nil {
 			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "memory.delete", id, "")
+		s.auth.Audit(userID, "memory.delete", id, e.Layer)
+		if s.lineage != nil {
+			actor := "user:" + userID
+			if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+				actor = "agent:" + pr.AgentID
+			}
+			_, _ = s.lineage.Record(userID, actor, "memory.delete", "memory:"+id, "", e.Layer)
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")

@@ -9,7 +9,7 @@
 |------|----------------|------------|----------------|
 | **Data Lineage** | `POST/GET /v1/lineage` | Append-only events (actor, action, entity) | Full warehouse lineage / OpenLineage SaaS |
 | **Git/DB/SaaS** | `GET /v1/connectors/catalog`, `/v1/connectors*` | First-class **types + bindings** | Full sync engines / OAuth hosts |
-| **Vector Memory** | `POST /v1/memory` + `embedding`, `POST /v1/memory/search` | Client-supplied vectors + cosine top-k | Hosted embedding model |
+| **Vector Memory** | `POST/GET/DELETE /v1/memory*`, `POST /v1/memory/search` | Client-supplied vectors + cosine top-k; optional `ttl_sec`; layer list; k≤50 | Hosted embedding model / vector SaaS |
 | **Identity Graph** | `POST/GET /v1/graph` | Subject–relation–object edges | Enterprise IdP graph product |
 | **Payment Marketplace** | `price_cents`, `POST …/checkout`, `/v1/purchases`, `…/pay` | Free + pending/paid **stub** | PCI Stripe production integration |
 | **Multi-process deploy** | `deploy/docker-compose.modular.yml` | **2× api** + edge LB + shared PG/Redis | Per-domain microservices as default |
@@ -35,11 +35,13 @@ curl -sS -X POST $API/v1/graph -H "Authorization: Bearer $TOK" \
 curl -sS -X POST $API/v1/connectors -H "Authorization: Bearer $TOK" \
   -d '{"type":"git","name":"app-repo","config":{"remote_url":"https://github.com/org/app"}}'
 
-# Vector memory (client embeds text externally)
+# Vector memory (client embeds text externally) — see STAGE-C-SCOPE-MEMORY.md
 curl -sS -X POST $API/v1/memory -H "Authorization: Bearer $TOK" \
-  -d '{"layer":"semantic","content":"prefers r2","embedding":[0.1,0.2,0.3]}'
+  -d '{"layer":"semantic","content":"prefers r2","embedding":[0.1,0.2,0.3],"ttl_sec":3600}'
 curl -sS -X POST $API/v1/memory/search -H "Authorization: Bearer $TOK" \
-  -d '{"query":[0.1,0.2,0.3],"k":5}'
+  -d '{"query":[0.1,0.2,0.3],"k":5,"layer":"semantic"}'
+curl -sS "$API/v1/memory?layer=semantic" -H "Authorization: Bearer $TOK"
+# DELETE /v1/memory/{id}
 
 # Paid listing checkout (stub)
 curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
@@ -59,9 +61,14 @@ curl -sS -X POST $API/v1/marketplace -H "Authorization: Bearer $TOK" \
 - OpenAPI: Stage C paths in [openapi.yaml](./openapi.yaml)  
 - Regression: `make smoke-stage-c`
 
+## Memory deepen scope (D-003 P2)
+
+Written scope: [STAGE-C-SCOPE-MEMORY.md](./STAGE-C-SCOPE-MEMORY.md) · product notes [MEMORY.md](./MEMORY.md).
+
 ## Still out of scope
 
 - Platform multi-tenant **runner pool** (D-001)  
 - Splitting every package into a separate default microservice  
+- Hosted embedding / multi-tenant vector DB SaaS  
 - PCI card data on the control plane  
 - Control-plane Git clone with stored deploy keys (use runner env instead)  

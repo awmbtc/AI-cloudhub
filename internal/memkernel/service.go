@@ -20,6 +20,16 @@ const (
 	LayerSemantic = "semantic" // durable facts / preferences
 )
 
+// Limits (honest; reject rather than silent truncate where noted).
+const (
+	MaxContentBytes   = 64 * 1024 // 64 KiB
+	MaxEmbeddingDims  = 4096
+	MaxSearchK        = 50
+	DefaultSearchK    = 10
+	MaxListLimit      = 500
+	DefaultListLimit  = 100
+)
+
 // Service is the Memory Kernel API surface (module boundary for future split).
 type Service struct {
 	st store.Store
@@ -38,6 +48,8 @@ type PutInput struct {
 	MetaJSON  []byte
 	Embedding []float32     // optional vector (client-provided); stored as JSON
 	TTL       time.Duration // 0 = no expiry
+	// ExpiresAt, if set (non-zero) and TTL==0, is stored as absolute expiry.
+	ExpiresAt time.Time
 }
 
 // Put stores a memory for userID (and optional agent).
@@ -58,8 +70,11 @@ func (s *Service) Put(userID string, in PutInput) (*store.MemoryEntry, error) {
 	if content == "" {
 		return nil, fmt.Errorf("content required")
 	}
-	if len(content) > 64*1024 {
-		return nil, fmt.Errorf("content too large (max 64KiB)")
+	if len(content) > MaxContentBytes {
+		return nil, fmt.Errorf("content too large (max %d bytes)", MaxContentBytes)
+	}
+	if len(in.MetaJSON) > MaxContentBytes {
+		return nil, fmt.Errorf("meta too large (max %d bytes)", MaxContentBytes)
 	}
 	e := &store.MemoryEntry{
 		ID:        uuid.NewString(),
@@ -73,8 +88,8 @@ func (s *Service) Put(userID string, in PutInput) (*store.MemoryEntry, error) {
 		CreatedAt: time.Now().UTC(),
 	}
 	if len(in.Embedding) > 0 {
-		if len(in.Embedding) > 4096 {
-			return nil, fmt.Errorf("embedding too large (max 4096 dims)")
+		if len(in.Embedding) > MaxEmbeddingDims {
+			return nil, fmt.Errorf("embedding too large (max %d dims)", MaxEmbeddingDims)
 		}
 		b, err := json.Marshal(in.Embedding)
 		if err != nil {
@@ -84,6 +99,8 @@ func (s *Service) Put(userID string, in PutInput) (*store.MemoryEntry, error) {
 	}
 	if in.TTL > 0 {
 		e.ExpiresAt = time.Now().UTC().Add(in.TTL)
+	} else if !in.ExpiresAt.IsZero() {
+		e.ExpiresAt = in.ExpiresAt.UTC()
 	}
 	if err := s.st.CreateMemory(e); err != nil {
 		return nil, err
@@ -99,19 +116,29 @@ type SearchHit struct {
 
 // SearchVector finds top-k memories by cosine similarity (client provides query vector).
 // Entries without embeddings are skipped. This is NOT a hosted embedding model.
+// k must be in 1..MaxSearchK; omit/0 → DefaultSearchK. k > MaxSearchK errors (honest limit).
 func (s *Service) SearchVector(userID string, query []float32, k int, layer string) ([]SearchHit, error) {
 	if len(query) == 0 {
 		return nil, fmt.Errorf("query embedding required")
 	}
-	if k <= 0 || k > 50 {
-		k = 10
+	if len(query) > MaxEmbeddingDims {
+		return nil, fmt.Errorf("query embedding too large (max %d dims)", MaxEmbeddingDims)
 	}
-	list, err := s.List(userID, store.MemoryFilter{Layer: layer, Limit: 500})
+	if k <= 0 {
+		k = DefaultSearchK
+	}
+	if k > MaxSearchK {
+		return nil, fmt.Errorf("k too large (max %d)", MaxSearchK)
+	}
+	list, err := s.List(userID, store.MemoryFilter{Layer: layer, Limit: MaxListLimit})
 	if err != nil {
 		return nil, err
 	}
 	var hits []SearchHit
 	for _, e := range list {
+		if expired(e) {
+			continue
+		}
 		if len(e.EmbeddingJSON) == 0 {
 			continue
 		}
@@ -153,15 +180,47 @@ func cosine(a, b []float32) float64 {
 	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
-// Get returns one entry owned by userID.
-func (s *Service) Get(userID, id string) (*store.MemoryEntry, error) {
-	return s.st.GetMemory(userID, id)
+func expired(e *store.MemoryEntry) bool {
+	if e == nil || e.ExpiresAt.IsZero() {
+		return false
+	}
+	return !e.ExpiresAt.After(time.Now().UTC())
 }
 
-// List filters memories for the user.
+// Get returns one non-expired entry owned by userID.
+func (s *Service) Get(userID, id string) (*store.MemoryEntry, error) {
+	e, err := s.st.GetMemory(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if expired(e) {
+		return nil, fmt.Errorf("memory not found")
+	}
+	return e, nil
+}
+
+// List filters memories for the user (store already skips expired rows).
 func (s *Service) List(userID string, f store.MemoryFilter) ([]*store.MemoryEntry, error) {
 	f.UserID = userID
-	return s.st.ListMemory(f)
+	if f.Limit <= 0 {
+		f.Limit = DefaultListLimit
+	}
+	if f.Limit > MaxListLimit {
+		f.Limit = MaxListLimit
+	}
+	list, err := s.st.ListMemory(f)
+	if err != nil {
+		return nil, err
+	}
+	// Defense in depth: drop any expired that slipped through.
+	out := list[:0]
+	for _, e := range list {
+		if expired(e) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 // Delete removes an entry.

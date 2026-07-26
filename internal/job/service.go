@@ -1578,6 +1578,10 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID,
 // DefaultMaxJobOutput is the default cap (bytes) for stdout/stderr on complete.
 const DefaultMaxJobOutput = 8192
 
+// HardMaxJobOutput is the absolute ceiling for stored stdout/stderr (bytes),
+// even when AI_CLOUDHUB_JOB_OUTPUT_MAX is set higher. Prevents store abuse.
+const HardMaxJobOutput = 256 * 1024
+
 // CompleteInput is the optional structured result of a BYOC runner complete.
 type CompleteInput struct {
 	OK              bool
@@ -1651,8 +1655,8 @@ func jobOutputMax() int {
 	if err != nil || n <= 0 {
 		return DefaultMaxJobOutput
 	}
-	if n > 256*1024 {
-		return 256 * 1024 // hard ceiling
+	if n > HardMaxJobOutput {
+		return HardMaxJobOutput
 	}
 	return n
 }

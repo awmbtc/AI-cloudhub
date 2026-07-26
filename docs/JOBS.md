@@ -176,6 +176,20 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 - Agent tokens cannot call admin APIs.
 - Audit: `admin.jobs.*` / `admin.job_webhooks.*`.
 
+## Security
+
+BYOC job APIs enforce the following (control-plane; D-003 allows security work only):
+
+| Guarantee | How |
+|-----------|-----|
+| **Cross-user isolation** | All user routes pass `user_id` from the bearer principal into store ops (`GetJob` / `ClaimPendingJob` / `UpdateJob`). User B cannot get, list, claim, complete, heartbeat, or cancel user A's jobs (wrong owner → not found / no claimable). Admin routes are separate and human-admin only. |
+| **Agent scope `job.run`** | Agents need scope `job.run` for create / claim / complete / heartbeat / cancel (and agent list/get/stats). Humans are unrestricted at the scope layer. |
+| **Agent drive allowlist** | When an agent has non-empty `allowed_drive_ids`, create/claim/complete/heartbeat/cancel/get for that drive must pass policy `job.run` + drive check. Claim-next skips (and releases) denied drives so jobs are not stuck running. |
+| **Webhook secret safety** | `AI_CLOUDHUB_JOB_WEBHOOK_SECRET` is **env-only**. Used solely to sign outbound deliveries (`X-AI-Cloudhub-Signature`). Never stored in the outbox row, never returned by `GET /v1/admin/job-webhooks` (list omits payload) or get/retry (payload is the event envelope: `event_id`, `event`, `occurred_at`, `job`). |
+| **Stdout/stderr caps** | Complete stores tails only: default `AI_CLOUDHUB_JOB_OUTPUT_MAX=8192`, hard ceiling **256 KiB** per stream (`HardMaxJobOutput`). Truncation sets `stdout_truncated` / `stderr_truncated`. HTTP body also capped by `AI_CLOUDHUB_MAX_BODY_BYTES` (default 1 MiB). |
+
+Related: agent tokens cannot call admin APIs; see [POLICY.md](./POLICY.md) for `job.run` and drive allowlists.
+
 ## Honesty
 
 - Not a platform scheduler or multi-tenant runner fleet (D-001).

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.2.54
+
+Stage C Memory vertical (scoped project):
+
+- `docs/STAGE-C-SCOPE-MEMORY.md` written scope (no hosted embedding)
+- Memory TTL (`ttl_sec`), size/dim guards, search k honesty (max 50)
+- DELETE ownership + audit/lineage; smoke-stage-c extended
+
+## v0.2.53
+
+Live MinIO golden path (real-user BYOS demo):
+
+- `scripts/smoke-golden-minio.sh` + `make smoke-golden-minio` (soft-skip; REQUIRE=1 hard)
+- `docs/GOLDEN-PATH.md` Live MinIO section; session + objects inventory + BYOC job
+
+## v0.2.52
+
+Job security hardening (D-003 allowed: security only):
+
+- Cross-user isolation tests (service + HTTP)
+- Agent `job.run` + drive allowlist HTTP tests
+- Hard stdout/stderr ceiling 256 KiB; webhook secret non-leak tests
+- `docs/JOBS.md` ## Security
+
 ## v0.2.51
 
 Mainline close-out (not more Job ops):

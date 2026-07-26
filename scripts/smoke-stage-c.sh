@@ -36,17 +36,62 @@ echo "== modules =="
 "${CURL[@]}" "$API/v1/modules" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["deployment"]=="monolith"'
 
 echo "== memory + vector search =="
-"${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
-  -d '{"layer":"semantic","content":"likes r2","embedding":[1,0,0]}' >/dev/null
+MEM_SEM=$("${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"layer":"semantic","content":"likes r2","embedding":[1,0,0]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
 "${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
   -d '{"layer":"semantic","content":"likes cos","embedding":[0,1,0]}' >/dev/null
+"${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"layer":"working","content":"scratch note","key":"tmp"}' >/dev/null
+"${CURL[@]}" "$API/v1/memory?layer=semantic&limit=10" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert all(i.get("layer")=="semantic" for i in d["items"]), d
+assert len(d["items"])>=2
+print("layer list ok", len(d["items"]))
+'
 "${CURL[@]}" -X POST "$API/v1/memory/search" "${AUTH[@]}" -H 'Content-Type: application/json' \
-  -d '{"query":[0.9,0.1,0],"k":2}' | python3 -c '
+  -d '{"query":[0.9,0.1,0],"k":2,"layer":"semantic"}' | python3 -c '
 import sys,json
 d=json.load(sys.stdin)
 assert len(d["hits"])>=1
 assert d["hits"][0]["score"] > 0.5
 print("vector search ok score", d["hits"][0]["score"])
+'
+# k honesty: oversize → 400
+CODE=$("${CURL[@]}" -o /tmp/aihub-mem-k.json -w '%{http_code}' -X POST "$API/v1/memory/search" "${AUTH[@]}" \
+  -H 'Content-Type: application/json' -d '{"query":[1,0,0],"k":99}')
+test "$CODE" = "400" || { echo "expected k=99 → 400 got $CODE"; cat /tmp/aihub-mem-k.json; exit 1; }
+echo "search k limit ok"
+
+echo "== memory delete =="
+"${CURL[@]}" -X DELETE "$API/v1/memory/$MEM_SEM" "${AUTH[@]}" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("status")=="deleted", d
+print("delete ok")
+'
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/memory/$MEM_SEM" "${AUTH[@]}")
+test "$CODE" = "404" || { echo "expected get after delete → 404 got $CODE"; exit 1; }
+
+echo "== memory TTL expiry =="
+EXP_ID=$("${CURL[@]}" -X POST "$API/v1/memory" "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"layer":"working","content":"short lived","ttl_sec":1,"embedding":[0,0,1]}' \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("expires_at"), d; print(d["id"])')
+# still visible immediately
+"${CURL[@]}" "$API/v1/memory/$EXP_ID" "${AUTH[@]}" | python3 -c '
+import sys,json; d=json.load(sys.stdin); assert d.get("content")=="short lived"
+'
+sleep 1.2
+CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/v1/memory/$EXP_ID" "${AUTH[@]}")
+test "$CODE" = "404" || { echo "expected expired get → 404 got $CODE"; exit 1; }
+export EXP_ID
+"${CURL[@]}" "$API/v1/memory?layer=working&limit=50" "${AUTH[@]}" | python3 -c '
+import sys,json,os
+eid=os.environ["EXP_ID"]
+d=json.load(sys.stdin)
+assert all(i.get("id")!=eid for i in d["items"]), d
+print("ttl list skip ok")
 '
 
 echo "== lineage + graph =="

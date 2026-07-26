@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1445,5 +1446,175 @@ func TestClaimNextFilteredAllDenied(t *testing.T) {
 	list := svc.ListPending(uid, "")
 	if len(list) != 1 || list[0].Status != StatusPending {
 		t.Fatalf("pending after all-deny: %+v", list)
+	}
+}
+
+// TestCrossUserJobIsolation ensures user B cannot get/claim/complete/heartbeat/cancel user A's job.
+func TestCrossUserJobIsolation(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	owner := "user-a"
+	other := "user-b"
+	j, _, err := svc.Create(owner, CreateInput{DriveID: "d-a", Command: []string{"echo", "private"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Get
+	if _, err := svc.Get(other, j.ID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Get by other: %v", err)
+	}
+	// Claim by id
+	if _, err := svc.Claim(other, j.ID, "evil", "r"); err == nil {
+		t.Fatal("Claim by other should fail")
+	}
+	// ClaimNext must not surface foreign jobs
+	if _, err := svc.ClaimNext(other, "evil", "r", ""); err == nil {
+		t.Fatal("ClaimNext by other should find no jobs")
+	}
+	// Owner claims so heartbeat/complete paths are live
+	if _, err := svc.Claim(owner, j.ID, "owner-agent", "runner-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Heartbeat(other, j.ID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Heartbeat by other: %v", err)
+	}
+	if _, err := svc.Complete(other, j.ID, CompleteInput{OK: true, Stdout: "pwned"}); err == nil {
+		t.Fatal("Complete by other should fail")
+	}
+	if _, err := svc.Cancel(other, j.ID); err == nil {
+		t.Fatal("Cancel by other should fail")
+	}
+	// Owner job still running and unmutated by other
+	got, err := svc.Get(owner, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusRunning {
+		t.Fatalf("status %s want running", got.Status)
+	}
+	if got.Stdout != "" {
+		t.Fatalf("stdout leaked/mutated: %q", got.Stdout)
+	}
+	// Owner list never includes other's jobs; other list empty
+	if _, _, err := svc.Create(other, CreateInput{DriveID: "d-b", Command: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	ownerList, _ := svc.List(owner, ListFilter{Limit: 50})
+	for _, item := range ownerList {
+		if item.UserID != owner {
+			t.Fatalf("owner list leaked foreign user_id=%s", item.UserID)
+		}
+	}
+	otherList, _ := svc.List(other, ListFilter{Limit: 50})
+	for _, item := range otherList {
+		if item.UserID != other {
+			t.Fatalf("other list leaked foreign user_id=%s", item.UserID)
+		}
+		if item.ID == j.ID {
+			t.Fatal("other list includes owner job")
+		}
+	}
+}
+
+// TestJobOutputHardCeiling enforces HardMaxJobOutput even when env asks for more.
+func TestJobOutputHardCeiling(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-hardcap"
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Request more than hard ceiling; stored size must still be HardMaxJobOutput.
+	t.Setenv("AI_CLOUDHUB_JOB_OUTPUT_MAX", strconv.Itoa(HardMaxJobOutput*2))
+	big := strings.Repeat("Z", HardMaxJobOutput+4096)
+	done, err := svc.Complete(uid, j.ID, CompleteInput{
+		OK: true, Stdout: big, Stderr: "prefix-" + big,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(done.Stdout) != HardMaxJobOutput {
+		t.Fatalf("stdout len=%d want %d", len(done.Stdout), HardMaxJobOutput)
+	}
+	if len(done.Stderr) != HardMaxJobOutput {
+		t.Fatalf("stderr len=%d want %d", len(done.Stderr), HardMaxJobOutput)
+	}
+	if !done.StdoutTruncated || !done.StderrTruncated {
+		t.Fatalf("truncated flags: out=%v err=%v", done.StdoutTruncated, done.StderrTruncated)
+	}
+	if !strings.HasSuffix(done.Stdout, "ZZZZ") {
+		t.Fatalf("stdout should keep tail")
+	}
+}
+
+// TestWebhookViewsNeverLeakSecret ensures admin list/get JSON never includes the HMAC secret.
+// Secret lives only in AI_CLOUDHUB_JOB_WEBHOOK_SECRET (env); payload is the event envelope only.
+func TestWebhookViewsNeverLeakSecret(t *testing.T) {
+	const secret = "whsec_must_not_appear_in_api"
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_URL", "http://127.0.0.1:9/no-listen")
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET", secret)
+	// Avoid background delivery races; we only care about stored views.
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS", "1")
+
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	uid := "u-sec"
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, "a", "r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Complete(uid, j.ID, CompleteInput{OK: true, Stdout: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	// Wait briefly for outbox row (notify is sync enqueue).
+	deadline := time.Now().Add(2 * time.Second)
+	var rows []*WebhookOutboxView
+	for time.Now().Before(deadline) {
+		rows = svc.AdminListWebhooks(AdminWebhookFilter{JobID: j.ID, Limit: 10})
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected outbox row")
+	}
+	listJSON, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(listJSON), secret) {
+		t.Fatalf("list leaked secret: %s", listJSON)
+	}
+	// List omits payload
+	if strings.Contains(string(listJSON), `"payload"`) {
+		t.Fatalf("list should omit payload: %s", listJSON)
+	}
+	got, err := svc.AdminGetWebhook(rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(getJSON), secret) {
+		t.Fatalf("get leaked secret: %s", getJSON)
+	}
+	// Payload may include job fields but never the signing secret key/value.
+	if len(got.Payload) == 0 {
+		t.Fatal("get should include payload")
+	}
+	if strings.Contains(string(got.Payload), secret) {
+		t.Fatalf("payload leaked secret: %s", got.Payload)
+	}
+	if strings.Contains(strings.ToLower(string(getJSON)), "webhook_secret") ||
+		strings.Contains(string(getJSON), "AI_CLOUDHUB_JOB_WEBHOOK_SECRET") {
+		t.Fatalf("response referenced secret env name: %s", getJSON)
 	}
 }
