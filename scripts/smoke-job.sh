@@ -317,6 +317,21 @@ d=json.load(sys.stdin)
 assert "items" in d and d.get("count",0)>=1, d
 print("admin list count", d["count"])
 '
+# keyset cursor: page with limit=1 then fetch next
+PAGE1=$("${CURL[@]}" "$API/v1/admin/jobs?limit=1" -H "Authorization: Bearer $TOK")
+CUR=$(echo "$PAGE1" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert len(d["items"])==1, d
+c=d.get("next_cursor") or ""
+assert c, "expected next_cursor with limit=1 and multiple jobs"
+print(c)
+')
+ID1=$(echo "$PAGE1" | python3 -c 'import sys,json; print(json.load(sys.stdin)["items"][0]["id"])')
+ID2=$("${CURL[@]}" "$API/v1/admin/jobs?limit=1&cursor=$CUR" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d["items"])==1, d; print(d["items"][0]["id"])')
+test "$ID1" != "$ID2"
+echo "admin cursor ok page1=$ID1 page2=$ID2"
 "${CURL[@]}" "$API/v1/admin/jobs/stats" -H "Authorization: Bearer $TOK" \
   | python3 -c '
 import sys,json

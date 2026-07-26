@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.19
+
+Admin jobs list keyset pagination (`cursor` / `next_cursor`).
+
+### Admin / Jobs
+- `GET /v1/admin/jobs` supports opaque `cursor` query; response may include `next_cursor`
+- Order: `created_at DESC, id DESC` (stable pages across memory/sqlite/postgres)
+- `limit` still default 100, max 500; service peeks limit+1 to detect next page
+
 ## v0.2.18
 
 Admin force-release running jobs to pending.

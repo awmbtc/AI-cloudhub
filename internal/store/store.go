@@ -166,10 +166,14 @@ type Job struct {
 }
 
 // AdminJobFilter filters cross-user job listings (admin only).
+// Keyset pagination: order created_at DESC, id DESC.
+// When CursorCreated is set, returns rows strictly older than (CursorCreated, CursorID).
 type AdminJobFilter struct {
-	UserID string // empty = all users
-	Status string // empty = all statuses
-	Limit  int    // 0 = default 100; capped at 500
+	UserID        string    // empty = all users
+	Status        string    // empty = all statuses
+	Limit         int       // 0 = default 100; capped at 501 (service peeks limit+1 up to 500)
+	CursorCreated time.Time // zero = no cursor
+	CursorID      string    // used with CursorCreated for stable keyset
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).

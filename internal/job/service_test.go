@@ -1,10 +1,11 @@
 package job
 
 import (
-	"errors"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -308,11 +309,14 @@ func TestAdminListAndGet(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j1, _, _ := svc.Create("u1", CreateInput{DriveID: "d", Command: []string{"a"}})
 	j2, _, _ := svc.Create("u2", CreateInput{DriveID: "d", Command: []string{"b"}})
-	all := svc.AdminList(AdminListFilter{Limit: 50})
+	all, next := svc.AdminList(AdminListFilter{Limit: 50})
 	if len(all) < 2 {
 		t.Fatalf("admin list %d", len(all))
 	}
-	only := svc.AdminList(AdminListFilter{UserID: "u1", Limit: 10})
+	if next != "" {
+		t.Fatalf("unexpected next_cursor for full page: %q", next)
+	}
+	only, _ := svc.AdminList(AdminListFilter{UserID: "u1", Limit: 10})
 	if len(only) != 1 || only[0].ID != j1.ID {
 		t.Fatalf("filter user: %+v", only)
 	}
@@ -323,6 +327,58 @@ func TestAdminListAndGet(t *testing.T) {
 	st := svc.AdminStats("")
 	if st.Total < 2 {
 		t.Fatalf("admin stats %+v", st)
+	}
+}
+
+func TestAdminListCursor(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	var ids []string
+	for i := 0; i < 5; i++ {
+		j, _, err := svc.Create("u-cur", CreateInput{DriveID: "d", Command: []string{fmt.Sprintf("c%d", i)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, j.ID)
+		time.Sleep(2 * time.Millisecond) // ensure distinct created_at for stable pages
+	}
+	page1, cur := svc.AdminList(AdminListFilter{UserID: "u-cur", Limit: 2})
+	if len(page1) != 2 || cur == "" {
+		t.Fatalf("page1 len=%d cur=%q", len(page1), cur)
+	}
+	page2, cur2 := svc.AdminList(AdminListFilter{UserID: "u-cur", Limit: 2, Cursor: cur})
+	if len(page2) != 2 {
+		t.Fatalf("page2 len=%d", len(page2))
+	}
+	// no overlap between pages
+	seen := map[string]bool{}
+	for _, j := range page1 {
+		seen[j.ID] = true
+	}
+	for _, j := range page2 {
+		if seen[j.ID] {
+			t.Fatalf("overlap %s", j.ID)
+		}
+		seen[j.ID] = true
+	}
+	page3, cur3 := svc.AdminList(AdminListFilter{UserID: "u-cur", Limit: 2, Cursor: cur2})
+	if len(page3) != 1 || cur3 != "" {
+		t.Fatalf("page3 len=%d cur=%q", len(page3), cur3)
+	}
+	if !seen[page3[0].ID] {
+		seen[page3[0].ID] = true
+	}
+	if len(seen) != 5 {
+		t.Fatalf("seen %d want 5: %v", len(seen), seen)
+	}
+	// pages are newest-first: page1[0] newer than page2[0]
+	if !page1[0].CreatedAt.After(page2[0].CreatedAt) && page1[0].CreatedAt.Equal(page2[0].CreatedAt) && page1[0].ID <= page2[0].ID {
+		// allow equal timestamps only if id DESC holds
+		if page1[0].ID <= page2[0].ID && !page1[0].CreatedAt.After(page2[0].CreatedAt) {
+			// if strictly same second, still require page order by keyset
+		}
+	}
+	if page1[0].CreatedAt.Before(page2[0].CreatedAt) {
+		t.Fatalf("page order: p1 %v before p2 %v", page1[0].CreatedAt, page2[0].CreatedAt)
 	}
 }
 

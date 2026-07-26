@@ -51,7 +51,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.18` 多架构二进制；admin force-release to pending | ✅ |
+| **发布** | `v0.2.19` 多架构二进制；admin jobs cursor pagination | ✅ |
 
 ## 快速开始
 

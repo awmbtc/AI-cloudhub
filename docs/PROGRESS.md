@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.18 已发布；admin force-release 回 pending
+## 总览：v0.2.19 已发布；admin jobs keyset cursor 分页
 
 | 阶段 | 状态 |
 |------|------|
@@ -435,3 +435,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `POST /v1/admin/jobs/{id}/release` → pending（`released: admin: …`）
 - [x] AdminRelease + audit + smoke
 - [x] 版本钉 **0.2.18** + tag
+
+### 本波（admin list cursor）
+
+- [x] `GET /v1/admin/jobs` keyset `cursor` / `next_cursor`（created_at DESC, id DESC）
+- [x] store memory/sqlite/postgres + service encode/decode + smoke
+- [x] 版本钉 **0.2.19** + tag

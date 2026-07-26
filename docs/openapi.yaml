@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.18
+  version: 0.2.19
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1756,7 +1756,8 @@ paths:
       operationId: adminListJobs
       description: |
         Cross-user BYOC job listing. Human admin session required (not agent tokens).
-        `limit` default 100, max 500.
+        `limit` default 100, max 500. Keyset order: `created_at DESC, id DESC`.
+        When more pages exist, `next_cursor` is set; pass as `cursor` for the next page.
       security:
         - bearerAuth: []
       parameters:
@@ -1771,6 +1772,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500 }
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor from a previous `next_cursor`
+          schema: { type: string }
       responses:
         '200':
           description: Job list
@@ -1783,8 +1788,12 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Job' }
                   count: { type: integer }
+                  limit: { type: integer }
                   user_id: { type: string }
                   status: { type: string }
+                  next_cursor:
+                    type: string
+                    description: Present when another page exists
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

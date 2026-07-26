@@ -2353,7 +2353,7 @@ func (s *Server) routeAdminUsers(w http.ResponseWriter, r *http.Request, userID,
 	}
 }
 
-// handleAdminJobsList: GET /v1/admin/jobs?user_id=&status=&limit=
+// handleAdminJobsList: GET /v1/admin/jobs?user_id=&status=&limit=&cursor=
 func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2364,16 +2364,29 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 		UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
 		Status: strings.TrimSpace(r.URL.Query().Get("status")),
 		Limit:  limit,
+		Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
 	}
-	items := s.jobs.AdminList(filt)
-	s.auth.Audit(adminID, "admin.jobs.list", "", fmt.Sprintf("n=%d user_id=%s status=%s", len(items), filt.UserID, filt.Status))
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	items, nextCursor := s.jobs.AdminList(filt)
+	// echo effective limit (service clamps)
+	effLimit := filt.Limit
+	if effLimit <= 0 {
+		effLimit = 100
+	}
+	if effLimit > 500 {
+		effLimit = 500
+	}
+	s.auth.Audit(adminID, "admin.jobs.list", "", fmt.Sprintf("n=%d user_id=%s status=%s has_next=%v", len(items), filt.UserID, filt.Status, nextCursor != ""))
+	resp := map[string]interface{}{
 		"items":   items,
 		"user_id": filt.UserID,
 		"status":  filt.Status,
-		"limit":   filt.Limit,
+		"limit":   effLimit,
 		"count":   len(items),
-	})
+	}
+	if nextCursor != "" {
+		resp["next_cursor"] = nextCursor
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // routeAdminJobsSub: GET stats|/{id} ; POST /{id}/cancel | POST /{id}/release

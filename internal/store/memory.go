@@ -599,8 +599,9 @@ func (m *Memory) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	// 501 allows service-layer limit+1 with user max 500
+	if limit > 501 {
+		limit = 501
 	}
 	var out []*Job
 	for _, j := range m.jobs {
@@ -610,12 +611,22 @@ func (m *Memory) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		if f.Status != "" && j.Status != f.Status {
 			continue
 		}
+		if !f.CursorCreated.IsZero() && f.CursorID != "" {
+			// keyset DESC: keep rows strictly older than (CursorCreated, CursorID)
+			if j.CreatedAt.After(f.CursorCreated) {
+				continue
+			}
+			if j.CreatedAt.Equal(f.CursorCreated) && j.ID >= f.CursorID {
+				continue
+			}
+		}
 		out = append(out, cloneJob(j))
 	}
-	// newest first
+	// newest first: created_at DESC, id DESC
 	for i := 0; i < len(out); i++ {
 		for k := i + 1; k < len(out); k++ {
-			if out[k].CreatedAt.After(out[i].CreatedAt) {
+			if out[k].CreatedAt.After(out[i].CreatedAt) ||
+				(out[k].CreatedAt.Equal(out[i].CreatedAt) && out[k].ID > out[i].ID) {
 				out[i], out[k] = out[k], out[i]
 			}
 		}

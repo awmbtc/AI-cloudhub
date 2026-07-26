@@ -118,7 +118,7 @@ make smoke-mcp
 ## Admin (role=admin, human session only)
 
 ```http
-GET  /v1/admin/jobs?user_id=&status=&limit=
+GET  /v1/admin/jobs?user_id=&status=&limit=&cursor=
 GET  /v1/admin/jobs/stats?user_id=
 GET  /v1/admin/jobs/{id}
 POST /v1/admin/jobs/{id}/cancel
@@ -129,6 +129,7 @@ POST /v1/admin/jobs/{id}/release
 ```
 
 - Cross-user listing; `limit` default 100, max 500.
+- **Keyset pagination**: order `created_at DESC, id DESC`. Response may include `next_cursor`; pass as `?cursor=` for the next page (opaque; invalid cursor is treated as first page).
 - Global `stats` without `user_id` counts **up to 500 newest** jobs only (honest cap).
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.

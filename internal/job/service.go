@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -301,27 +302,81 @@ func (s *Service) Stats(userID string) Stats {
 }
 
 // AdminListFilter filters cross-user admin job listings.
+// Cursor is an opaque keyset token from a previous next_cursor (created_at DESC, id DESC).
 type AdminListFilter struct {
 	UserID string
 	Status string
 	Limit  int
+	Cursor string
 }
 
 // AdminList returns jobs across users (admin). Limit default 100, max 500.
-func (s *Service) AdminList(f AdminListFilter) []*Job {
-	list, err := s.store.ListJobsAdmin(store.AdminJobFilter{
+// When more pages exist, nextCursor is a non-empty opaque token for ?cursor=.
+func (s *Service) AdminList(f AdminListFilter) (items []*Job, nextCursor string) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	sf := store.AdminJobFilter{
 		UserID: strings.TrimSpace(f.UserID),
 		Status: strings.TrimSpace(f.Status),
-		Limit:  f.Limit,
-	})
+		Limit:  limit + 1, // peek one extra for next_cursor
+	}
+	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
+		sf.CursorCreated = ca
+		sf.CursorID = id
+	}
+	list, err := s.store.ListJobsAdmin(sf)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	out := make([]*Job, 0, len(list))
 	for _, sj := range list {
 		out = append(out, jobFromStore(sj))
 	}
-	return out
+	if len(out) > limit {
+		last := out[limit-1]
+		nextCursor = encodeAdminCursor(last.CreatedAt, last.ID)
+		out = out[:limit]
+	}
+	return out, nextCursor
+}
+
+// encodeAdminCursor builds an opaque base64url token: created_at_RFC3339Nano|id
+func encodeAdminCursor(createdAt time.Time, id string) string {
+	raw := createdAt.UTC().Format(time.RFC3339Nano) + "|" + id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeAdminCursor parses opaque cursor; ok=false if empty or invalid (ignored as first page).
+func decodeAdminCursor(cursor string) (time.Time, string, bool) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return time.Time{}, "", false
+	}
+	b, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		// try padded std encoding for hand-rolled clients
+		b, err = base64.URLEncoding.DecodeString(cursor)
+		if err != nil {
+			return time.Time{}, "", false
+		}
+	}
+	parts := strings.SplitN(string(b), "|", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return time.Time{}, "", false
+	}
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, parts[0])
+		if err != nil {
+			return time.Time{}, "", false
+		}
+	}
+	return t.UTC(), parts[1], true
 }
 
 // AdminGet returns any job by id (admin).

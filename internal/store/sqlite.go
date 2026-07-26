@@ -1073,8 +1073,9 @@ func (s *SQLite) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	// 501 allows service-layer limit+1 with user max 500
+	if limit > 501 {
+		limit = 501
 	}
 	q := `SELECT ` + jobSelectCols + ` FROM jobs WHERE 1=1`
 	var args []interface{}
@@ -1086,7 +1087,13 @@ func (s *SQLite) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		q += ` AND status = ?`
 		args = append(args, f.Status)
 	}
-	q += ` ORDER BY created_at DESC LIMIT ?`
+	if !f.CursorCreated.IsZero() && f.CursorID != "" {
+		// keyset: (created_at, id) < cursor in DESC order
+		ca := f.CursorCreated.UTC().Format(time.RFC3339Nano)
+		q += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
+		args = append(args, ca, ca, f.CursorID)
+	}
+	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

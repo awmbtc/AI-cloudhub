@@ -889,8 +889,9 @@ func (p *Postgres) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	// 501 allows service-layer limit+1 with user max 500
+	if limit > 501 {
+		limit = 501
 	}
 	q := `SELECT ` + jobSelectColsPG + ` FROM jobs WHERE 1=1`
 	var args []interface{}
@@ -905,7 +906,14 @@ func (p *Postgres) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		args = append(args, f.Status)
 		n++
 	}
-	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, n)
+	if !f.CursorCreated.IsZero() && f.CursorID != "" {
+		// keyset: (created_at, id) < cursor in DESC order
+		ca := f.CursorCreated.UTC()
+		q += fmt.Sprintf(` AND (created_at < $%d OR (created_at = $%d AND id < $%d))`, n, n+1, n+2)
+		args = append(args, ca, ca, f.CursorID)
+		n += 3
+	}
+	q += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, n)
 	args = append(args, limit)
 	rows, err := p.db.Query(q, args...)
 	if err != nil {
