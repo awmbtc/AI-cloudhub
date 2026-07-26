@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.58
+
+runner check/dry-run (symmetric to hubd, D-001 BYOC):
+
+- `runner check` — host preflight JSON, no token
+- `runner dry-run` — list pending jobs without claim; optional session conf
+- `docs/RUNNER.md` + `make smoke-runner`
+
 ## v0.2.57
 
 hubd host check / dry-run (D-003 real path):

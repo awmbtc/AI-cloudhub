@@ -3,6 +3,8 @@
 // Modes:
 //  1) One-shot: set AI_CLOUDHUB_DRIVE_ID (or BINDING_ID) and optional command after --
 //  2) Worker:   AI_CLOUDHUB_WORKER=1  → poll claim next job, run, complete (still user compute)
+//  3) check:    host preflight (rclone/FUSE); no token — symmetric to hubd check
+//  4) dry-run:  list pending jobs + optional session conf write; no claim/run
 //
 // Never run as a platform multi-tenant mega-pool (docs/DECISIONS.md D-001).
 package main
@@ -20,33 +22,57 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/awmbtc/AI-cloudhub/internal/runtimeenv"
 	"github.com/awmbtc/AI-cloudhub/internal/sandbox"
 )
 
+const (
+	runnerModeRun     = "run"
+	runnerModeCheck   = "check"
+	runnerModeDryRun  = "dry-run"
+	runnerModeHelp    = "help"
+	runnerModeWorker  = "worker"
+	runnerModeMaterialize = "materialize"
+)
+
 func main() {
+	mode, restArgs := parseRunnerMode(os.Args[1:])
+	if mode == runnerModeHelp {
+		printRunnerHelp()
+		return
+	}
+	if mode == runnerModeCheck {
+		os.Exit(runRunnerCheck())
+	}
+
 	api := env("AI_CLOUDHUB_API", "http://127.0.0.1:8080")
 	token := os.Getenv("AI_CLOUDHUB_TOKEN")
 	if token == "" {
-		log.Fatal("AI_CLOUDHUB_TOKEN required")
+		log.Fatal("AI_CLOUDHUB_TOKEN required (except: runner check)")
 	}
 	mountPoint := env("AI_CLOUDHUB_MOUNT", "/workspace")
 
+	if mode == runnerModeDryRun {
+		os.Exit(runRunnerDryRun(api, token, mountPoint))
+	}
+
 	// Materialize-only: connector fetch + git clone / DB env inject (no rclone/session).
 	// Used for BYOC connector 联调 and smoke-byoc-connectors (D-001: still user machine).
-	if envTruthy(os.Getenv("AI_CLOUDHUB_MATERIALIZE_ONLY")) {
+	if mode == runnerModeMaterialize || envTruthy(os.Getenv("AI_CLOUDHUB_MATERIALIZE_ONLY")) {
 		if err := runMaterializeOnly(api, token, mountPoint); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 
-	if env("AI_CLOUDHUB_WORKER", "") == "1" || env("AI_CLOUDHUB_WORKER", "") == "true" {
+	if mode == runnerModeWorker || env("AI_CLOUDHUB_WORKER", "") == "1" || env("AI_CLOUDHUB_WORKER", "") == "true" {
 		runWorker(api, token, mountPoint)
 		return
 	}
@@ -54,15 +80,263 @@ func main() {
 	driveID := os.Getenv("AI_CLOUDHUB_DRIVE_ID")
 	bindingID := os.Getenv("AI_CLOUDHUB_BINDING_ID")
 	if driveID == "" && bindingID == "" {
-		log.Fatal("set AI_CLOUDHUB_DRIVE_ID / BINDING_ID, AI_CLOUDHUB_WORKER=1, or AI_CLOUDHUB_MATERIALIZE_ONLY=1")
+		log.Fatal("set AI_CLOUDHUB_DRIVE_ID / BINDING_ID, AI_CLOUDHUB_WORKER=1, AI_CLOUDHUB_MATERIALIZE_ONLY=1, or: runner check|dry-run")
 	}
-	args := os.Args[1:]
+	args := restArgs
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
 	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args, 0); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func parseRunnerMode(args []string) (mode string, rest []string) {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_RUNNER_MODE"))); v != "" {
+		switch v {
+		case "check", "dry-run", "dryrun", "help", "worker", "materialize", "run", "daemon":
+			if v == "dryrun" {
+				return runnerModeDryRun, args
+			}
+			if v == "daemon" {
+				return runnerModeRun, args
+			}
+			return v, args
+		}
+	}
+	if len(args) == 0 {
+		return runnerModeRun, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "check", "--check", "-check":
+		return runnerModeCheck, args[1:]
+	case "dry-run", "--dry-run", "-dry-run", "dryrun", "--dryrun":
+		return runnerModeDryRun, args[1:]
+	case "help", "--help", "-h":
+		return runnerModeHelp, args[1:]
+	case "worker", "--worker":
+		return runnerModeWorker, args[1:]
+	case "materialize", "--materialize":
+		return runnerModeMaterialize, args[1:]
+	case "run":
+		return runnerModeRun, args[1:]
+	default:
+		// legacy: command args after -- or bare command
+		return runnerModeRun, args
+	}
+}
+
+func printRunnerHelp() {
+	fmt.Fprintf(os.Stdout, `runner — AI-cloudhub BYOC runtime (user machine only; D-001)
+
+Usage:
+  runner check              # host preflight (rclone/FUSE); no token
+  runner dry-run            # list pending jobs + optional session conf; no claim/run
+  runner worker             # same as AI_CLOUDHUB_WORKER=1
+  runner materialize        # same as AI_CLOUDHUB_MATERIALIZE_ONLY=1
+  runner                    # one-shot: need DRIVE_ID/BINDING_ID [ -- cmd… ]
+
+Env:
+  AI_CLOUDHUB_API / TOKEN / MOUNT / DRIVE_ID / BINDING_ID / WORKER / MATERIALIZE_ONLY
+  AI_CLOUDHUB_RUNNER_MODE   check|dry-run|worker|materialize|run
+  AI_CLOUDHUB_RUNNER_ID / REGION  claim attribution
+  AI_CLOUDHUB_STATE         dry-run conf dir (default temp)
+
+Docs: docs/RUNNER.md · docs/HUBD.md · docs/DECISIONS.md D-001
+`)
+}
+
+// runRunnerCheck prints runtimeenv.Check as JSON (+ jail defaults). Exit 0 if rclone OK.
+func runRunnerCheck() int {
+	rep := runtimeenv.Check()
+	out := map[string]interface{}{
+		"component":    "runner",
+		"os":           rep.OS,
+		"arch":         rep.Arch,
+		"rclone_ok":    rep.RcloneOK,
+		"rclone_path":  rep.RclonePath,
+		"rclone_version": rep.RcloneVer,
+		"fuse_hint":    rep.FuseHint,
+		"winfsp_ok":    rep.WinFspOK,
+		"winfsp_hint":  rep.WinFspHint,
+		"install_hint": rep.InstallHint,
+		"ok":           rep.OK,
+		"warnings":     rep.Warnings,
+		"errors":       rep.Errors,
+		"goos":         runtime.GOOS,
+		"jail_default": env("AI_CLOUDHUB_JAIL", "1") != "0",
+		"byoc_note":    "jobs run only on this host; no platform pool (D-001)",
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+	if !rep.RcloneOK {
+		return 1
+	}
+	return 0
+}
+
+// runRunnerDryRun lists pending jobs (no claim) and optionally writes session conf for DRIVE_ID.
+func runRunnerDryRun(api, token, mountPoint string) int {
+	out := map[string]interface{}{
+		"mode":        "dry-run",
+		"component":   "runner",
+		"api":         api,
+		"mount":       mountPoint,
+		"runner_id":   runnerIdentity(),
+		"region":      strings.TrimSpace(os.Getenv("AI_CLOUDHUB_REGION")),
+		"byoc_note":   "dry-run does not claim or execute jobs",
+	}
+
+	// Pending jobs preview (claimable set; no cursor).
+	jobs, err := listPendingJobs(api, token)
+	if err != nil {
+		out["jobs_error"] = err.Error()
+	} else {
+		summaries := make([]map[string]interface{}, 0, len(jobs))
+		for _, j := range jobs {
+			summaries = append(summaries, map[string]interface{}{
+				"id":           j.ID,
+				"drive_id":     j.DriveID,
+				"status":       j.Status,
+				"command":      j.Command,
+				"mode":         j.Mode,
+				"connector_id": j.ConnectorID,
+				"agent_id":     j.AgentID,
+			})
+		}
+		out["pending_jobs"] = summaries
+		out["pending_count"] = len(summaries)
+	}
+
+	// Optional: session conf for drive/binding without running command.
+	driveID := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_DRIVE_ID"))
+	bindingID := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_BINDING_ID"))
+	if driveID != "" || bindingID != "" {
+		stateDir := env("AI_CLOUDHUB_STATE", filepath.Join(os.TempDir(), "ai-cloudhub-runner"))
+		sessInfo, confPath, serr := dryRunSessionConf(api, token, driveID, bindingID, stateDir)
+		if serr != nil {
+			out["session_error"] = serr.Error()
+		} else {
+			out["session"] = sessInfo
+			out["conf_path"] = confPath
+		}
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+	if err != nil {
+		return 1
+	}
+	if _, ok := out["session_error"]; ok {
+		return 1
+	}
+	return 0
+}
+
+func listPendingJobs(api, token string) ([]jobDTO, error) {
+	req, err := http.NewRequest(http.MethodGet, api+"/v1/jobs?status=pending&limit=50", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list jobs HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	var wrap struct {
+		Items []jobDTO `json:"items"`
+	}
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, err
+	}
+	return wrap.Items, nil
+}
+
+func dryRunSessionConf(api, token, driveID, bindingID, stateDir string) (map[string]interface{}, string, error) {
+	// Prefer drive session endpoint when driveID set; binding session when only binding.
+	var url string
+	if bindingID != "" {
+		url = api + "/v1/bindings/" + bindingID + "/session"
+	} else {
+		url = api + "/v1/drives/" + driveID + "/session"
+	}
+	payload := map[string]string{
+		"device_id": env("AI_CLOUDHUB_DEVICE_ID", "cloud-runner"),
+		"mode":      env("AI_CLOUDHUB_MODE", "sync_workspace"),
+	}
+	b, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("session HTTP %d: %s", resp.StatusCode, truncate(string(body), 240))
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, "", err
+	}
+	sess, _ := raw["session"].(map[string]interface{})
+	if sess == nil {
+		sess = raw
+	}
+	spec, _ := raw["spec"].(map[string]interface{})
+	if spec == nil {
+		if s2, ok := sess["spec"].(map[string]interface{}); ok {
+			spec = s2
+		}
+	}
+	conf := ""
+	if spec != nil {
+		if c, ok := spec["rclone_conf"].(string); ok {
+			conf = c
+		}
+	}
+	_ = os.MkdirAll(filepath.Join(stateDir, "dry-run"), 0o700)
+	confPath := filepath.Join(stateDir, "dry-run", "rclone.conf")
+	if conf == "" {
+		return map[string]interface{}{"source": sess["source"]}, "", fmt.Errorf("empty rclone_conf in session")
+	}
+	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
+		return nil, "", err
+	}
+	info := map[string]interface{}{
+		"source":     sess["source"],
+		"expires_at": sess["expires_at"],
+		"id":         sess["id"],
+	}
+	if man, ok := raw["manifest"].(map[string]interface{}); ok {
+		if envM, ok := man["env"].(map[string]interface{}); ok {
+			info["workspace"] = envM["AI_CLOUDHUB_WORKSPACE"]
+		}
+	} else if man, ok := sess["manifest"].(map[string]interface{}); ok {
+		if envM, ok := man["env"].(map[string]interface{}); ok {
+			info["workspace"] = envM["AI_CLOUDHUB_WORKSPACE"]
+		}
+	}
+	return info, confPath, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // runOnceResult is workspace prep + agent command outcome for worker complete.

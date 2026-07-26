@@ -101,6 +101,10 @@ make smoke-hubd
 
 ---
 
+## 与 runner
+
+Job 侧对称探测见 [RUNNER.md](./RUNNER.md)（`runner check|dry-run`，不 claim）。
+
 ## 版本
 
 `hubd check|dry-run|once` 自 **0.2.57**。

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.57（+ hubd check/dry-run）
+## 总览：v0.2.58（+ runner check/dry-run）
 
 | 阶段 | 状态 |
 |------|------|
@@ -554,6 +554,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `hubd check|dry-run|once` + docs/HUBD.md
 - [x] `make smoke-hubd`（无 FUSE 可跑 dry-run）
 - [x] 版本钉 **0.2.57** + tag
+
+### 本波（v0.2.58 · runner 对称探测）
+
+- [x] `runner check|dry-run` + docs/RUNNER.md
+- [x] `make smoke-runner`（pending 列表且不 claim）
+- [x] 版本钉 **0.2.58** + tag
+
 
 
 
