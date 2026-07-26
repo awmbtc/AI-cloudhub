@@ -309,10 +309,12 @@ func (s *Service) Stats(userID string) Stats {
 // AdminListFilter filters cross-user admin job listings.
 // Cursor is an opaque keyset token from a previous next_cursor (created_at DESC, id DESC).
 type AdminListFilter struct {
-	UserID string
-	Status string
-	Limit  int
-	Cursor string
+	UserID            string
+	Status            string
+	RegionHint        string
+	ClaimedByRunnerID string
+	Limit             int
+	Cursor            string
 }
 
 // AdminList returns jobs across users (admin). Limit default 100, max 500.
@@ -326,9 +328,11 @@ func (s *Service) AdminList(f AdminListFilter) (items []*Job, nextCursor string)
 		limit = 500
 	}
 	sf := store.AdminJobFilter{
-		UserID: strings.TrimSpace(f.UserID),
-		Status: strings.TrimSpace(f.Status),
-		Limit:  limit + 1, // peek one extra for next_cursor
+		UserID:            strings.TrimSpace(f.UserID),
+		Status:            strings.TrimSpace(f.Status),
+		RegionHint:        strings.TrimSpace(f.RegionHint),
+		ClaimedByRunnerID: strings.TrimSpace(f.ClaimedByRunnerID),
+		Limit:             limit + 1, // peek one extra for next_cursor
 	}
 	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
 		sf.CursorCreated = ca
@@ -448,8 +452,10 @@ func (s *Service) Get(userID, id string) (*Job, error) {
 
 // ListFilter optional filters for List.
 type ListFilter struct {
-	AgentID          string // creator agent_id
-	ClaimedByAgentID string // claimer
+	AgentID           string // creator agent_id
+	ClaimedByAgentID  string // claimer
+	ClaimedByRunnerID string // runner host id
+	RegionHint        string // region_hint exact
 	// Status exact match (pending|dispatched|running|succeeded|failed|cancelled).
 	// Empty = all. Note: HTTP status=pending still uses ListPending (includes dispatched).
 	Status string
@@ -476,12 +482,14 @@ func (s *Service) List(userID string, filter ...ListFilter) (items []*Job, nextC
 		limit = 500
 	}
 	sf := store.JobListFilter{
-		UserID:           strings.TrimSpace(userID),
-		AgentID:          strings.TrimSpace(f.AgentID),
-		ClaimedByAgentID: strings.TrimSpace(f.ClaimedByAgentID),
-		Status:           strings.TrimSpace(f.Status),
-		Labels:           f.Labels,
-		Limit:            limit + 1,
+		UserID:            strings.TrimSpace(userID),
+		AgentID:           strings.TrimSpace(f.AgentID),
+		ClaimedByAgentID:  strings.TrimSpace(f.ClaimedByAgentID),
+		ClaimedByRunnerID: strings.TrimSpace(f.ClaimedByRunnerID),
+		RegionHint:        strings.TrimSpace(f.RegionHint),
+		Status:            strings.TrimSpace(f.Status),
+		Labels:            f.Labels,
+		Limit:             limit + 1,
 	}
 	if ca, id, ok := decodeAdminCursor(f.Cursor); ok {
 		sf.CursorCreated = ca
@@ -990,46 +998,107 @@ func (s *Service) ProcessWebhookOutbox(limit int) int {
 	maxAtt := jobWebhookMaxAttempts()
 	secret := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET"))
 	client := &http.Client{Timeout: jobWebhookHTTPTimeout()}
+	// Optional limited parallelism within the serialized process lock (still one process-wide mutex).
+	inflight := jobWebhookMaxInflight()
+	sem := make(chan struct{}, inflight)
+	type result struct {
+		fresh *store.WebhookOutbox
+		ok    bool
+		derr  string
+	}
+	// Sequential delivery is safer for ordering; use inflight only when >1.
 	delivered := 0
+	if inflight <= 1 {
+		for _, row := range due {
+			if row == nil {
+				continue
+			}
+			fresh, err := s.store.GetWebhookOutbox(row.ID)
+			if err != nil || fresh.Status != "pending" {
+				continue
+			}
+			ok, derr := deliverWebhookOnce(client, url, secret, fresh)
+			delivered += s.finishWebhookAttempt(fresh, ok, derr, maxAtt)
+		}
+		return delivered
+	}
+	// Parallel batch (bounded). Collect then apply updates serially.
+	results := make([]result, 0, len(due))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for _, row := range due {
 		if row == nil {
 			continue
 		}
-		// Skip if another path already finished this row.
 		fresh, err := s.store.GetWebhookOutbox(row.ID)
 		if err != nil || fresh.Status != "pending" {
 			continue
 		}
-		ok, derr := deliverWebhookOnce(client, url, secret, fresh)
-		now := time.Now().UTC()
-		fresh.Attempts++
-		fresh.UpdatedAt = now
-		if ok {
-			fresh.Status = "delivered"
-			fresh.DeliveredAt = now
-			fresh.LastError = ""
-			if err := s.store.UpdateWebhookOutbox(fresh); err == nil {
-				metrics.IncJobWebhook()
-				delivered++
-			}
-			continue
-		}
-		metrics.IncJobWebhookFail()
-		errMsg := derr
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
-		}
-		fresh.LastError = errMsg
-		if fresh.Attempts >= maxAtt {
-			fresh.Status = "dead"
-			_ = s.store.UpdateWebhookOutbox(fresh)
-			metrics.IncJobWebhookDead()
-			continue
-		}
-		fresh.NextAttemptAt = now.Add(webhookBackoff(fresh.Attempts))
-		_ = s.store.UpdateWebhookOutbox(fresh)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(fr *store.WebhookOutbox) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			ok, derr := deliverWebhookOnce(client, url, secret, fr)
+			mu.Lock()
+			results = append(results, result{fresh: fr, ok: ok, derr: derr})
+			mu.Unlock()
+		}(fresh)
+	}
+	wg.Wait()
+	for _, r := range results {
+		delivered += s.finishWebhookAttempt(r.fresh, r.ok, r.derr, maxAtt)
 	}
 	return delivered
+}
+
+func (s *Service) finishWebhookAttempt(fresh *store.WebhookOutbox, ok bool, derr string, maxAtt int) int {
+	if fresh == nil {
+		return 0
+	}
+	now := time.Now().UTC()
+	fresh.Attempts++
+	fresh.UpdatedAt = now
+	if ok {
+		fresh.Status = "delivered"
+		fresh.DeliveredAt = now
+		fresh.LastError = ""
+		if err := s.store.UpdateWebhookOutbox(fresh); err == nil {
+			metrics.IncJobWebhook()
+			return 1
+		}
+		return 0
+	}
+	metrics.IncJobWebhookFail()
+	errMsg := derr
+	if len(errMsg) > 500 {
+		errMsg = errMsg[:500]
+	}
+	fresh.LastError = errMsg
+	if fresh.Attempts >= maxAtt {
+		fresh.Status = "dead"
+		_ = s.store.UpdateWebhookOutbox(fresh)
+		metrics.IncJobWebhookDead()
+		return 0
+	}
+	fresh.NextAttemptAt = now.Add(webhookBackoff(fresh.Attempts))
+	_ = s.store.UpdateWebhookOutbox(fresh)
+	return 0
+}
+
+func jobWebhookMaxInflight() int {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_INFLIGHT"))
+	if v == "" {
+		return 1 // default serial (safe)
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 1
+	}
+	if n > 32 {
+		n = 32
+	}
+	return n
 }
 
 // deliverWebhookOnce POSTs payload; returns (ok, errorDetail).
@@ -1636,6 +1705,63 @@ func (s *Service) AdminCancel(id, optionalNote string) (*Job, error) {
 		return nil, fmt.Errorf("job not found")
 	}
 	return s.cancelStoreJob(sj, strings.TrimSpace(optionalNote))
+}
+
+// AdminCancelAll cancels up to limit non-terminal jobs matching user/status (admin).
+// status empty = pending+dispatched+running; limit default 100 max 500.
+func (s *Service) AdminCancelAll(userID, status string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	status = strings.TrimSpace(status)
+	userID = strings.TrimSpace(userID)
+	var statuses []string
+	if status == "" {
+		statuses = []string{"pending", "dispatched", "running"}
+	} else {
+		switch Status(status) {
+		case StatusPending, StatusDispatched, StatusRunning:
+			statuses = []string{status}
+		default:
+			return 0, fmt.Errorf("status must be empty, pending, dispatched, or running")
+		}
+	}
+	n := 0
+	for _, st := range statuses {
+		if n >= limit {
+			break
+		}
+		list, err := s.store.ListJobsAdmin(store.AdminJobFilter{
+			UserID: userID, Status: st, Limit: limit - n,
+		})
+		if err != nil {
+			return n, err
+		}
+		for _, sj := range list {
+			if _, err := s.cancelStoreJob(sj, "admin cancel-all"); err != nil {
+				continue
+			}
+			metrics.IncJobCancelled()
+			n++
+			if n >= limit {
+				break
+			}
+		}
+	}
+	return n, nil
+}
+
+// AdminGetWithWebhooks returns job plus outbox rows for that job id (admin).
+func (s *Service) AdminGetWithWebhooks(id string) (*Job, []*WebhookOutboxView, error) {
+	j, err := s.AdminGet(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	hooks := s.AdminListWebhooks(AdminWebhookFilter{JobID: j.ID, Limit: 50})
+	return j, hooks, nil
 }
 
 // AdminRelease returns a running/dispatched job to pending so another BYOC runner can claim it.

@@ -51,7 +51,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.40` 十刀：webhook stats/timeout、job gauges、reclaim worker、admin complete/reclaim/purge、indexes、healthz | ✅ |
+| **发布** | `v0.2.50` 十刀：region/runner 过滤、dispatched gauge、cancel-all、inflight、readyz、admin webhooks、purge cascade | ✅ |
 
 ## 快速开始
 

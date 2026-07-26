@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.40 已发布；十刀（0.2.31–0.2.40）ops/reclaim/purge/healthz
+## 总览：v0.2.50 已发布；再十刀（0.2.41–0.2.50）
 
 | 阶段 | 状态 |
 |------|------|
@@ -506,3 +506,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] 0.2.39 smoke/docs/openapi
 - [x] 0.2.40 healthz jobs + webhook_outbox
 - [x] tags **v0.2.31** … **v0.2.40**
+
+### 本波（十刀 0.2.41–0.2.50）
+
+- [x] region/runner list filters + admin list
+- [x] jobs_dispatched gauge
+- [x] cancel-all + webhook max_inflight
+- [x] readyz ops snapshot
+- [x] admin get + webhooks; purge cascade outbox
+- [x] tags **v0.2.41** … **v0.2.50**

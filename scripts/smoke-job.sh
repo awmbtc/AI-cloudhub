@@ -538,5 +538,12 @@ JFC=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'C
   | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["status"]=="succeeded", d; assert "admin complete" in (d.get("note") or ""); print("admin complete ok")'
 "${CURL[@]}" -X POST "$API/v1/admin/jobs/reclaim" -H "Authorization: Bearer $TOK" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "reclaimed" in d, d; print("admin reclaim ok", d["reclaimed"])'
+# cancel-all empty + readyz ops
+"${CURL[@]}" -X POST "$API/v1/admin/jobs/cancel-all?status=pending&limit=5" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "cancelled" in d, d; print("admin cancel-all ok", d["cancelled"])'
+"${CURL[@]}" "$API/readyz" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("status")=="ready", d; print("readyz ok running", d.get("jobs_running"), "dead", d.get("webhook_outbox_dead"))'
+# admin get includes webhooks array
+"${CURL[@]}" "$API/v1/admin/jobs/$JWH" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("id")=="'"$JWH"'", d; assert "webhooks" in d; print("admin get webhooks n", len(d.get("webhooks") or []))'
 kill "$WH_PID" 2>/dev/null || true
 wait "$WH_PID" 2>/dev/null || true

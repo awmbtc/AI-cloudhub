@@ -1108,6 +1108,14 @@ func (s *SQLite) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		q += ` AND status = ?`
 		args = append(args, f.Status)
 	}
+	if strings.TrimSpace(f.RegionHint) != "" {
+		q += ` AND region_hint = ?`
+		args = append(args, strings.TrimSpace(f.RegionHint))
+	}
+	if strings.TrimSpace(f.ClaimedByRunnerID) != "" {
+		q += ` AND claimed_by_runner_id = ?`
+		args = append(args, strings.TrimSpace(f.ClaimedByRunnerID))
+	}
 	if !f.CursorCreated.IsZero() && f.CursorID != "" {
 		// keyset: (created_at, id) < cursor in DESC order
 		ca := f.CursorCreated.UTC().Format(time.RFC3339Nano)
@@ -1179,6 +1187,14 @@ func (s *SQLite) ListJobsPage(f JobListFilter) ([]*Job, error) {
 	if cid := strings.TrimSpace(f.ClaimedByAgentID); cid != "" {
 		q += ` AND claimed_by_agent_id = ?`
 		args = append(args, cid)
+	}
+	if rid := strings.TrimSpace(f.ClaimedByRunnerID); rid != "" {
+		q += ` AND claimed_by_runner_id = ?`
+		args = append(args, rid)
+	}
+	if reg := strings.TrimSpace(f.RegionHint); reg != "" {
+		q += ` AND region_hint = ?`
+		args = append(args, reg)
 	}
 	if st := strings.TrimSpace(f.Status); st != "" {
 		q += ` AND status = ?`
@@ -1347,6 +1363,25 @@ func (s *SQLite) PurgeTerminalJobs(olderThan time.Time, limit int) (int, error) 
 	n := 0
 	for _, id := range ids {
 		res, err := s.db.Exec(`DELETE FROM jobs WHERE id = ?`, id)
+		if err != nil {
+			return n, err
+		}
+		aff, _ := res.RowsAffected()
+		n += int(aff)
+	}
+	if len(ids) > 0 {
+		_, _ = s.DeleteWebhookOutboxByJobIDs(ids)
+	}
+	return n, nil
+}
+
+func (s *SQLite) DeleteWebhookOutboxByJobIDs(jobIDs []string) (int, error) {
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	n := 0
+	for _, id := range jobIDs {
+		res, err := s.db.Exec(`DELETE FROM job_webhook_outbox WHERE job_id = ?`, id)
 		if err != nil {
 			return n, err
 		}

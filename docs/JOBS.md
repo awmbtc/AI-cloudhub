@@ -74,12 +74,13 @@ POST /v1/jobs/{id}/complete
 GET /v1/jobs?status=succeeded
 GET /v1/jobs?label=env:prod&label=team:ml
 GET /v1/jobs?status=pending&region=us-east
+GET /v1/jobs?region=us-east&runner_id=host-1
 GET /v1/jobs?limit=50&cursor=
 GET /v1/jobs/stats
 ```
 
 - Non-`pending` list: keyset pagination (`created_at DESC, id DESC`); `limit` default 100, max 500; response may include `next_cursor` / `count` / `limit`.
-- Filters (`status`, `agent_id`, `claimed_by_agent_id`, `label=`) and cursor are applied in the store (not full-table scan + in-memory filter).
+- Filters (`status`, `agent_id`, `claimed_by_agent_id`, `runner_id`, `region`, `label=`) and cursor are applied in the store.
 - `status=pending` remains the claimable set (pending+dispatched), no cursor (full claimable list + optional `region`).
 - `stats` returns counts: `pending`, `dispatched`, `running`, `succeeded`, `failed`, `cancelled`, `total`.
 
@@ -95,6 +96,7 @@ export AI_CLOUDHUB_JOB_WEBHOOK_PURGE_SEC=60              # worker purge interval
 export AI_CLOUDHUB_JOB_WEBHOOK_TIMEOUT_SEC=5             # HTTP client timeout per attempt
 export AI_CLOUDHUB_JOB_RECLAIM_POLL_SEC=30               # global lease/timeout reclaim worker; 0=off
 export AI_CLOUDHUB_JOB_RETAIN_SEC=0                      # terminal job purge TTL; 0=off (default)
+export AI_CLOUDHUB_JOB_WEBHOOK_MAX_INFLIGHT=1            # outbox parallel deliveries (1–32; default 1)
 # AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC=0                  # tests only: ~1ms retry
 ```
 
@@ -148,6 +150,7 @@ POST /v1/admin/jobs/{id}/complete
 { "ok": true, "note": "optional", "exit_code": 0 }
 
 POST /v1/admin/jobs/reclaim?user_id=
+POST /v1/admin/jobs/cancel-all?user_id=&status=&limit=
 POST /v1/admin/jobs/purge-terminal?older_than_sec=
 
 GET  /v1/admin/job-webhooks/stats

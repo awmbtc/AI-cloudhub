@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## v0.2.50
+
+Ten-cut ship: region/runner list filters, dispatched gauge, cancel-all, webhook inflight, readyz ops, admin get webhooks, purge cascade, docs/smoke.
+
+## v0.2.49
+
+`PurgeTerminalJobs` cascades delete of related `job_webhook_outbox` rows.
+
+## v0.2.48
+
+`GET /v1/admin/jobs/{id}` includes `webhooks` outbox rows (job fields remain top-level).
+
+## v0.2.47
+
+Admin job list filters: `region`, `runner_id`.
+
+## v0.2.46
+
+`AI_CLOUDHUB_JOB_WEBHOOK_MAX_INFLIGHT` (default 1 serial; max 32) for outbox delivery parallelism.
+
+## v0.2.45
+
+`/readyz` includes `jobs_running` / `jobs_pending` / `webhook_outbox_*` when jobs wired.
+
+## v0.2.44
+
+`POST /v1/admin/jobs/cancel-all?user_id=&status=&limit=` batch admin cancel.
+
+## v0.2.43
+
+User job list `region=` / `runner_id=` store push-down filters.
+
+## v0.2.42
+
+Scrape gauge `aicloudhub_jobs_dispatched`.
+
+## v0.2.41
+
+User + admin list filter by `region_hint` / `claimed_by_runner_id` (store).
+
 ## v0.2.40
 
 healthz includes live `jobs` + `webhook_outbox` snapshot counts.

@@ -169,11 +169,13 @@ type Job struct {
 // Keyset pagination: order created_at DESC, id DESC.
 // When CursorCreated is set, returns rows strictly older than (CursorCreated, CursorID).
 type AdminJobFilter struct {
-	UserID        string    // empty = all users
-	Status        string    // empty = all statuses
-	Limit         int       // 0 = default 100; capped at 501 (service peeks limit+1 up to 500)
-	CursorCreated time.Time // zero = no cursor
-	CursorID      string    // used with CursorCreated for stable keyset
+	UserID            string // empty = all users
+	Status            string // empty = all statuses
+	RegionHint        string // empty = any
+	ClaimedByRunnerID string // empty = any
+	Limit             int    // 0 = default 100; capped at 501 (service peeks limit+1 up to 500)
+	CursorCreated     time.Time // zero = no cursor
+	CursorID          string    // used with CursorCreated for stable keyset
 }
 
 // JobListFilter filters a single user's job list (owner-scoped).
@@ -182,6 +184,8 @@ type JobListFilter struct {
 	UserID           string // required
 	AgentID          string // creator; empty = any
 	ClaimedByAgentID string // claimer; empty = any
+	ClaimedByRunnerID string // runner host id; empty = any
+	RegionHint       string // exact region_hint; empty = any
 	Status           string // exact status; empty = any
 	Labels           map[string]string
 	Limit            int // 0 = default 100; capped at 501
@@ -425,6 +429,8 @@ type Store interface {
 	// PurgeTerminalJobs deletes succeeded/failed/cancelled jobs with updated_at < olderThan.
 	// limit 0 = default 500, max 5000. Returns number deleted.
 	PurgeTerminalJobs(olderThan time.Time, limit int) (int, error)
+	// DeleteWebhookOutboxByJobIDs removes outbox rows for the given job ids (cascade after job purge).
+	DeleteWebhookOutboxByJobIDs(jobIDs []string) (int, error)
 
 	// Snapshots (metadata only)
 	CreateSnapshot(s *Snapshot) error

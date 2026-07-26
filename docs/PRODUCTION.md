@@ -115,12 +115,12 @@ make smoke-byoc
 ## Releases (multi-arch binaries)
 
 ```bash
-git tag v0.2.40
-git push origin v0.2.40
+git tag v0.2.50
+git push origin v0.2.50
 # → .github/workflows/release.yml → dist/* + checksums.txt
 ```
 
-Local dry-run: `make release-binaries VERSION=0.2.40`  
+Local dry-run: `make release-binaries VERSION=0.2.50`  
 Archives: `api`, `hubd`, `runner`, `mcp` (`CGO_ENABLED=0`).
 
 ## Preflight + smoke before cutover

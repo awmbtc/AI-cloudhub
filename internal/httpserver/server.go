@@ -362,12 +362,14 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 		}
 		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 		filt := job.ListFilter{
-			AgentID:          strings.TrimSpace(r.URL.Query().Get("agent_id")),
-			ClaimedByAgentID: strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
-			Status:           statusQ, // running|succeeded|failed|cancelled|dispatched
-			Labels:           parseLabelQuery(r.URL.Query()["label"]),
-			Limit:            limit,
-			Cursor:           strings.TrimSpace(r.URL.Query().Get("cursor")),
+			AgentID:           strings.TrimSpace(r.URL.Query().Get("agent_id")),
+			ClaimedByAgentID:  strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
+			ClaimedByRunnerID: strings.TrimSpace(r.URL.Query().Get("runner_id")),
+			RegionHint:        strings.TrimSpace(r.URL.Query().Get("region")),
+			Status:            statusQ, // running|succeeded|failed|cancelled|dispatched
+			Labels:            parseLabelQuery(r.URL.Query()["label"]),
+			Limit:             limit,
+			Cursor:            strings.TrimSpace(r.URL.Query().Get("cursor")),
 		}
 		items, nextCursor := s.jobs.List(userID, filt)
 		effLimit := filt.Limit
@@ -381,6 +383,8 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 			"items":               items,
 			"agent_id":            filt.AgentID,
 			"claimed_by_agent_id": filt.ClaimedByAgentID,
+			"runner_id":           filt.ClaimedByRunnerID,
+			"region":              filt.RegionHint,
 			"status":              filt.Status,
 			"labels":              filt.Labels,
 			"limit":               effLimit,
@@ -793,6 +797,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		st := s.jobs.AdminStats("")
 		metrics.SetJobStatusGauges(uint64(st.Pending), uint64(st.Running), uint64(st.Succeeded), uint64(st.Failed), uint64(st.Cancelled))
+		metrics.SetJobDispatchedGauge(uint64(st.Dispatched))
 	}
 	metrics.Handler(w, r)
 }
@@ -2030,7 +2035,17 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	out := map[string]interface{}{"status": "ready"}
+	if s.jobs != nil {
+		st := s.jobs.AdminStats("")
+		out["jobs_running"] = st.Running
+		out["jobs_pending"] = st.Pending
+		if c, err := s.jobs.WebhookOutboxStats(); err == nil && c != nil {
+			out["webhook_outbox_dead"] = c.Dead
+			out["webhook_outbox_pending"] = c.Pending
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, userID, username, role string) {
@@ -2392,7 +2407,7 @@ func (s *Server) routeAdminUsers(w http.ResponseWriter, r *http.Request, userID,
 	}
 }
 
-// handleAdminJobsList: GET /v1/admin/jobs?user_id=&status=&limit=&cursor=
+// handleAdminJobsList: GET /v1/admin/jobs?user_id=&status=&region=&runner_id=&limit=&cursor=
 func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2400,10 +2415,12 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 	}
 	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 	filt := job.AdminListFilter{
-		UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
-		Status: strings.TrimSpace(r.URL.Query().Get("status")),
-		Limit:  limit,
-		Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
+		UserID:            strings.TrimSpace(r.URL.Query().Get("user_id")),
+		Status:            strings.TrimSpace(r.URL.Query().Get("status")),
+		RegionHint:        strings.TrimSpace(r.URL.Query().Get("region")),
+		ClaimedByRunnerID: strings.TrimSpace(r.URL.Query().Get("runner_id")),
+		Limit:             limit,
+		Cursor:            strings.TrimSpace(r.URL.Query().Get("cursor")),
 	}
 	items, nextCursor := s.jobs.AdminList(filt)
 	// echo effective limit (service clamps)
@@ -2414,12 +2431,14 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 	if effLimit > 500 {
 		effLimit = 500
 	}
-	s.auth.Audit(adminID, "admin.jobs.list", "", fmt.Sprintf("n=%d user_id=%s status=%s has_next=%v", len(items), filt.UserID, filt.Status, nextCursor != ""))
+	s.auth.Audit(adminID, "admin.jobs.list", "", fmt.Sprintf("n=%d user_id=%s status=%s region=%s runner=%s has_next=%v", len(items), filt.UserID, filt.Status, filt.RegionHint, filt.ClaimedByRunnerID, nextCursor != ""))
 	resp := map[string]interface{}{
-		"items":   items,
-		"user_id": filt.UserID,
-		"status":  filt.Status,
-		"limit":   effLimit,
+		"items":     items,
+		"user_id":   filt.UserID,
+		"status":    filt.Status,
+		"region":    filt.RegionHint,
+		"runner_id": filt.ClaimedByRunnerID,
+		"limit":     effLimit,
 		"count":   len(items),
 	}
 	if nextCursor != "" {
@@ -2436,6 +2455,26 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 		return
 	}
 	parts := strings.Split(path, "/")
+	// POST /v1/admin/jobs/cancel-all?user_id=&status=&limit=
+	if path == "cancel-all" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+		n, err := s.jobs.AdminCancelAll(
+			strings.TrimSpace(r.URL.Query().Get("user_id")),
+			strings.TrimSpace(r.URL.Query().Get("status")),
+			limit,
+		)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.jobs.cancel_all", "", fmt.Sprintf("n=%d", n))
+		writeJSON(w, http.StatusOK, map[string]interface{}{"cancelled": n})
+		return
+	}
 	// POST /v1/admin/jobs/reclaim — global or per-user lease/timeout reclaim
 	if path == "reclaim" {
 		if r.Method != http.MethodPost {
@@ -2545,14 +2584,17 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 		writeJSON(w, http.StatusOK, st)
 		return
 	}
-	// single job id
-	j, err := s.jobs.AdminGet(path)
+	// single job id (+ outbox rows for ops; job fields stay top-level for compat)
+	j, hooks, err := s.jobs.AdminGetWithWebhooks(path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 	s.auth.Audit(adminID, "admin.jobs.get", j.ID, "user="+j.UserID)
-	writeJSON(w, http.StatusOK, j)
+	writeJSON(w, http.StatusOK, struct {
+		*job.Job
+		Webhooks []*job.WebhookOutboxView `json:"webhooks,omitempty"`
+	}{Job: j, Webhooks: hooks})
 }
 
 // handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&job_id=&user_id=&event=&limit=

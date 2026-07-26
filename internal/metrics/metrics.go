@@ -53,12 +53,13 @@ var (
 	JobsWebhookDeliveredGauge atomic.Uint64
 	JobsWebhookDeadGauge      atomic.Uint64
 	// Job status gauges (scrape-time).
-	JobsRunningGauge    atomic.Uint64
-	JobsPendingGauge    atomic.Uint64
-	JobsSucceededGauge  atomic.Uint64
-	JobsFailedGauge     atomic.Uint64
-	JobsCancelledGauge  atomic.Uint64
-	JobsPurged          atomic.Uint64
+	JobsRunningGauge     atomic.Uint64
+	JobsPendingGauge     atomic.Uint64
+	JobsDispatchedGauge  atomic.Uint64
+	JobsSucceededGauge   atomic.Uint64
+	JobsFailedGauge      atomic.Uint64
+	JobsCancelledGauge   atomic.Uint64
+	JobsPurged           atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -186,6 +187,9 @@ func SetJobStatusGauges(pending, running, succeeded, failed, cancelled uint64) {
 	JobsCancelledGauge.Store(cancelled)
 }
 
+// SetJobDispatchedGauge sets current dispatched count.
+func SetJobDispatchedGauge(n uint64) { JobsDispatchedGauge.Store(n) }
+
 // AddJobsPurged adds deleted terminal jobs from TTL purge.
 func AddJobsPurged(n uint64) {
 	if n > 0 {
@@ -295,6 +299,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_pending Current BYOC jobs in pending status\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_pending gauge\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_pending %d\n", JobsPendingGauge.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_dispatched Current BYOC jobs in dispatched status\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_dispatched gauge\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_dispatched %d\n", JobsDispatchedGauge.Load())
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_running Current BYOC jobs in running status\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_running gauge\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_running %d\n", JobsRunningGauge.Load())

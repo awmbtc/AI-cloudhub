@@ -927,6 +927,16 @@ func (p *Postgres) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		args = append(args, f.Status)
 		n++
 	}
+	if strings.TrimSpace(f.RegionHint) != "" {
+		q += fmt.Sprintf(` AND region_hint=$%d`, n)
+		args = append(args, strings.TrimSpace(f.RegionHint))
+		n++
+	}
+	if strings.TrimSpace(f.ClaimedByRunnerID) != "" {
+		q += fmt.Sprintf(` AND claimed_by_runner_id=$%d`, n)
+		args = append(args, strings.TrimSpace(f.ClaimedByRunnerID))
+		n++
+	}
 	if !f.CursorCreated.IsZero() && f.CursorID != "" {
 		// keyset: (created_at, id) < cursor in DESC order
 		ca := f.CursorCreated.UTC()
@@ -987,6 +997,16 @@ func (p *Postgres) ListJobsPage(f JobListFilter) ([]*Job, error) {
 	if cid := strings.TrimSpace(f.ClaimedByAgentID); cid != "" {
 		q += fmt.Sprintf(` AND claimed_by_agent_id=$%d`, n)
 		args = append(args, cid)
+		n++
+	}
+	if rid := strings.TrimSpace(f.ClaimedByRunnerID); rid != "" {
+		q += fmt.Sprintf(` AND claimed_by_runner_id=$%d`, n)
+		args = append(args, rid)
+		n++
+	}
+	if reg := strings.TrimSpace(f.RegionHint); reg != "" {
+		q += fmt.Sprintf(` AND region_hint=$%d`, n)
+		args = append(args, reg)
 		n++
 	}
 	if st := strings.TrimSpace(f.Status); st != "" {
@@ -1109,16 +1129,58 @@ func (p *Postgres) PurgeTerminalJobs(olderThan time.Time, limit int) (int, error
 	if limit > 5000 {
 		limit = 5000
 	}
-	res, err := p.db.Exec(
-		`WITH doomed AS (
-		   SELECT id FROM jobs
-		   WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1
-		   ORDER BY updated_at ASC
-		   LIMIT $2
-		 )
-		 DELETE FROM jobs WHERE id IN (SELECT id FROM doomed)`,
+	rows, err := p.db.Query(
+		`SELECT id FROM jobs
+		 WHERE status IN ('succeeded','failed','cancelled') AND updated_at < $1
+		 ORDER BY updated_at ASC LIMIT $2`,
 		olderThan.UTC(), limit,
 	)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// build IN list
+	args := make([]interface{}, 0, len(ids))
+	ph := make([]string, 0, len(ids))
+	for i, id := range ids {
+		args = append(args, id)
+		ph = append(ph, fmt.Sprintf("$%d", i+1))
+	}
+	res, err := p.db.Exec(`DELETE FROM jobs WHERE id IN (`+strings.Join(ph, ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	_, _ = p.DeleteWebhookOutboxByJobIDs(ids)
+	return int(n), nil
+}
+
+func (p *Postgres) DeleteWebhookOutboxByJobIDs(jobIDs []string) (int, error) {
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	args := make([]interface{}, 0, len(jobIDs))
+	ph := make([]string, 0, len(jobIDs))
+	for i, id := range jobIDs {
+		args = append(args, id)
+		ph = append(ph, fmt.Sprintf("$%d", i+1))
+	}
+	res, err := p.db.Exec(`DELETE FROM job_webhook_outbox WHERE job_id IN (`+strings.Join(ph, ",")+`)`, args...)
 	if err != nil {
 		return 0, err
 	}

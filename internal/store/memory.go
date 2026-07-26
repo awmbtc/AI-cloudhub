@@ -607,11 +607,19 @@ func (m *Memory) ListJobsAdmin(f AdminJobFilter) ([]*Job, error) {
 		limit = 501
 	}
 	var out []*Job
+	region := strings.TrimSpace(f.RegionHint)
+	runner := strings.TrimSpace(f.ClaimedByRunnerID)
 	for _, j := range m.jobs {
 		if f.UserID != "" && j.UserID != f.UserID {
 			continue
 		}
 		if f.Status != "" && j.Status != f.Status {
+			continue
+		}
+		if region != "" && j.RegionHint != region {
+			continue
+		}
+		if runner != "" && j.ClaimedByRunnerID != runner {
 			continue
 		}
 		if !f.CursorCreated.IsZero() && f.CursorID != "" {
@@ -699,6 +707,8 @@ func (m *Memory) ListJobsPage(f JobListFilter) ([]*Job, error) {
 	userID := strings.TrimSpace(f.UserID)
 	agentID := strings.TrimSpace(f.AgentID)
 	claimer := strings.TrimSpace(f.ClaimedByAgentID)
+	runner := strings.TrimSpace(f.ClaimedByRunnerID)
+	region := strings.TrimSpace(f.RegionHint)
 	status := strings.TrimSpace(f.Status)
 	var out []*Job
 	for _, j := range m.jobs {
@@ -709,6 +719,12 @@ func (m *Memory) ListJobsPage(f JobListFilter) ([]*Job, error) {
 			continue
 		}
 		if claimer != "" && j.ClaimedByAgentID != claimer {
+			continue
+		}
+		if runner != "" && j.ClaimedByRunnerID != runner {
+			continue
+		}
+		if region != "" && j.RegionHint != region {
 			continue
 		}
 		if status != "" && j.Status != status {
@@ -825,10 +841,40 @@ func (m *Memory) PurgeTerminalJobs(olderThan time.Time, limit int) (int, error) 
 	if len(list) > limit {
 		list = list[:limit]
 	}
+	jobIDs := make([]string, 0, len(list))
 	for _, c := range list {
 		delete(m.jobs, c.id)
+		jobIDs = append(jobIDs, c.id)
+	}
+	// cascade outbox (best-effort, already under lock)
+	for _, id := range jobIDs {
+		for wid, e := range m.webhooks {
+			if e.JobID == id {
+				delete(m.webhooks, wid)
+			}
+		}
 	}
 	return len(list), nil
+}
+
+func (m *Memory) DeleteWebhookOutboxByJobIDs(jobIDs []string) (int, error) {
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	want := map[string]bool{}
+	for _, id := range jobIDs {
+		want[id] = true
+	}
+	n := 0
+	for wid, e := range m.webhooks {
+		if want[e.JobID] {
+			delete(m.webhooks, wid)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ClaimPendingJob claims under the write mutex so only one caller wins.

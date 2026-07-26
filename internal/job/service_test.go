@@ -740,6 +740,36 @@ func TestWebhookOutboxPurge(t *testing.T) {
 	}
 }
 
+func TestListRegionRunnerAndAdminCancelAll(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-rr"
+	j1, _, _ := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"a"}, RegionHint: "us-east"})
+	j2, _, _ := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"b"}, RegionHint: "eu-west"})
+	_, _ = svc.Claim(uid, j1.ID, "a", "runner-a")
+	east, _ := svc.List(uid, ListFilter{RegionHint: "us-east", Limit: 20})
+	if len(east) != 1 || east[0].ID != j1.ID {
+		t.Fatalf("region list: %+v", east)
+	}
+	byR, _ := svc.List(uid, ListFilter{ClaimedByRunnerID: "runner-a", Limit: 20})
+	if len(byR) != 1 || byR[0].ID != j1.ID {
+		t.Fatalf("runner list: %+v", byR)
+	}
+	n, err := svc.AdminCancelAll(uid, "pending", 50)
+	if err != nil || n < 1 {
+		t.Fatalf("cancel-all n=%d err=%v", n, err)
+	}
+	// j2 was pending
+	got, _ := svc.Get(uid, j2.ID)
+	if got.Status != StatusCancelled {
+		t.Fatalf("j2 status %s", got.Status)
+	}
+	_, hooks, err := svc.AdminGetWithWebhooks(j1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = hooks // may be empty without webhook URL
+}
+
 func TestAdminCompleteAndReclaimAllAndPurge(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	svc.SetLease(50 * time.Millisecond)
