@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.56（+ STS 联调 runbook）
+## 总览：v0.2.57（+ hubd check/dry-run）
 
 | 阶段 | 状态 |
 |------|------|
@@ -548,6 +548,13 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `docs/STS-RUNBOOK.md` 厂商 source 矩阵 + 真 MinIO 步骤
 - [x] smoke-sts Phase F fail-open；`make smoke-sts-live` 自动起 MinIO
 - [x] 版本钉 **0.2.56** + tag
+
+### 本波（v0.2.57 · hubd 真路径）
+
+- [x] `hubd check|dry-run|once` + docs/HUBD.md
+- [x] `make smoke-hubd`（无 FUSE 可跑 dry-run）
+- [x] 版本钉 **0.2.57** + tag
+
 
 
 

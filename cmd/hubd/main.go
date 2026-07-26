@@ -30,10 +30,19 @@ import (
 )
 
 func main() {
+	mode := parseHubdMode(os.Args[1:])
+	if mode == hubdModeHelp {
+		printHubdHelp()
+		return
+	}
+	if mode == hubdModeCheck {
+		os.Exit(runHubdCheck())
+	}
+
 	api := env("AI_CLOUDHUB_API", "http://127.0.0.1:8080")
 	token := os.Getenv("AI_CLOUDHUB_TOKEN")
 	if token == "" {
-		log.Fatal("AI_CLOUDHUB_TOKEN required")
+		log.Fatal("AI_CLOUDHUB_TOKEN required (except: hubd check)")
 	}
 	device := env("AI_CLOUDHUB_DEVICE_ID", "default")
 	interval := 15 * time.Second
@@ -54,8 +63,17 @@ func main() {
 	if rep.InstallHint != "" {
 		log.Printf("install: %s", rep.InstallHint)
 	}
-	// Hard fail only when rclone is missing. On Windows, missing WinFsp is a
-	// warning: mount mode may fail, but mode=sync_workspace can still work.
+
+	// dry-run only needs API sessions + conf write — rclone optional.
+	if mode == hubdModeDryRun {
+		if !rep.RcloneOK {
+			log.Printf("warning: rclone missing — dry-run still issues session conf (mount would fail)")
+		}
+		os.Exit(runHubdDryRun(api, token, device, stateDir))
+	}
+
+	// Hard fail only when rclone is missing (daemon / once actually mount).
+	// On Windows, missing WinFsp is a warning: mount mode may fail, but mode=sync_workspace can still work.
 	if !rep.RcloneOK {
 		for _, e := range rep.Errors {
 			log.Printf("error: %s", e)
@@ -80,7 +98,7 @@ func main() {
 	}
 	winFspOK := rep.WinFspOK
 
-	log.Printf("AI-cloudhub hubd starting api=%s device=%s rclone=%s", api, device, rcloneBin)
+	log.Printf("AI-cloudhub hubd starting api=%s device=%s rclone=%s mode=%s", api, device, rcloneBin, mode)
 
 	// active: bindingID -> mount process + session expiry
 	active := map[string]*mountProc{}
@@ -214,6 +232,16 @@ func main() {
 	}
 
 	reconcile()
+	if mode == hubdModeOnce {
+		log.Printf("once: single reconcile done; exiting (no long-run mounts kept by once mode)")
+		// once still leaves mounts up if remount started them — stop cleanly so CI doesn't leak.
+		for id, mp := range active {
+			mp.stop()
+			_ = postBarrier(api, token, mp.driveID, device)
+			_ = reportActual(api, token, id, "unmounted", "hubd once exit")
+		}
+		return
+	}
 	for {
 		select {
 		case <-stop:
@@ -228,6 +256,164 @@ func main() {
 			reconcile()
 		}
 	}
+}
+
+// hubd subcommands: check | dry-run | once | (default daemon)
+const (
+	hubdModeDaemon = "daemon"
+	hubdModeCheck  = "check"
+	hubdModeDryRun = "dry-run"
+	hubdModeOnce   = "once"
+	hubdModeHelp   = "help"
+)
+
+func parseHubdMode(args []string) string {
+	// Env override (CI-friendly)
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("AI_CLOUDHUB_HUBD_MODE"))); v != "" {
+		switch v {
+		case "check", "dry-run", "dryrun", "once", "daemon", "help":
+			if v == "dryrun" {
+				return hubdModeDryRun
+			}
+			return v
+		}
+	}
+	for _, a := range args {
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case "check", "--check", "-check":
+			return hubdModeCheck
+		case "dry-run", "--dry-run", "-dry-run", "dryrun", "--dryrun":
+			return hubdModeDryRun
+		case "once", "--once", "-once":
+			return hubdModeOnce
+		case "help", "--help", "-h":
+			return hubdModeHelp
+		case "daemon", "run":
+			return hubdModeDaemon
+		}
+	}
+	return hubdModeDaemon
+}
+
+func printHubdHelp() {
+	fmt.Fprintf(os.Stdout, `hubd — AI-cloudhub local runtime (BYOC / user machine only)
+
+Usage:
+  hubd                 # daemon: poll bindings, mount via rclone
+  hubd check           # host preflight only (rclone/FUSE); no token
+  hubd dry-run         # list desired bindings, issue session, write conf; NO mount
+  hubd once            # one reconcile cycle (may mount), then clean exit
+
+Env:
+  AI_CLOUDHUB_API          control plane URL (default http://127.0.0.1:8080)
+  AI_CLOUDHUB_TOKEN        bearer (required except check)
+  AI_CLOUDHUB_DEVICE_ID    device id (default default)
+  AI_CLOUDHUB_STATE        state dir for rclone.conf / manifest
+  AI_CLOUDHUB_POLL         poll interval (default 15s)
+  AI_CLOUDHUB_HUBD_MODE    check|dry-run|once|daemon (override argv)
+  AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH=1  full remount instead of soft conf rewrite
+
+Docs: docs/HUBD.md · docs/GOLDEN-PATH.md · docs/WINDOWS.md
+`)
+}
+
+// runHubdCheck prints runtimeenv.Check as JSON. Exit 0 if rclone OK.
+func runHubdCheck() int {
+	rep := runtimeenv.Check()
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(rep)
+	if !rep.RcloneOK {
+		return 1
+	}
+	return 0
+}
+
+// runHubdDryRun issues sessions for desired=mounted bindings and writes conf/manifest
+// under stateDir without starting rclone mount/sync. Does not report actual=mounted.
+func runHubdDryRun(api, token, device, stateDir string) int {
+	bindings, err := listBindings(api, token, device)
+	if err != nil {
+		log.Printf("list bindings: %v", err)
+		return 1
+	}
+	type item struct {
+		BindingID  string `json:"binding_id"`
+		DriveID    string `json:"drive_id"`
+		MountPoint string `json:"mount_point"`
+		Mode       string `json:"mode"`
+		Workspace  string `json:"workspace,omitempty"`
+		Source     string `json:"session_source,omitempty"`
+		ConfPath   string `json:"conf_path,omitempty"`
+		ExpiresAt  string `json:"expires_at,omitempty"`
+		Error      string `json:"error,omitempty"`
+	}
+	var items []item
+	nOK := 0
+	for _, b := range bindings {
+		if b.Desired != "mounted" {
+			continue
+		}
+		it := item{
+			BindingID:  b.ID,
+			DriveID:    b.DriveID,
+			MountPoint: b.MountPoint,
+			Mode:       strings.TrimSpace(b.Mode),
+		}
+		sess, err := issueSession(api, token, b.ID)
+		if err != nil {
+			it.Error = err.Error()
+			items = append(items, it)
+			continue
+		}
+		it.Mode = resolveMode(b.Mode, sess)
+		it.Workspace = sess.workspace()
+		it.Source = strings.TrimSpace(sess.Session.Source)
+		spec := sess.mountSpec()
+		dir := filepath.Join(stateDir, "dry-run", b.ID)
+		_ = os.MkdirAll(dir, 0o700)
+		confPath := filepath.Join(dir, "rclone.conf")
+		if spec.RcloneConf == "" {
+			it.Error = "empty rclone_conf"
+			items = append(items, it)
+			continue
+		}
+		if err := os.WriteFile(confPath, []byte(spec.RcloneConf), 0o600); err != nil {
+			it.Error = err.Error()
+			items = append(items, it)
+			continue
+		}
+		if len(sess.Manifest) > 0 {
+			_ = os.WriteFile(filepath.Join(dir, "manifest.json"), sess.Manifest, 0o600)
+		}
+		it.ConfPath = confPath
+		if !sess.Session.ExpiresAt.IsZero() {
+			it.ExpiresAt = sess.Session.ExpiresAt.Format(time.RFC3339)
+		}
+		items = append(items, it)
+		nOK++
+		log.Printf("dry-run ok binding=%s drive=%s mode=%s source=%s conf=%s", b.ID, b.DriveID, it.Mode, it.Source, confPath)
+	}
+	out := map[string]interface{}{
+		"mode":     "dry-run",
+		"device":   device,
+		"api":      api,
+		"bindings": items,
+		"ok_count": nOK,
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+	if nOK == 0 && len(items) == 0 {
+		log.Printf("dry-run: no desired=mounted bindings for device=%s", device)
+		return 0 // empty is success (nothing to do)
+	}
+	for _, it := range items {
+		if it.Error != "" {
+			return 1
+		}
+	}
+	return 0
 }
 
 type bindingDTO struct {
@@ -246,6 +432,8 @@ type sessionBundle struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 		Mode      string    `json:"mode"`
+		Source    string    `json:"source"`
+		Note      string    `json:"note"`
 		Spec      mountSpec `json:"spec"`
 		Manifest  struct {
 			Env map[string]string `json:"env"`
@@ -253,6 +441,7 @@ type sessionBundle struct {
 	} `json:"session"`
 	Manifest json.RawMessage `json:"manifest"`
 	Spec     mountSpec       `json:"spec"`
+	Note     string          `json:"note"`
 }
 
 // resolveMode picks mount vs sync_workspace.

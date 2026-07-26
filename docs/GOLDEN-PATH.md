@@ -74,7 +74,15 @@ make smoke-golden
 | `GET /v1/drives/{id}/objects` 看到 seed 对象 | rclone 进程 / 本地 mount 点 |
 | BYOC job 队列契约（create → claim → complete） | 平台 runner 池（D-001 禁止） |
 
-`hubd` **没有** dry/check 模式可在无 FUSE 时代替挂载；启动即检查 rclone，mount 需本机 FUSE/WinFsp。真挂载人工步骤：
+`hubd` 提供 **`check` / `dry-run` / `once`**（见 [HUBD.md](./HUBD.md)）：无 FUSE 时可验 session conf；真 mount 仍需本机 rclone + FUSE/WinFsp。
+
+```bash
+make smoke-hubd          # check + dry-run
+.bin/hubd check
+.bin/hubd dry-run        # 写 conf，不起 rclone
+```
+
+真挂载人工步骤：
 
 ```bash
 # 1) 先跑 smoke 或手建 provider/drive/binding，记下 API + human token

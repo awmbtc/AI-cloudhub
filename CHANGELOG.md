@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.57
+
+hubd host check / dry-run (D-003 real path):
+
+- `hubd check` — runtimeenv JSON (rclone/FUSE), no token
+- `hubd dry-run` — session + write conf, no mount (rclone optional)
+- `hubd once` — single reconcile then clean exit
+- `docs/HUBD.md` + `make smoke-hubd`
+
 ## v0.2.56
 
 STS vendor runbook (D-003 P1 real-path):

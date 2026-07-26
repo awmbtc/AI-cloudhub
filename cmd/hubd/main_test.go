@@ -70,6 +70,26 @@ func TestMountPointUnreachable(t *testing.T) {
 	}
 }
 
+func TestParseHubdMode(t *testing.T) {
+	t.Setenv("AI_CLOUDHUB_HUBD_MODE", "")
+	if got := parseHubdMode(nil); got != hubdModeDaemon {
+		t.Fatalf("default: %q", got)
+	}
+	if got := parseHubdMode([]string{"check"}); got != hubdModeCheck {
+		t.Fatalf("check: %q", got)
+	}
+	if got := parseHubdMode([]string{"--dry-run"}); got != hubdModeDryRun {
+		t.Fatalf("dry-run: %q", got)
+	}
+	if got := parseHubdMode([]string{"once"}); got != hubdModeOnce {
+		t.Fatalf("once: %q", got)
+	}
+	t.Setenv("AI_CLOUDHUB_HUBD_MODE", "check")
+	if got := parseHubdMode([]string{"once"}); got != hubdModeCheck {
+		t.Fatalf("env overrides argv: %q", got)
+	}
+}
+
 func TestForceRemountOnRefreshEnv(t *testing.T) {
 	t.Setenv("AI_CLOUDHUB_FORCE_REMOUNT_ON_REFRESH", "")
 	if forceRemountOnRefresh() {

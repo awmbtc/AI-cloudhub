@@ -39,6 +39,7 @@ When tempted to add another Job ops admin button without a customer incident, **
 | `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
 | `make smoke-golden` | **Product golden path** (D-003 / `docs/GOLDEN-PATH.md`) |
 | `make smoke-golden-minio` | Live MinIO golden path (optional soft-skip) |
+| `make smoke-hubd` | hubd check + dry-run (`docs/HUBD.md`) |
 | `make prod-preflight` | production env checklist (no API required) |
 | `make smoke-prod-preflight` | preflight self-test (weak fail / strong pass) |
 | `make smoke-all` | above smokes **including** golden + stage-c + byoc + sts (**not** minio) |

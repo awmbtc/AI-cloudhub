@@ -18,6 +18,7 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构定稿 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | 决策记录（D-001 Runner 池黑名单 · **D-003 主线收口 / Job freeze**） |
 | [docs/GOLDEN-PATH.md](docs/GOLDEN-PATH.md) | **黄金路径**（主线演示剧本 + `make smoke-golden`） |
+| [docs/HUBD.md](docs/HUBD.md) | **hubd** check/dry-run/真挂盘 |
 | [docs/openapi.yaml](docs/openapi.yaml) | **HTTP OpenAPI**（auth / providers / drives / bindings / sessions / jobs / admin / healthz / readyz / metrics / runtime） |
 | [docs/RISK-COST.md](docs/RISK-COST.md) | 风险成本 |
 | [docs/VENDORS.md](docs/VENDORS.md) | 厂商 A/B/C |
@@ -54,7 +55,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.56`：STS 联调 runbook + fail-open / live MinIO | ✅ |
+| **发布** | `v0.2.57`：hubd check/dry-run 本机挂盘探测 | ✅ |
 
 ## 快速开始
 
