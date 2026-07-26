@@ -116,6 +116,58 @@ jobs:
             /tmp/aihub-minio*
           if-no-files-found: ignore
 
+  # Live STS path against local MinIO (best-effort AssumeRole may still be embedded).
+  smoke-sts-live:
+    name: Smoke STS live MinIO
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+      JWT_SECRET: "ci-smoke-jwt-secret-xx"
+      MINIO_ENDPOINT: "http://127.0.0.1:9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      AI_CLOUDHUB_SMOKE_STS_LIVE: "1"
+      AI_CLOUDHUB_SMOKE_STS_REQUIRE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name aihub-sts-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --address ":9000"
+          for i in $(seq 1 40); do
+            if curl -sf --connect-timeout 2 http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              echo "MinIO healthy"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "MinIO failed to become healthy" >&2
+          docker logs aihub-sts-minio || true
+          exit 1
+
+      - name: Smoke STS (live Phase L)
+        run: make smoke-sts
+
+      - name: Upload sts smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-sts-live-logs
+          path: |
+            /tmp/aihub-*.log
+            /tmp/aihub-sts*
+          if-no-files-found: ignore
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest

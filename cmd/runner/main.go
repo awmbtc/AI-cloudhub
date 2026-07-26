@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,6 +62,13 @@ func main() {
 	if _, err := runOnce(api, token, mountPoint, driveID, bindingID, "", args); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// runOnceResult is workspace prep + agent command outcome for worker complete.
+type runOnceResult struct {
+	CloneNote string
+	Stdout    string
+	Stderr    string
 }
 
 func envTruthy(v string) bool {
@@ -161,18 +169,18 @@ func runWorker(api, token, mountPoint string) {
 			}
 			stopHB := startJobHeartbeat(api, token, j.ID)
 			start := time.Now()
-			cloneNote, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
+			res, err := runOnce(api, token, mountPoint, j.DriveID, j.BindingID, j.ID, j.Command)
 			durMs := time.Since(start).Milliseconds()
 			stopHB()
 			ok := err == nil
-			note := cloneNote
+			note := res.CloneNote
 			exitCode := 0
 			if err != nil {
-				note = joinJobNote(cloneNote, err.Error())
+				note = joinJobNote(res.CloneNote, err.Error())
 				exitCode = exitCodeFromErr(err)
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
-			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs)
+			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs, res.Stdout, res.Stderr)
 		}
 	}
 }
@@ -217,13 +225,19 @@ func claimNext(api, token string) (*jobDTO, error) {
 	return &j, nil
 }
 
-func completeJob(api, token, id string, ok bool, note string, exitCode *int, durationMs int64) error {
+func completeJob(api, token, id string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string) error {
 	payload := map[string]interface{}{"ok": ok, "note": note}
 	if exitCode != nil {
 		payload["exit_code"] = *exitCode
 	}
 	if durationMs > 0 {
 		payload["duration_ms"] = durationMs
+	}
+	if stdout != "" {
+		payload["stdout"] = stdout
+	}
+	if stderr != "" {
+		payload["stderr"] = stderr
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest(http.MethodPost, api+"/v1/jobs/"+id+"/complete", bytes.NewReader(body))
@@ -289,14 +303,17 @@ func heartbeatJob(api, token, id string) error {
 }
 
 // runOnce prepares workspace and runs the agent command.
-// cloneNote is "cloned to <path>" or "clone failed: …" when a connector was attempted; empty otherwise.
+// CloneNote is "cloned to <path>" or "clone failed: …" when a connector was attempted; empty otherwise.
 // With AI_CLOUDHUB_CLONE_STRICT, clone failures return as err (job fails); default soft-continues.
-func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (cloneNote string, err error) {
+// Stdout/Stderr are capped agent process output (also mirrored to the runner process streams).
+func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []string) (runOnceResult, error) {
 	log.Printf("AI-cloudhub runner (BYOC) api=%s mount=%s job=%s", api, mountPoint, jobID)
+	var out runOnceResult
 	var clonePath string
 
 	var sessURL string
 	var body []byte
+	var err error
 	if bindingID != "" {
 		sessURL = api + "/v1/bindings/" + bindingID + "/session"
 		body, err = postJSON(sessURL, token, nil)
@@ -309,7 +326,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		})
 	}
 	if err != nil {
-		return "", fmt.Errorf("session: %w", err)
+		return out, fmt.Errorf("session: %w", err)
 	}
 
 	var bundle struct {
@@ -331,7 +348,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		Manifest json.RawMessage `json:"manifest"`
 	}
 	if err := json.Unmarshal(body, &bundle); err != nil {
-		return "", err
+		return out, err
 	}
 	spec := bundle.Spec
 	if spec.RcloneConf == "" {
@@ -342,14 +359,14 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	if _, err := exec.LookPath("rclone"); err != nil {
-		return "", fmt.Errorf("rclone not found in PATH")
+		return out, fmt.Errorf("rclone not found in PATH")
 	}
 
 	state := filepath.Join(os.TempDir(), "ai-cloudhub-runner")
 	_ = os.MkdirAll(state, 0o700)
 	confPath := filepath.Join(state, "rclone.conf")
 	if err := os.WriteFile(confPath, []byte(spec.RcloneConf), 0o600); err != nil {
-		return "", err
+		return out, err
 	}
 	_ = os.MkdirAll(filepath.Join(mountPoint, ".ai-cloudhub"), 0o755)
 	_ = os.MkdirAll(mountPoint, 0o755)
@@ -390,7 +407,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		pull.Stdout = os.Stdout
 		pull.Stderr = os.Stderr
 		if err := pull.Run(); err != nil {
-			return "", fmt.Errorf("sync pull: %w", err)
+			return out, fmt.Errorf("sync pull: %w", err)
 		}
 	} else {
 		mountCmd = exec.Command("rclone", "mount", spec.RemotePath, mountPoint,
@@ -401,7 +418,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		mountCmd.Stdout = os.Stdout
 		mountCmd.Stderr = os.Stderr
 		if err := mountCmd.Start(); err != nil {
-			return "", fmt.Errorf("mount: %w", err)
+			return out, fmt.Errorf("mount: %w", err)
 		}
 		for i := 0; i < 40; i++ {
 			if st, err := os.Stat(mountPoint); err == nil && st.IsDir() {
@@ -416,7 +433,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	// Soft default: continue agent on fail but surface note; *_STRICT fail job.
 	mat := materializeConnector(api, token, mountPoint)
 	if mat.Note != "" {
-		cloneNote = mat.Note
+		out.CloneNote = mat.Note
 	}
 	if mat.Err != nil {
 		strict := false
@@ -432,7 +449,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		}
 		log.Printf("connector: %v (strict=%v)", mat.Err, strict)
 		if strict {
-			return cloneNote, fmt.Errorf("%s", cloneNote)
+			return out, fmt.Errorf("%s", out.CloneNote)
 		}
 	} else if mat.ClonePath != "" {
 		clonePath = mat.ClonePath
@@ -492,16 +509,16 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	if len(args) == 0 {
-		log.Printf("ready mode=%s path=%s clone_note=%s (no command); waiting signal", mode, mountPoint, cloneNote)
+		log.Printf("ready mode=%s path=%s clone_note=%s (no command); waiting signal", mode, mountPoint, out.CloneNote)
 		<-sig
-		return cloneNote, nil
+		return out, nil
 	}
 
 	// Path jail: reject command args that resolve outside workspace.
 	if jailOn {
 		jail := sandbox.NewPathJail(mountPoint)
 		if err := jail.Allow(mountPoint); err != nil {
-			return cloneNote, fmt.Errorf("jail mount: %w", err)
+			return out, fmt.Errorf("jail mount: %w", err)
 		}
 		for _, a := range args[1:] {
 			// only check path-looking args (absolute or containing / or ..)
@@ -509,7 +526,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 				continue
 			}
 			if err := jail.Allow(a); err != nil {
-				return cloneNote, fmt.Errorf("path jail: arg %q: %w", a, err)
+				return out, fmt.Errorf("path jail: arg %q: %w", a, err)
 			}
 		}
 	}
@@ -520,7 +537,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	if sandbox.Enabled() {
 		if err := sandbox.ApplyRunnerDefault(); err != nil {
 			if sandbox.Strict() {
-				return cloneNote, fmt.Errorf("seccomp: %w", err)
+				return out, fmt.Errorf("seccomp: %w", err)
 			}
 			log.Printf("seccomp: apply failed (continuing): %v", err)
 		} else {
@@ -531,13 +548,60 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	agent := exec.Command(args[0], args[1:]...)
 	agent.Dir = mountPoint
 	agent.Env = childEnv
-	agent.Stdout = os.Stdout
-	agent.Stderr = os.Stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	capN := runnerOutputCap()
+	agent.Stdout = io.MultiWriter(os.Stdout, &limitedBuffer{buf: &stdoutBuf, max: capN})
+	agent.Stderr = io.MultiWriter(os.Stderr, &limitedBuffer{buf: &stderrBuf, max: capN})
 	agent.Stdin = os.Stdin
-	if err := agent.Run(); err != nil {
-		return cloneNote, fmt.Errorf("agent: %w", err)
+	runErr := agent.Run()
+	out.Stdout = stdoutBuf.String()
+	out.Stderr = stderrBuf.String()
+	if runErr != nil {
+		return out, fmt.Errorf("agent: %w", runErr)
 	}
-	return cloneNote, nil
+	return out, nil
+}
+
+// runnerOutputCap is how many bytes of agent stdout/stderr to keep for complete.
+// AI_CLOUDHUB_JOB_OUTPUT_MAX (default 8192); keeps the tail.
+func runnerOutputCap() int {
+	const def = 8192
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_OUTPUT_MAX"))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	if n > 256*1024 {
+		return 256 * 1024
+	}
+	return n
+}
+
+// limitedBuffer keeps at most max bytes (tail) of written data.
+type limitedBuffer struct {
+	buf *bytes.Buffer
+	max int
+}
+
+func (l *limitedBuffer) Write(p []byte) (int, error) {
+	if l == nil || l.buf == nil {
+		return len(p), nil
+	}
+	if l.max <= 0 {
+		return l.buf.Write(p)
+	}
+	// Always accept full write; trim front if over max.
+	n, err := l.buf.Write(p)
+	if l.buf.Len() > l.max {
+		b := l.buf.Bytes()
+		trim := len(b) - l.max
+		l.buf.Reset()
+		_, _ = l.buf.Write(b[trim:])
+	}
+	return n, err
 }
 
 func postJSON(url, token string, payload interface{}) ([]byte, error) {

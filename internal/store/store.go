@@ -140,8 +140,11 @@ type Job struct {
 	DurationMs int64
 	// HeartbeatAt last claim or heartbeat while running (zero if not running / never claimed).
 	HeartbeatAt time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Stdout / Stderr capped process output from runner complete (empty if not reported).
+	Stdout    string
+	Stderr    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).

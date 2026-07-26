@@ -45,8 +45,11 @@ type Job struct {
 	DurationMs int64 `json:"duration_ms,omitempty"`
 	// HeartbeatAt last claim/heartbeat while running (omitted when zero).
 	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// Stdout / Stderr capped process output from runner (empty if not reported).
+	Stdout    string    `json:"stdout,omitempty"`
+	Stderr    string    `json:"stderr,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CreateInput for new job.
@@ -163,9 +166,12 @@ func (s *Service) Get(userID, id string) (*Job, error) {
 type ListFilter struct {
 	AgentID          string // creator agent_id
 	ClaimedByAgentID string // claimer
+	// Status exact match (pending|dispatched|running|succeeded|failed|cancelled).
+	// Empty = all. Note: HTTP status=pending still uses ListPending (includes dispatched).
+	Status string
 }
 
-// List returns jobs for user, optionally filtered by agent ids.
+// List returns jobs for user, optionally filtered by agent ids and/or status.
 func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 	list, err := s.store.ListJobs(userID)
 	if err != nil {
@@ -175,12 +181,16 @@ func (s *Service) List(userID string, filter ...ListFilter) []*Job {
 	if len(filter) > 0 {
 		f = filter[0]
 	}
+	status := strings.TrimSpace(f.Status)
 	out := make([]*Job, 0, len(list))
 	for _, sj := range list {
 		if f.AgentID != "" && sj.AgentID != f.AgentID {
 			continue
 		}
 		if f.ClaimedByAgentID != "" && sj.ClaimedByAgentID != f.ClaimedByAgentID {
+			continue
+		}
+		if status != "" && sj.Status != status {
 			continue
 		}
 		out = append(out, jobFromStore(sj))
@@ -390,17 +400,23 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 	return nil, fmt.Errorf("no pending jobs")
 }
 
+// DefaultMaxJobOutput is the default cap (bytes) for stdout/stderr on complete.
+const DefaultMaxJobOutput = 8192
+
 // CompleteInput is the optional structured result of a BYOC runner complete.
 type CompleteInput struct {
 	OK         bool
 	Note       string
 	ExitCode   *int  // nil = not reported
 	DurationMs int64 // 0 = not reported
+	Stdout     string
+	Stderr     string
 }
 
 // Complete sets terminal status.
 // Non-empty note is appended to the existing trail (create D-001 / release / clone path),
 // not replaced — same pattern as ReleaseToPending. Capped at 2000 chars.
+// Stdout/stderr are stored with a tail cap (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192).
 func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
 	if err != nil {
@@ -421,12 +437,42 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	if in.DurationMs > 0 {
 		sj.DurationMs = in.DurationMs
 	}
+	maxOut := jobOutputMax()
+	if in.Stdout != "" {
+		sj.Stdout = capTail(in.Stdout, maxOut)
+	}
+	if in.Stderr != "" {
+		sj.Stderr = capTail(in.Stderr, maxOut)
+	}
 	sj.HeartbeatAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
 	return jobFromStore(sj), nil
+}
+
+func jobOutputMax() int {
+	v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_OUTPUT_MAX"))
+	if v == "" {
+		return DefaultMaxJobOutput
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return DefaultMaxJobOutput
+	}
+	if n > 256*1024 {
+		return 256 * 1024 // hard ceiling
+	}
+	return n
+}
+
+// capTail keeps the last max bytes of s (UTF-8 safe-ish: byte-level; logs are usually ASCII).
+func capTail(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
 }
 
 // appendJobNote joins note segments with " | " and caps length (tail kept).
@@ -481,6 +527,8 @@ func jobFromStore(sj *store.Job) *Job {
 		AgentID:          sj.AgentID,
 		ClaimedByAgentID: sj.ClaimedByAgentID,
 		DurationMs:       sj.DurationMs,
+		Stdout:           sj.Stdout,
+		Stderr:           sj.Stderr,
 		CreatedAt:        sj.CreatedAt,
 		UpdatedAt:        sj.UpdatedAt,
 	}

@@ -142,7 +142,7 @@ for line in sys.stdin:
 
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"complete_job\",\"arguments\":{\"job_id\":\"$CLAIMED\",\"ok\":true,\"note\":\"mcp-smoke\",\"exit_code\":0,\"duration_ms\":55}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"complete_job\",\"arguments\":{\"job_id\":\"$CLAIMED\",\"ok\":true,\"note\":\"mcp-smoke\",\"exit_code\":0,\"duration_ms\":55,\"stdout\":\"mcp-out\",\"stderr\":\"mcp-err\"}}}" \
   | ./.bin/mcp 2>/dev/null | python3 -c '
 import sys,json
 for line in sys.stdin:
@@ -151,6 +151,7 @@ for line in sys.stdin:
   body=json.loads(((d.get("result") or {}).get("content") or [{}])[0].get("text") or "")
   assert body.get("status")=="succeeded", body
   assert body.get("exit_code")==0 and body.get("duration_ms")==55, body
+  assert body.get("stdout")=="mcp-out" and body.get("stderr")=="mcp-err", body
   print("completed")
 '
 printf '%s\n' \

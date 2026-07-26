@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.8 已发布；job lease/heartbeat + 结构化 complete
+## 总览：v0.2.9 已发布；job stdout/stderr + status 过滤 + CI STS live
 
 | 阶段 | 状态 |
 |------|------|
@@ -368,3 +368,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `POST /v1/jobs/{id}/heartbeat`；claim 路径 `ReclaimStale`（`AI_CLOUDHUB_JOB_LEASE_SEC`，默认 300）
 - [x] runner worker 心跳；MCP `heartbeat_job`；unit + smoke
 - [x] 版本钉 **0.2.8** + tag
+
+### 本波（job output + list status + CI STS live）
+
+- [x] complete `stdout`/`stderr` soft migrate + tail cap（`AI_CLOUDHUB_JOB_OUTPUT_MAX`）
+- [x] runner MultiWriter 捕获 agent 输出；MCP complete 字段
+- [x] `GET /v1/jobs?status=` exact filter（pending 仍为 claimable 集）
+- [x] CI `smoke-sts-live`（MinIO + LIVE/REQUIRE）
+- [x] 版本钉 **0.2.9** + tag

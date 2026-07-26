@@ -66,6 +66,7 @@
 - `/metrics` 默认可匿名；生产设 `AI_CLOUDHUB_METRICS_TOKEN`。
 - Job 为 BYOC 队列，**禁止**平台大规模 Runner 池（D-001）。
 - Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
+- Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）；非流式、非对象存储日志。
 
 ## 产品
 

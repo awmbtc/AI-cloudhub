@@ -129,17 +129,31 @@ assert d.get("heartbeat_at"), d
 print("heartbeat_at", d["heartbeat_at"])
 '
 
-echo "== complete with exit_code + duration_ms =="
+echo "== complete with exit_code + duration_ms + stdout/stderr =="
 "${CURL[@]}" -X POST "$API/v1/jobs/$JID/complete" -H "Authorization: Bearer $ATOK" \
-  -H 'Content-Type: application/json' -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123}' \
+  -H 'Content-Type: application/json' \
+  -d '{"ok":true,"note":"smoke","exit_code":0,"duration_ms":123,"stdout":"hello-out\n","stderr":"warn-err\n"}' \
   | python3 -c '
 import sys,json
 d=json.load(sys.stdin)
 assert d["status"]=="succeeded", d
 assert d.get("exit_code")==0, d
 assert d.get("duration_ms")==123, d
+assert "hello-out" in (d.get("stdout") or ""), d
+assert "warn-err" in (d.get("stderr") or ""), d
 assert not d.get("heartbeat_at"), d
-print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"])
+print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"], "out", repr(d.get("stdout")))
+'
+
+echo "== list status=succeeded filter =="
+"${CURL[@]}" "$API/v1/jobs?status=succeeded" -H "Authorization: Bearer $ATOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+items=d.get("items") or []
+assert any(i.get("id")=="'"$JID"'" for i in items), d
+assert all(i.get("status")=="succeeded" for i in items), items
+print("list succeeded count", len(items))
 '
 
 echo "== lease reclaim (short TTL) =="

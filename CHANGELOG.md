@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.2.9
+
+Job process output on complete, list status filters, CI live STS.
+
+### Jobs
+- `stdout` / `stderr` on Job + complete body (tail-capped; default 8KiB, `AI_CLOUDHUB_JOB_OUTPUT_MAX`)
+- Runner captures agent streams (mirrors to process + complete payload)
+- `GET /v1/jobs?status=` exact match for running|succeeded|failed|cancelled|dispatched (`pending` still = claimable set)
+
+### MCP
+- `complete_job` accepts `stdout` / `stderr`
+- `list_jobs` status filter docs
+
+### CI
+- `smoke-sts-live` job: MinIO + `AI_CLOUDHUB_SMOKE_STS_LIVE=1` + REQUIRE
+
 ## v0.2.8
 
 Job structured complete + lease/heartbeat for BYOC runners; STS live smoke opt-in.

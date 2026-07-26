@@ -208,6 +208,49 @@ func TestCompleteAppendsNote(t *testing.T) {
 	}
 }
 
+func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-out"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AI_CLOUDHUB_JOB_OUTPUT_MAX", "16")
+	code := 0
+	big := strings.Repeat("x", 40)
+	done, err := svc.Complete(uid, j.ID, CompleteInput{
+		OK: true, ExitCode: &code, DurationMs: 5,
+		Stdout: "out-" + big, Stderr: "err-" + big,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(done.Stdout) != 16 || len(done.Stderr) != 16 {
+		t.Fatalf("cap: stdout=%d stderr=%d want 16", len(done.Stdout), len(done.Stderr))
+	}
+	// tail kept
+	if !strings.HasSuffix(done.Stdout, "xxxx") {
+		t.Fatalf("stdout tail %q", done.Stdout)
+	}
+	// list by status
+	succ := svc.List(uid, ListFilter{Status: "succeeded"})
+	if len(succ) != 1 || succ[0].ID != j.ID {
+		t.Fatalf("list succeeded: %+v", succ)
+	}
+	run := svc.List(uid, ListFilter{Status: "running"})
+	if len(run) != 0 {
+		t.Fatalf("list running want 0 got %d", len(run))
+	}
+	// pending list empty after complete
+	pend := svc.ListPending(uid, "")
+	if len(pend) != 0 {
+		t.Fatalf("pending %d", len(pend))
+	}
+}
+
 func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	svc.SetLease(50 * time.Millisecond)

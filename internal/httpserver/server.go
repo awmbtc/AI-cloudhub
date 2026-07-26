@@ -324,7 +324,9 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 				return
 			}
 		}
-		if r.URL.Query().Get("status") == "pending" {
+		statusQ := strings.TrimSpace(r.URL.Query().Get("status"))
+		// status=pending keeps claimable set (pending+dispatched) + optional region.
+		if statusQ == "pending" {
 			region := r.URL.Query().Get("region")
 			writeJSON(w, http.StatusOK, map[string]interface{}{"items": s.jobs.ListPending(userID, region)})
 			return
@@ -332,12 +334,14 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 		filt := job.ListFilter{
 			AgentID:          strings.TrimSpace(r.URL.Query().Get("agent_id")),
 			ClaimedByAgentID: strings.TrimSpace(r.URL.Query().Get("claimed_by_agent_id")),
+			Status:           statusQ, // running|succeeded|failed|cancelled|dispatched
 		}
 		items := s.jobs.List(userID, filt)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"items":               items,
 			"agent_id":            filt.AgentID,
 			"claimed_by_agent_id": filt.ClaimedByAgentID,
+			"status":              filt.Status,
 		})
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -459,10 +463,13 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			Note       string `json:"note"`
 			ExitCode   *int   `json:"exit_code"`
 			DurationMs int64  `json:"duration_ms"`
+			Stdout     string `json:"stdout"`
+			Stderr     string `json:"stderr"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		j, err := s.jobs.Complete(userID, id, job.CompleteInput{
 			OK: body.OK, Note: body.Note, ExitCode: body.ExitCode, DurationMs: body.DurationMs,
+			Stdout: body.Stdout, Stderr: body.Stderr,
 		})
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())

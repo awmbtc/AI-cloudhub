@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.8
+  version: 0.2.9
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -698,6 +698,12 @@ components:
           type: string
           format: date-time
           description: Last claim or runner heartbeat while status=running (omitted when idle/terminal)
+        stdout:
+          type: string
+          description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
+        stderr:
+          type: string
+          description: Capped agent stderr tail
         created_at:
           type: string
           format: date-time
@@ -743,6 +749,12 @@ components:
           type: integer
           format: int64
           description: Optional wall duration in ms
+        stdout:
+          type: string
+          description: Optional capped process stdout
+        stderr:
+          type: string
+          description: Optional capped process stderr
 
     Agent:
       type: object
@@ -3254,7 +3266,8 @@ paths:
       operationId: listJobs
       description: |
         Returns jobs for the authenticated user. Query `status=pending` lists claimable
-        pending/dispatched jobs. Jobs run on **user runners only** — no platform pool.
+        pending/dispatched jobs. Other status values exact-match filter (running, succeeded, …).
+        Jobs run on **user runners only** — no platform pool.
       security:
         - bearerAuth: []
       parameters:
@@ -3263,8 +3276,9 @@ paths:
           required: false
           schema:
             type: string
-            enum: [pending]
-          description: When pending, returns claimable jobs only
+            enum: [pending, dispatched, running, succeeded, failed, cancelled]
+          description: |
+            `pending` = claimable set (pending+dispatched). Other values exact match on Job.status.
         - name: agent_id
           in: query
           required: false
@@ -3274,6 +3288,11 @@ paths:
           in: query
           required: false
           description: Filter by claimer agent_id (ignored when status=pending)
+          schema: { type: string }
+        - name: region
+          in: query
+          required: false
+          description: Only with status=pending — filter region_hint
           schema: { type: string }
       responses:
         '200':

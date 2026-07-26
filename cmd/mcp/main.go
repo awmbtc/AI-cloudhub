@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.8"
+const serverVersion = "0.2.9"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -308,12 +308,12 @@ func toolRegistry() []toolMeta {
 			},
 		},
 		{
-			name: "list_jobs", description: "List BYOC jobs. Optional filters: status=pending, agent_id, claimed_by_agent_id. Requires job.run.",
+			name: "list_jobs", description: "List BYOC jobs. Filters: status (pending=claimable set; or running|succeeded|failed|cancelled|dispatched), agent_id, claimed_by_agent_id. Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"status":              map[string]interface{}{"type": "string", "description": "pending for claimable only"},
+					"status":              map[string]interface{}{"type": "string", "description": "pending (claimable) or exact status"},
 					"agent_id":            map[string]interface{}{"type": "string"},
 					"claimed_by_agent_id": map[string]interface{}{"type": "string"},
 					"region":              map[string]interface{}{"type": "string", "description": "Only with status=pending"},
@@ -354,7 +354,7 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
-			name: "complete_job", description: "Mark claimed job succeeded or failed. Optional exit_code and duration_ms. Requires job.run.",
+			name: "complete_job", description: "Mark claimed job succeeded or failed. Optional exit_code, duration_ms, stdout, stderr (capped). Requires job.run.",
 			scopes: []string{auth.ScopeJobRun},
 			schema: map[string]interface{}{
 				"type": "object",
@@ -364,6 +364,8 @@ func toolRegistry() []toolMeta {
 					"note":        map[string]interface{}{"type": "string"},
 					"exit_code":   map[string]interface{}{"type": "integer", "description": "Process exit code from runner"},
 					"duration_ms": map[string]interface{}{"type": "integer", "description": "Wall time ms"},
+					"stdout":      map[string]interface{}{"type": "string", "description": "Capped process stdout (tail)"},
+					"stderr":      map[string]interface{}{"type": "string", "description": "Capped process stderr (tail)"},
 				},
 				"required": []string{"job_id"},
 			},
@@ -777,6 +779,8 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			Note       string `json:"note"`
 			ExitCode   *int   `json:"exit_code"`
 			DurationMs int64  `json:"duration_ms"`
+			Stdout     string `json:"stdout"`
+			Stderr     string `json:"stderr"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -788,7 +792,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if args.OK != nil {
 			ok = *args.OK
 		}
-		return toolCompleteJob(api, token, args.JobID, ok, args.Note, args.ExitCode, args.DurationMs)
+		return toolCompleteJob(api, token, args.JobID, ok, args.Note, args.ExitCode, args.DurationMs, args.Stdout, args.Stderr)
 	case "heartbeat_job":
 		var args struct {
 			JobID string `json:"job_id"`
@@ -1353,13 +1357,19 @@ func toolHeartbeatJob(api, token, jobID string) (interface{}, error) {
 	return toolResultJSON(parsed)
 }
 
-func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *int, durationMs int64) (interface{}, error) {
+func toolCompleteJob(api, token, jobID string, ok bool, note string, exitCode *int, durationMs int64, stdout, stderr string) (interface{}, error) {
 	payload := map[string]interface{}{"ok": ok, "note": note}
 	if exitCode != nil {
 		payload["exit_code"] = *exitCode
 	}
 	if durationMs > 0 {
 		payload["duration_ms"] = durationMs
+	}
+	if stdout != "" {
+		payload["stdout"] = stdout
+	}
+	if stderr != "" {
+		payload["stderr"] = stderr
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs/"+jobID+"/complete", token, payload)
 	if err != nil {

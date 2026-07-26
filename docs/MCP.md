@@ -46,11 +46,11 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_restore_plan` | drive.read\|write | restore guidance: CLI + optional presign + api path |
 | `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
-| `list_jobs` | job.run | `GET /v1/jobs` (+ pending / agent filters) |
-| `get_job` | job.run | `GET /v1/jobs/{id}` (includes `exit_code` / `duration_ms` / `heartbeat_at` when set) |
+| `list_jobs` | job.run | `GET /v1/jobs` — `status=pending` claimable set, or exact status; agent filters |
+| `get_job` | job.run | `GET /v1/jobs/{id}` (exit/duration/heartbeat/stdout/stderr when set) |
 | `create_job` | job.run | `POST /v1/jobs` BYOC enqueue (D-001: user runners only) |
 | `claim_next_job` | job.run | `POST /v1/jobs/next/claim` (policy-filtered; reclaims stale leases first) |
-| `complete_job` | job.run | `POST /v1/jobs/{id}/complete` — optional `exit_code`, `duration_ms` |
+| `complete_job` | job.run | `POST /v1/jobs/{id}/complete` — optional `exit_code`, `duration_ms`, `stdout`, `stderr` |
 | `heartbeat_job` | job.run | `POST /v1/jobs/{id}/heartbeat` — refresh lease while running |
 | `cancel_job` | job.run | `POST /v1/jobs/{id}/cancel` |
 | `list_providers` | provider.read\|write | `GET /v1/providers` (public fields) |
