@@ -293,13 +293,13 @@ type Stats struct {
 	Total      int `json:"total"`
 }
 
-// Stats returns per-status counts for the user.
+// Stats returns per-status counts for the user (full aggregation, not list-capped).
 func (s *Service) Stats(userID string) Stats {
-	list, err := s.store.ListJobs(userID)
-	if err != nil {
+	c, err := s.store.CountJobsByStatus(strings.TrimSpace(userID))
+	if err != nil || c == nil {
 		return Stats{}
 	}
-	return statsFromStoreJobs(list)
+	return statsFromCounts(c)
 }
 
 // AdminListFilter filters cross-user admin job listings.
@@ -390,20 +390,27 @@ func (s *Service) AdminGet(id string) (*Job, error) {
 }
 
 // AdminStats returns global or per-user status counts (admin).
-// When userID is empty, counts all jobs (up to 10k newest for safety).
+// Full store aggregation via COUNT GROUP BY — no row cap.
 func (s *Service) AdminStats(userID string) Stats {
-	userID = strings.TrimSpace(userID)
-	if userID != "" {
-		return s.Stats(userID)
-	}
-	list, err := s.store.ListJobsAdmin(store.AdminJobFilter{Limit: 500})
-	if err != nil {
-		return Stats{}
-	}
-	// Note: capped at 500 newest; honest limitation for large fleets.
-	return statsFromStoreJobs(list)
+	return s.Stats(strings.TrimSpace(userID))
 }
 
+func statsFromCounts(c *store.JobStatusCounts) Stats {
+	if c == nil {
+		return Stats{}
+	}
+	return Stats{
+		Pending:    c.Pending,
+		Dispatched: c.Dispatched,
+		Running:    c.Running,
+		Succeeded:  c.Succeeded,
+		Failed:     c.Failed,
+		Cancelled:  c.Cancelled,
+		Total:      c.Total,
+	}
+}
+
+// statsFromStoreJobs remains for tests that build ad-hoc slices.
 func statsFromStoreJobs(list []*store.Job) Stats {
 	var st Stats
 	for _, sj := range list {

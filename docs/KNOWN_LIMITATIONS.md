@@ -68,7 +68,7 @@
 - 生产请设 `AI_CLOUDHUB_STRICT=1` + 强 `JWT_SECRET` + `AI_CLOUDHUB_MASTER_KEY` + `AI_CLOUDHUB_ALLOW_REGISTER=0`。
 - `/metrics` 默认可匿名；生产设 `AI_CLOUDHUB_METRICS_TOKEN`。
 - Job 为 BYOC 队列，**禁止**平台大规模 Runner 池（D-001）。
-- Admin 跨用户 job 列表：`GET /v1/admin/jobs*`（人 admin only）；keyset `cursor`/`next_cursor`（created_at DESC, id DESC）；全局 stats 仅扫最近 500 条，非全库聚合。
+- Admin 跨用户 job 列表：`GET /v1/admin/jobs*`（人 admin only）；keyset `cursor`/`next_cursor`（created_at DESC, id DESC）；stats 为全库 `COUNT GROUP BY status`（无 500 行上限）。
 - User job 列表：`GET /v1/jobs` 同样 keyset（default limit 100）；`status=pending` 为 claimable 全集（无 cursor）。过滤后分页（非 store 层 label/agent 下推）。
 - Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
 - Job hard timeout：`timeout_sec`（创建）或全局 `AI_CLOUDHUB_JOB_TIMEOUT_SEC`；从 `claimed_at` 起算，超时在 claim 路径 fail（exit 124 + note）。runner 侧 `CommandContext` 杀进程。

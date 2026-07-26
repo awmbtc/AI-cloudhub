@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.23
+  version: 0.2.24
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1827,7 +1827,8 @@ paths:
       summary: Job status counts (admin)
       operationId: adminJobStats
       description: |
-        Per-status counts. Optional `user_id`. Without user_id, counts the newest 500 jobs only.
+        Per-status counts via full aggregation (`COUNT GROUP BY status`). Optional `user_id`
+        scopes to one user; without user_id, counts all jobs (no row cap).
       security:
         - bearerAuth: []
       parameters:
@@ -3621,7 +3622,9 @@ paths:
       tags: [jobs]
       summary: Job counts by status
       operationId: jobStats
-      description: Snapshot counts for the authenticated user's BYOC queue.
+      description: |
+        Per-status counts for the authenticated user's BYOC queue
+        (full aggregation, not list-capped).
       security:
         - bearerAuth: []
       responses:

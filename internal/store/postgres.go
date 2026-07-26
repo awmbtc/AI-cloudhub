@@ -962,6 +962,47 @@ func (p *Postgres) ListJobs(userID string) ([]*Job, error) {
 	return scanJobRowsPG(rows)
 }
 
+func (p *Postgres) CountJobsByStatus(userID string) (*JobStatusCounts, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	userID = strings.TrimSpace(userID)
+	if userID != "" {
+		rows, err = p.db.Query(`SELECT status, COUNT(*)::int FROM jobs WHERE user_id=$1 GROUP BY status`, userID)
+	} else {
+		rows, err = p.db.Query(`SELECT status, COUNT(*)::int FROM jobs GROUP BY status`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var c JobStatusCounts
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		switch status {
+		case "pending":
+			c.Pending += n
+		case "dispatched":
+			c.Dispatched += n
+		case "running":
+			c.Running += n
+		case "succeeded":
+			c.Succeeded += n
+		case "failed":
+			c.Failed += n
+		case "cancelled":
+			c.Cancelled += n
+		}
+		c.Total += n
+	}
+	return &c, rows.Err()
+}
+
 func (p *Postgres) ListPendingJobs(userID string) ([]*Job, error) {
 	rows, err := p.db.Query(
 		`SELECT `+jobSelectColsPG+` FROM jobs

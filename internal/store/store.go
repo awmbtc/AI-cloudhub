@@ -176,6 +176,39 @@ type AdminJobFilter struct {
 	CursorID      string    // used with CursorCreated for stable keyset
 }
 
+// JobStatusCounts is a full aggregation of jobs by status (no row cap).
+type JobStatusCounts struct {
+	Pending    int
+	Dispatched int
+	Running    int
+	Succeeded  int
+	Failed     int
+	Cancelled  int
+	Total      int
+}
+
+// AddStatus increments the matching status bucket and Total.
+func (c *JobStatusCounts) AddStatus(status string) {
+	if c == nil {
+		return
+	}
+	c.Total++
+	switch status {
+	case "pending":
+		c.Pending++
+	case "dispatched":
+		c.Dispatched++
+	case "running":
+		c.Running++
+	case "succeeded":
+		c.Succeeded++
+	case "failed":
+		c.Failed++
+	case "cancelled":
+		c.Cancelled++
+	}
+}
+
 // Snapshot is a metadata snapshot of a drive workspace (ROADMAP B6 — not full object versioning).
 type Snapshot struct {
 	ID           string
@@ -364,6 +397,8 @@ type Store interface {
 	// ListJobsAdmin lists jobs across users with optional filters (admin).
 	ListJobsAdmin(f AdminJobFilter) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
+	// CountJobsByStatus returns full per-status aggregation (empty userID = all users).
+	CountJobsByStatus(userID string) (*JobStatusCounts, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.
 	// claimedByAgentID / claimedByRunnerID may be empty.
 	// Returns the updated job, or an error if not found / not claimable.

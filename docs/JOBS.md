@@ -147,7 +147,7 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 
 - Cross-user listing; `limit` default 100, max 500.
 - **Keyset pagination**: order `created_at DESC, id DESC`. Response may include `next_cursor`; pass as `?cursor=` for the next page (opaque; invalid cursor is treated as first page).
-- Global `stats` without `user_id` counts **up to 500 newest** jobs only (honest cap).
+- Global/user `stats` use full `COUNT … GROUP BY status` aggregation (no row scan cap).
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
@@ -160,4 +160,4 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 - Not a platform scheduler or multi-tenant runner fleet (D-001).
 - Soft-refresh / open FUSE handles are hubd concerns ([WINDOWS.md](./WINDOWS.md)).
 - Output is capped tails, not log shipping.
-- Admin global stats are not a full warehouse aggregation.
+- Admin/user job stats are SQL-style status counts, not time-series warehouse analytics.

@@ -310,6 +310,45 @@ func TestJobStats(t *testing.T) {
 	}
 }
 
+func TestStatsFullAggregationNoCap(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	// create more than the old 500 admin list cap would allow if still scanning
+	const n = 30
+	for i := 0; i < n; i++ {
+		uid := "u-agg"
+		if i%2 == 0 {
+			uid = "u-agg-a"
+		}
+		j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i%3 == 0 {
+			_, _ = svc.Claim(uid, j.ID, "", "")
+			_, _ = svc.Complete(uid, j.ID, CompleteInput{OK: true})
+		} else if i%3 == 1 {
+			_, _ = svc.Cancel(uid, j.ID)
+		}
+	}
+	global := svc.AdminStats("")
+	if global.Total != n {
+		t.Fatalf("global total %d want %d (succeeded=%d cancelled=%d pending=%d)",
+			global.Total, n, global.Succeeded, global.Cancelled, global.Pending)
+	}
+	if global.Succeeded+global.Cancelled+global.Pending+global.Running+global.Dispatched+global.Failed != global.Total {
+		t.Fatalf("buckets sum mismatch %+v", global)
+	}
+	per := svc.AdminStats("u-agg-a")
+	if per.Total == 0 || per.Total > n {
+		t.Fatalf("per-user %+v", per)
+	}
+	// user stats same path
+	u := svc.Stats("u-agg-a")
+	if u.Total != per.Total {
+		t.Fatalf("Stats vs AdminStats: %+v vs %+v", u, per)
+	}
+}
+
 func TestAdminListAndGet(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	j1, _, _ := svc.Create("u1", CreateInput{DriveID: "d", Command: []string{"a"}})

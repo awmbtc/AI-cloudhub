@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.24
+
+Full job status count aggregation (no 500-row scan cap).
+
+### Jobs / Admin
+- Store `CountJobsByStatus` (`GROUP BY status`) on memory/sqlite/postgres
+- `GET /v1/jobs/stats` and `GET /v1/admin/jobs/stats` use full aggregation
+- Admin global stats no longer limited to newest 500 jobs
+
 ## v0.2.23
 
 Job webhook outbox TTL purge for delivered/dead rows.

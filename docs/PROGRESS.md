@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.23 已发布；job webhook outbox TTL purge
+## 总览：v0.2.24 已发布；job stats 全库 COUNT 聚合
 
 | 阶段 | 状态 |
 |------|------|
@@ -465,3 +465,8 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `PurgeWebhookOutbox` + retain/purge env；worker 周期清理
 - [x] `POST /v1/admin/job-webhooks/purge`；metrics purged
 - [x] 版本钉 **0.2.23** + tag
+
+### 本波（job stats aggregation）
+
+- [x] store `CountJobsByStatus`；Stats/AdminStats 去 500 上限
+- [x] docs/openapi/KNOWN_LIMITATIONS；版本钉 **0.2.24** + tag

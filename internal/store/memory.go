@@ -666,6 +666,19 @@ func (m *Memory) ListJobs(userID string) ([]*Job, error) {
 	return out, nil
 }
 
+func (m *Memory) CountJobsByStatus(userID string) (*JobStatusCounts, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var c JobStatusCounts
+	for _, j := range m.jobs {
+		if userID != "" && j.UserID != userID {
+			continue
+		}
+		c.AddStatus(j.Status)
+	}
+	return &c, nil
+}
+
 func (m *Memory) ListPendingJobs(userID string) ([]*Job, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

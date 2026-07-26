@@ -1157,6 +1157,48 @@ func (s *SQLite) ListJobs(userID string) ([]*Job, error) {
 	return out, rows.Err()
 }
 
+func (s *SQLite) CountJobsByStatus(userID string) (*JobStatusCounts, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	userID = strings.TrimSpace(userID)
+	if userID != "" {
+		rows, err = s.db.Query(`SELECT status, COUNT(*) FROM jobs WHERE user_id = ? GROUP BY status`, userID)
+	} else {
+		rows, err = s.db.Query(`SELECT status, COUNT(*) FROM jobs GROUP BY status`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var c JobStatusCounts
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		// AddStatus increments by 1; fold n times via Total math
+		switch status {
+		case "pending":
+			c.Pending += n
+		case "dispatched":
+			c.Dispatched += n
+		case "running":
+			c.Running += n
+		case "succeeded":
+			c.Succeeded += n
+		case "failed":
+			c.Failed += n
+		case "cancelled":
+			c.Cancelled += n
+		}
+		c.Total += n
+	}
+	return &c, rows.Err()
+}
+
 func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 	rows, err := s.db.Query(
 		`SELECT `+jobSelectCols+` FROM jobs WHERE user_id = ? AND status IN ('pending','dispatched')
