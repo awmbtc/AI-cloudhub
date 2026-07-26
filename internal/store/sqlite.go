@@ -281,6 +281,8 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE jobs ADD COLUMN timeout_sec INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN stdout_truncated INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN stderr_truncated INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN attempt_count INTEGER`,
+		`ALTER TABLE jobs ADD COLUMN max_attempts INTEGER`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
@@ -1012,7 +1014,8 @@ func parseTime(s string) time.Time {
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
 		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), COALESCE(claimed_at,''),
-		 COALESCE(timeout_sec,0), COALESCE(stdout,''), COALESCE(stderr,''),
+		 COALESCE(timeout_sec,0), COALESCE(attempt_count,0), COALESCE(max_attempts,0),
+		 COALESCE(stdout,''), COALESCE(stderr,''),
 		 COALESCE(stdout_truncated,0), COALESCE(stderr_truncated,0),
 		 created_at, updated_at`
 
@@ -1026,11 +1029,11 @@ func (s *SQLite) CreateJob(j *Job) error {
 		ca = j.ClaimedAt.UTC().Format(time.RFC3339Nano)
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, attempt_count, max_attempts, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
 		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
-		j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
+		j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1088,7 +1091,8 @@ func (s *SQLite) ListPendingJobs(userID string) ([]*Job, error) {
 func (s *SQLite) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	row := s.db.QueryRow(
-		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, heartbeat_at = ?, claimed_at = ?, updated_at = ?
+		`UPDATE jobs SET status = 'running', claimed_by_agent_id = ?, heartbeat_at = ?, claimed_at = ?,
+		 attempt_count = COALESCE(attempt_count,0) + 1, updated_at = ?
 		 WHERE id = ? AND user_id = ? AND status IN ('pending','dispatched')
 		 RETURNING `+jobSelectCols,
 		claimedByAgentID, now, now, now, id, userID,
@@ -1117,11 +1121,13 @@ func (s *SQLite) UpdateJob(j *Job) error {
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
 		 agent_id=?, claimed_by_agent_id=?, connector_id=?, exit_code=?, duration_ms=?, heartbeat_at=?,
-		 claimed_at=?, timeout_sec=?, stdout=?, stderr=?, stdout_truncated=?, stderr_truncated=?, updated_at=?
+		 claimed_at=?, timeout_sec=?, attempt_count=?, max_attempts=?, stdout=?, stderr=?,
+		 stdout_truncated=?, stderr_truncated=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
 		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, nullInt(j.ExitCode), j.DurationMs, hb,
-		ca, j.TimeoutSec, j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
+		ca, j.TimeoutSec, j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr,
+		boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.UpdatedAt.UTC().Format(time.RFC3339Nano), j.ID, j.UserID,
 	)
 	if err != nil {
@@ -1576,11 +1582,11 @@ func scanJob(row scannable) (*Job, error) {
 	var cmd, created, updated, heartbeat, claimedAt, stdout, stderr string
 	var exitCode sql.NullInt64
 	var durationMs int64
-	var timeoutSec, outTrunc, errTrunc int
+	var timeoutSec, attemptCount, maxAttempts, outTrunc, errTrunc int
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
 		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &exitCode, &durationMs, &heartbeat, &claimedAt,
-		&timeoutSec, &stdout, &stderr, &outTrunc, &errTrunc,
+		&timeoutSec, &attemptCount, &maxAttempts, &stdout, &stderr, &outTrunc, &errTrunc,
 		&created, &updated,
 	); err != nil {
 		if err == sql.ErrNoRows {
@@ -1601,6 +1607,8 @@ func scanJob(row scannable) (*Job, error) {
 		j.ClaimedAt = parseTime(claimedAt)
 	}
 	j.TimeoutSec = timeoutSec
+	j.AttemptCount = attemptCount
+	j.MaxAttempts = maxAttempts
 	j.Stdout = stdout
 	j.Stderr = stderr
 	j.StdoutTruncated = outTrunc != 0

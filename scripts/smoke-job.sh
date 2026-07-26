@@ -126,7 +126,15 @@ import sys,json
 d=json.load(sys.stdin)
 assert d["status"]=="running", d
 assert d.get("heartbeat_at"), d
-print("heartbeat_at", d["heartbeat_at"])
+assert d.get("attempt_count",0)>=1, d
+print("heartbeat_at", d["heartbeat_at"], "attempt", d.get("attempt_count"))
+'
+echo "== metrics job heartbeat series =="
+"${CURL[@]}" "$API/metrics" | python3 -c '
+import sys
+t=sys.stdin.read()
+assert "aicloudhub_jobs_heartbeat_total" in t, t[:500]
+print("metrics heartbeat series ok")
 '
 
 echo "== complete with exit_code + duration_ms + stdout/stderr + truncated =="
@@ -146,10 +154,10 @@ assert not d.get("heartbeat_at"), d
 print("completed", d["status"], "exit", d["exit_code"], "ms", d["duration_ms"], "trunc", d.get("stdout_truncated"))
 '
 
-echo "== timeout_sec create + claim claimed_at =="
+echo "== timeout_sec + max_attempts create + claim claimed_at =="
 JTO=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
-  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"timeout_sec\":3600}" \
-  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("timeout_sec")==3600, d; print(d["id"])')
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"timeout_sec\":3600,\"max_attempts\":3}" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("timeout_sec")==3600 and d.get("max_attempts")==3, d; print(d["id"])')
 CLAIM_TO=$("${CURL[@]}" -X POST "$API/v1/jobs/$JTO/claim" -H "Authorization: Bearer $ATOK")
 echo "$CLAIM_TO" | python3 -c '
 import sys,json
@@ -157,7 +165,9 @@ d=json.load(sys.stdin)
 assert d["status"]=="running", d
 assert d.get("claimed_at"), d
 assert d.get("timeout_sec")==3600, d
-print("timeout claim claimed_at ok", d["claimed_at"])
+assert d.get("max_attempts")==3, d
+assert d.get("attempt_count")==1, d
+print("timeout claim claimed_at ok", d["claimed_at"], "attempt", d["attempt_count"])
 '
 "${CURL[@]}" -X POST "$API/v1/jobs/$JTO/complete" -H "Authorization: Bearer $ATOK" \
   -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null

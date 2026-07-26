@@ -144,6 +144,10 @@ type Job struct {
 	ClaimedAt time.Time
 	// TimeoutSec optional max run seconds from claim (0 = no job-level timeout).
 	TimeoutSec int
+	// AttemptCount increments on each successful claim.
+	AttemptCount int
+	// MaxAttempts when >0, lease expiry after this many claims fails the job instead of re-queue (0 = unlimited).
+	MaxAttempts int
 	// Stdout / Stderr capped process output from runner complete (empty if not reported).
 	Stdout            string
 	Stderr            string

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.10 已发布；job timeout/截断标记 + hubd 挂载探测
+## 总览：v0.2.11 已发布；job attempts/metrics/webhook
 
 | 阶段 | 状态 |
 |------|------|
@@ -383,3 +383,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `stdout_truncated` / `stderr_truncated` store+API+runner+MCP
 - [x] hubd：mount path ReadDir 探测；`FORCE_REMOUNT_ON_REFRESH`；Windows Kill 停挂
 - [x] 版本钉 **0.2.10** + tag
+
+### 本波（attempts + job ops metrics + webhook）
+
+- [x] `attempt_count` / `max_attempts`；lease 过期达上限 → fail
+- [x] metrics：timeout / lease_reclaim / max_attempts / heartbeat / webhook_ok
+- [x] `AI_CLOUDHUB_JOB_WEBHOOK_URL` terminal 异步 POST
+- [x] 版本钉 **0.2.11** + tag

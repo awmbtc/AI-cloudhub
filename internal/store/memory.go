@@ -618,6 +618,7 @@ func (m *Memory) ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, err
 	j.ClaimedByAgentID = claimedByAgentID
 	j.HeartbeatAt = now
 	j.ClaimedAt = now
+	j.AttemptCount++
 	j.UpdatedAt = now
 	return cloneJob(j), nil
 }

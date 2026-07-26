@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.10"
+const serverVersion = "0.2.11"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -345,6 +345,7 @@ func toolRegistry() []toolMeta {
 					"note":         map[string]interface{}{"type": "string"},
 					"connector_id": map[string]interface{}{"type": "string", "description": "Optional Stage C connector (e.g. git) for runner materialization"},
 					"timeout_sec":  map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
+					"max_attempts": map[string]interface{}{"type": "integer", "description": "Max claims before lease expiry fails job (0=unlimited)"},
 				},
 				"required": []string{"drive_id", "command"},
 			},
@@ -766,6 +767,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			Note        string   `json:"note"`
 			ConnectorID string   `json:"connector_id"`
 			TimeoutSec  int      `json:"timeout_sec"`
+			MaxAttempts int      `json:"max_attempts"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -773,7 +775,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
 			return nil, fmt.Errorf("drive_id and command required")
 		}
-		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec)
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec, args.MaxAttempts)
 	case "claim_next_job":
 		return toolClaimNextJob(api, token)
 	case "complete_job":
@@ -1292,7 +1294,7 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string) (interf
 	return toolResultJSON(parsed)
 }
 
-func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec int) (interface{}, error) {
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec, maxAttempts int) (interface{}, error) {
 	payload := map[string]interface{}{
 		"drive_id": driveID,
 		"command":  command,
@@ -1314,6 +1316,9 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	}
 	if timeoutSec > 0 {
 		payload["timeout_sec"] = timeoutSec
+	}
+	if maxAttempts > 0 {
+		payload["max_attempts"] = maxAttempts
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
 	if err != nil {

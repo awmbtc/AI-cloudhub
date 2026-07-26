@@ -393,6 +393,42 @@
           "expr": "sum(rate(aicloudhub_jobs_cancelled_total{job=~\"$job\", instance=~\"$instance\"}[5m]))",
           "legendFormat": "cancelled",
           "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(aicloudhub_jobs_timeout_total{job=~\"$job\", instance=~\"$instance\"}[5m]))",
+          "legendFormat": "timeout",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(aicloudhub_jobs_lease_reclaim_total{job=~\"$job\", instance=~\"$instance\"}[5m]))",
+          "legendFormat": "lease_reclaim",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(aicloudhub_jobs_max_attempts_total{job=~\"$job\", instance=~\"$instance\"}[5m]))",
+          "legendFormat": "max_attempts",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(aicloudhub_jobs_heartbeat_total{job=~\"$job\", instance=~\"$instance\"}[5m]))",
+          "legendFormat": "heartbeat",
+          "refId": "H"
         }
       ],
       "title": "Job counters (rate)",

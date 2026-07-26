@@ -254,6 +254,42 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	}
 }
 
+func TestMaxAttemptsOnLeaseExpiry(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	svc.SetLease(50 * time.Millisecond)
+	uid := "u-max"
+	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.MaxAttempts != 1 {
+		t.Fatalf("max_attempts %d", j.MaxAttempts)
+	}
+	claimed, err := svc.Claim(uid, j.ID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.AttemptCount != 1 {
+		t.Fatalf("attempt %d", claimed.AttemptCount)
+	}
+	time.Sleep(80 * time.Millisecond)
+	n, err := svc.ReclaimStale(uid)
+	if err != nil || n != 1 {
+		t.Fatalf("reclaim n=%d err=%v", n, err)
+	}
+	done, err := svc.Get(uid, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusFailed {
+		t.Fatalf("status %s want failed", done.Status)
+	}
+	if !strings.Contains(done.Note, "max attempts") {
+		t.Fatalf("note %q", done.Note)
+	}
+}
+
 func TestHardTimeoutFailsJob(t *testing.T) {
 	mem := store.NewMemory()
 	svc := NewService(mem)

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.10
+  version: 0.2.11
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -705,6 +705,12 @@ components:
         timeout_sec:
           type: integer
           description: Hard wall-clock seconds from claim (0 = none)
+        attempt_count:
+          type: integer
+          description: Number of successful claims so far
+        max_attempts:
+          type: integer
+          description: When >0, lease expiry after this many claims fails the job
         stdout:
           type: string
           description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
@@ -748,6 +754,9 @@ components:
         timeout_sec:
           type: integer
           description: Optional hard timeout seconds from claim (runner + API reclaim)
+        max_attempts:
+          type: integer
+          description: Optional max claims; lease expiry fails job when attempt_count reaches this
 
     JobComplete:
       type: object

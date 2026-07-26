@@ -1,14 +1,17 @@
 package job
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/awmbtc/AI-cloudhub/internal/metrics"
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 	"github.com/google/uuid"
 )
@@ -49,6 +52,10 @@ type Job struct {
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 	// TimeoutSec max run seconds from claim (0 = none / runner default only).
 	TimeoutSec int `json:"timeout_sec,omitempty"`
+	// AttemptCount number of successful claims so far.
+	AttemptCount int `json:"attempt_count,omitempty"`
+	// MaxAttempts when >0, lease expiry at/after this many claims fails the job (0 = unlimited).
+	MaxAttempts int `json:"max_attempts,omitempty"`
 	// Stdout / Stderr capped process output from runner (empty if not reported).
 	Stdout          string    `json:"stdout,omitempty"`
 	Stderr          string    `json:"stderr,omitempty"`
@@ -69,6 +76,8 @@ type CreateInput struct {
 	ConnectorID string   `json:"connector_id"`
 	// TimeoutSec optional hard wall clock from claim (0 = none).
 	TimeoutSec int `json:"timeout_sec"`
+	// MaxAttempts optional claim budget before lease expiry fails the job (0 = unlimited).
+	MaxAttempts int `json:"max_attempts"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -144,6 +153,10 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	if timeoutSec < 0 {
 		timeoutSec = 0
 	}
+	maxAttempts := in.MaxAttempts
+	if maxAttempts < 0 {
+		maxAttempts = 0
+	}
 	sj := &store.Job{
 		ID:          uuid.NewString(),
 		UserID:      userID,
@@ -157,6 +170,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		ConnectorID: strings.TrimSpace(in.ConnectorID),
 		AgentID:     strings.TrimSpace(in.AgentID),
 		TimeoutSec:  timeoutSec,
+		MaxAttempts: maxAttempts,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -286,6 +300,7 @@ func (s *Service) Heartbeat(userID, id string) (*Job, error) {
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
+	metrics.IncJobHeartbeat()
 	return jobFromStore(sj), nil
 }
 
@@ -318,6 +333,7 @@ func (s *Service) ReclaimStale(userID string) (int, error) {
 			}
 			if !start.IsZero() && now.After(start.Add(time.Duration(sec)*time.Second)) {
 				if _, err := s.failTimeout(userID, sj.ID, sec); err == nil {
+					metrics.IncJobTimeout()
 					n++
 				}
 				continue
@@ -334,9 +350,18 @@ func (s *Service) ReclaimStale(userID string) (int, error) {
 		if ts.IsZero() || !ts.Before(leaseCutoff) {
 			continue
 		}
+		// max_attempts: stop re-queuing after enough claims
+		if sj.MaxAttempts > 0 && sj.AttemptCount >= sj.MaxAttempts {
+			if _, err := s.failMaxAttempts(userID, sj.ID, sj.AttemptCount, sj.MaxAttempts); err == nil {
+				metrics.IncJobMaxAttempts()
+				n++
+			}
+			continue
+		}
 		if _, err := s.ReleaseToPending(userID, sj.ID, "lease expired"); err != nil {
 			continue
 		}
+		metrics.IncJobLeaseReclaim()
 		n++
 	}
 	return n, nil
@@ -377,7 +402,65 @@ func (s *Service) failTimeout(userID, id string, sec int) (*Job, error) {
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
-	return jobFromStore(sj), nil
+	j := jobFromStore(sj)
+	notifyJobTerminal(j)
+	return j, nil
+}
+
+// failMaxAttempts marks running job failed when lease expired and claim budget is exhausted.
+func (s *Service) failMaxAttempts(userID, id string, attempt, max int) (*Job, error) {
+	sj, err := s.store.GetJob(userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("job not found")
+	}
+	if Status(sj.Status) != StatusRunning {
+		return nil, fmt.Errorf("job not running (status=%s)", sj.Status)
+	}
+	code := 1
+	sj.Status = string(StatusFailed)
+	sj.ExitCode = &code
+	sj.Note = appendJobNote(sj.Note, fmt.Sprintf("max attempts exceeded (%d/%d) after lease expired", attempt, max))
+	sj.HeartbeatAt = time.Time{}
+	sj.ClaimedAt = time.Time{}
+	sj.UpdatedAt = time.Now().UTC()
+	if err := s.store.UpdateJob(sj); err != nil {
+		return nil, err
+	}
+	j := jobFromStore(sj)
+	notifyJobTerminal(j)
+	return j, nil
+}
+
+// notifyJobTerminal best-effort POSTs job JSON to AI_CLOUDHUB_JOB_WEBHOOK_URL (async).
+func notifyJobTerminal(j *Job) {
+	if j == nil {
+		return
+	}
+	url := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_URL"))
+	if url == "" {
+		return
+	}
+	payload, err := json.Marshal(j)
+	if err != nil {
+		return
+	}
+	go func() {
+		client := &http.Client{Timeout: 5 * time.Second}
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "AI-cloudhub-job-webhook/1")
+		res, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		_ = res.Body.Close()
+		if res.StatusCode < 300 {
+			metrics.IncJobWebhook()
+		}
+	}()
 }
 
 // ReleaseToPending returns a running job to pending so another BYOC runner can claim it.
@@ -529,7 +612,9 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
-	return jobFromStore(sj), nil
+	j := jobFromStore(sj)
+	notifyJobTerminal(j)
+	return j, nil
 }
 
 func jobOutputMax() int {
@@ -594,7 +679,9 @@ func (s *Service) Cancel(userID, id string) (*Job, error) {
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
 	}
-	return jobFromStore(sj), nil
+	j := jobFromStore(sj)
+	notifyJobTerminal(j)
+	return j, nil
 }
 
 func jobFromStore(sj *store.Job) *Job {
@@ -615,6 +702,8 @@ func jobFromStore(sj *store.Job) *Job {
 		ClaimedByAgentID: sj.ClaimedByAgentID,
 		DurationMs:       sj.DurationMs,
 		TimeoutSec:       sj.TimeoutSec,
+		AttemptCount:     sj.AttemptCount,
+		MaxAttempts:      sj.MaxAttempts,
 		Stdout:           sj.Stdout,
 		Stderr:           sj.Stderr,
 		StdoutTruncated:  sj.StdoutTruncated,

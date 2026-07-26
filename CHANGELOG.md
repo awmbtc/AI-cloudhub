@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.11
+
+Job attempt budget, ops metrics, optional terminal webhook.
+
+### Jobs
+- `attempt_count` increments on claim; `max_attempts` fails on lease expiry when budget exhausted
+- Metrics: `jobs_timeout_total`, `jobs_lease_reclaim_total`, `jobs_max_attempts_total`, `jobs_heartbeat_total`, `jobs_webhook_ok_total`
+- Optional `AI_CLOUDHUB_JOB_WEBHOOK_URL` async POST of job JSON on terminal status
+
 ## v0.2.10
 
 Job hard timeout, output truncation flags, hubd mount path probe + force remount.

@@ -39,6 +39,12 @@ var (
 	MemorySearches        atomic.Uint64
 	JobsWithConnector     atomic.Uint64
 	JobsCompletedConn     atomic.Uint64
+	// Job ops (lease / timeout / heartbeat / webhook).
+	JobsTimeout       atomic.Uint64
+	JobsLeaseReclaim  atomic.Uint64
+	JobsMaxAttempts   atomic.Uint64
+	JobsHeartbeat     atomic.Uint64
+	JobsWebhookOK     atomic.Uint64
 )
 
 // IncHTTP increments HTTP request counter.
@@ -121,6 +127,21 @@ func IncJobWithConnector() { JobsWithConnector.Add(1) }
 // IncJobCompletedWithConnector increments job complete when job had connector_id.
 func IncJobCompletedWithConnector() { JobsCompletedConn.Add(1) }
 
+// IncJobTimeout increments hard-timeout terminal fails.
+func IncJobTimeout() { JobsTimeout.Add(1) }
+
+// IncJobLeaseReclaim increments lease-expired release to pending.
+func IncJobLeaseReclaim() { JobsLeaseReclaim.Add(1) }
+
+// IncJobMaxAttempts increments fail after max_attempts on lease expiry.
+func IncJobMaxAttempts() { JobsMaxAttempts.Add(1) }
+
+// IncJobHeartbeat increments successful lease heartbeats.
+func IncJobHeartbeat() { JobsHeartbeat.Add(1) }
+
+// IncJobWebhook increments successful terminal job webhook deliveries.
+func IncJobWebhook() { JobsWebhookOK.Add(1) }
+
 // Handler serves Prometheus text exposition (no auth).
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -187,4 +208,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_completed_with_connector_total Jobs completed that had connector_id\n")
 	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_completed_with_connector_total counter\n")
 	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_completed_with_connector_total %d\n", JobsCompletedConn.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_timeout_total BYOC jobs failed by hard timeout\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_timeout_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_timeout_total %d\n", JobsTimeout.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_lease_reclaim_total Running jobs released to pending after lease expiry\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_lease_reclaim_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_lease_reclaim_total %d\n", JobsLeaseReclaim.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_max_attempts_total Jobs failed after max_attempts on lease expiry\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_max_attempts_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_max_attempts_total %d\n", JobsMaxAttempts.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_heartbeat_total Successful job lease heartbeats\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_heartbeat_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_heartbeat_total %d\n", JobsHeartbeat.Load())
+	_, _ = fmt.Fprintf(w, "# HELP aicloudhub_jobs_webhook_ok_total Terminal job webhooks delivered (HTTP <300)\n")
+	_, _ = fmt.Fprintf(w, "# TYPE aicloudhub_jobs_webhook_ok_total counter\n")
+	_, _ = fmt.Fprintf(w, "aicloudhub_jobs_webhook_ok_total %d\n", JobsWebhookOK.Load())
 }
