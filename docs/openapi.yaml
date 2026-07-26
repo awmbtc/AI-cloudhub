@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.21
+  version: 0.2.22
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -740,6 +740,28 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    JobWebhookOutbox:
+      type: object
+      description: Durable terminal job webhook outbox row (event_id is primary key)
+      properties:
+        id: { type: string, description: event_id }
+        job_id: { type: string }
+        user_id: { type: string }
+        event: { type: string, example: job.succeeded }
+        status:
+          type: string
+          enum: [pending, delivered, dead]
+        attempts: { type: integer }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        payload:
+          type: object
+          description: Full envelope (get/retry only; omitted on list)
+          additionalProperties: true
 
     JobCreate:
       type: object
@@ -1916,6 +1938,92 @@ paths:
               schema: { $ref: '#/components/schemas/Job' }
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Admin required
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/admin/job-webhooks:
+    get:
+      tags: [admin]
+      summary: List job webhook outbox rows (admin)
+      operationId: adminListJobWebhooks
+      description: |
+        Durable terminal webhook outbox. Filter by `status` (pending|delivered|dead).
+        List items omit payload; use get-by-id for full envelope.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, delivered, dead]
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: Outbox list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobWebhookOutbox' }
+                  count: { type: integer }
+                  status: { type: string }
+                  limit: { type: integer }
+        '403':
+          description: Admin required
+
+  /v1/admin/job-webhooks/{id}:
+    get:
+      tags: [admin]
+      summary: Get job webhook outbox row (admin)
+      operationId: adminGetJobWebhook
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: event_id
+      responses:
+        '200':
+          description: Outbox row with payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobWebhookOutbox' }
+        '403':
+          description: Admin required
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/admin/job-webhooks/{id}/retry:
+    post:
+      tags: [admin]
+      summary: Requeue webhook outbox for delivery (admin)
+      operationId: adminRetryJobWebhook
+      description: |
+        Resets status to pending, attempts to 0, next_attempt_at to now.
+        Works for dead, pending, and re-fire of delivered rows (same event_id).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Requeued outbox row
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobWebhookOutbox' }
         '403':
           description: Admin required
         '404':

@@ -413,8 +413,18 @@ type Store interface {
 	// ListDueWebhookOutbox returns pending rows with next_attempt_at <= now (oldest first).
 	ListDueWebhookOutbox(now time.Time, limit int) ([]*WebhookOutbox, error)
 	UpdateWebhookOutbox(e *WebhookOutbox) error
+	// GetWebhookOutbox returns a row by event id (admin).
+	GetWebhookOutbox(id string) (*WebhookOutbox, error)
+	// ListWebhookOutbox lists outbox rows (admin); optional status filter; newest created_at first.
+	ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, error)
 
 	Close() error
+}
+
+// WebhookOutboxFilter filters admin outbox listings.
+type WebhookOutboxFilter struct {
+	Status string // empty = all; pending|delivered|dead
+	Limit  int    // 0 = default 100; max 500
 }
 
 // WebhookOutbox is a durable job terminal webhook delivery row.

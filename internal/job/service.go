@@ -946,6 +946,99 @@ func deliverWebhookOnce(client *http.Client, url, secret string, row *store.Webh
 	return true, ""
 }
 
+// WebhookOutboxView is the admin/API shape for outbox rows.
+type WebhookOutboxView struct {
+	ID            string     `json:"id"`
+	JobID         string     `json:"job_id"`
+	UserID        string     `json:"user_id"`
+	Event         string     `json:"event"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	NextAttemptAt time.Time  `json:"next_attempt_at"`
+	LastError     string     `json:"last_error,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
+	// Payload is the full envelope JSON (included on get / after retry).
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+func webhookViewFromStore(e *store.WebhookOutbox, withPayload bool) *WebhookOutboxView {
+	if e == nil {
+		return nil
+	}
+	v := &WebhookOutboxView{
+		ID:            e.ID,
+		JobID:         e.JobID,
+		UserID:        e.UserID,
+		Event:         e.Event,
+		Status:        e.Status,
+		Attempts:      e.Attempts,
+		NextAttemptAt: e.NextAttemptAt,
+		LastError:     e.LastError,
+		CreatedAt:     e.CreatedAt,
+		UpdatedAt:     e.UpdatedAt,
+	}
+	if !e.DeliveredAt.IsZero() {
+		t := e.DeliveredAt
+		v.DeliveredAt = &t
+	}
+	if withPayload && len(e.PayloadJSON) > 0 {
+		v.Payload = json.RawMessage(append([]byte(nil), e.PayloadJSON...))
+	}
+	return v
+}
+
+// AdminListWebhooks lists outbox rows (admin). status empty = all; limit default 100 max 500.
+// List items omit payload body (use AdminGetWebhook for full envelope).
+func (s *Service) AdminListWebhooks(status string, limit int) []*WebhookOutboxView {
+	list, err := s.store.ListWebhookOutbox(store.WebhookOutboxFilter{
+		Status: strings.TrimSpace(status),
+		Limit:  limit,
+	})
+	if err != nil {
+		return nil
+	}
+	out := make([]*WebhookOutboxView, 0, len(list))
+	for _, e := range list {
+		out = append(out, webhookViewFromStore(e, false))
+	}
+	return out
+}
+
+// AdminGetWebhook returns one outbox row including payload (admin).
+func (s *Service) AdminGetWebhook(id string) (*WebhookOutboxView, error) {
+	e, err := s.store.GetWebhookOutbox(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	return webhookViewFromStore(e, true), nil
+}
+
+// AdminRetryWebhook requeues a dead/pending/delivered row for immediate delivery (admin).
+// Resets status to pending, attempts to 0, next_attempt_at to now; same event_id/payload.
+// Kicks ProcessWebhookOutbox asynchronously when WEBHOOK_URL is configured.
+func (s *Service) AdminRetryWebhook(id string) (*WebhookOutboxView, error) {
+	e, err := s.store.GetWebhookOutbox(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	now := time.Now().UTC()
+	e.Status = "pending"
+	e.Attempts = 0
+	e.NextAttemptAt = now
+	e.LastError = ""
+	e.DeliveredAt = time.Time{}
+	e.UpdatedAt = now
+	if err := s.store.UpdateWebhookOutbox(e); err != nil {
+		return nil, err
+	}
+	if jobWebhookURL() != "" {
+		go func() { _ = s.ProcessWebhookOutbox(8) }()
+	}
+	return webhookViewFromStore(e, true), nil
+}
+
 // VerifyJobWebhookSignature checks HMAC for receivers (exported for tests/docs).
 // signed = HMAC-SHA256(secret, timestamp + "." + body); header "sha256=<hex>".
 func VerifyJobWebhookSignature(secret, timestamp, signatureHeader string, body []byte) bool {

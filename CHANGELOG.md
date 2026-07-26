@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.22
+
+Admin list/get/retry for job webhook outbox.
+
+### Admin / Jobs
+- `GET /v1/admin/job-webhooks?status=&limit=` (status: pending|delivered|dead)
+- `GET /v1/admin/job-webhooks/{id}` includes full envelope payload
+- `POST /v1/admin/job-webhooks/{id}/retry` requeues (attempts=0, next now); works for dead and re-fire delivered
+- Audit `admin.job_webhooks.list|get|retry`
+
 ## v0.2.21
 
 Durable job webhook outbox with retry / dead-letter.

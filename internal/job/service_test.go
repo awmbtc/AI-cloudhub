@@ -644,6 +644,79 @@ func TestWebhookOutboxDeliverAndRetry(t *testing.T) {
 	}
 }
 
+func TestAdminRetryWebhook(t *testing.T) {
+	var hits atomic.Int32
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer okSrv.Close()
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer failSrv.Close()
+
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_URL", failSrv.URL)
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_BACKOFF_SEC", "0")
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS", "1")
+
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	uid := "u-retry-admin"
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"t"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim(uid, j.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Complete(uid, j.ID, CompleteInput{OK: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = svc.ProcessWebhookOutbox(8)
+		due, _ := mem.ListDueWebhookOutbox(time.Now().UTC().Add(time.Hour), 10)
+		if len(due) == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	dead := svc.AdminListWebhooks("dead", 10)
+	if len(dead) != 1 {
+		t.Fatalf("want 1 dead got %d", len(dead))
+	}
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_URL", okSrv.URL)
+	t.Setenv("AI_CLOUDHUB_JOB_WEBHOOK_MAX_ATTEMPTS", "5")
+
+	got, err := svc.AdminRetryWebhook(dead[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "pending" || got.Attempts != 0 {
+		t.Fatalf("after retry: %+v", got)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = svc.ProcessWebhookOutbox(8)
+		if len(svc.AdminListWebhooks("delivered", 10)) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if hits.Load() < 1 {
+		t.Fatalf("expected delivery after admin retry, hits=%d", hits.Load())
+	}
+	view, err := svc.AdminGetWebhook(dead[0].ID)
+	if err != nil || view.Status != "delivered" {
+		t.Fatalf("get after deliver: %v %+v", err, view)
+	}
+	if len(view.Payload) == 0 {
+		t.Fatal("expected payload on get")
+	}
+}
+
 func TestWebhookOutboxDeadAfterMax(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

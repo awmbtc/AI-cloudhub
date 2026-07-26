@@ -1587,6 +1587,60 @@ func scanWebhookOutboxPG(row interface{ Scan(dest ...any) error }) (*WebhookOutb
 	return &e, nil
 }
 
+func (p *Postgres) GetWebhookOutbox(id string) (*WebhookOutbox, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	row := p.db.QueryRow(
+		`SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox WHERE id=$1`, id,
+	)
+	e, err := scanWebhookOutboxPG(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("webhook outbox not found")
+		}
+		return nil, err
+	}
+	return e, nil
+}
+
+func (p *Postgres) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox WHERE 1=1`
+	var args []interface{}
+	n := 1
+	if strings.TrimSpace(f.Status) != "" {
+		q += fmt.Sprintf(` AND status=$%d`, n)
+		args = append(args, strings.TrimSpace(f.Status))
+		n++
+	}
+	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, n)
+	args = append(args, limit)
+	rows, err := p.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*WebhookOutbox
+	for rows.Next() {
+		e, err := scanWebhookOutboxPG(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // IsPostgresDSN reports whether path is a postgres URL.
 func IsPostgresDSN(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))

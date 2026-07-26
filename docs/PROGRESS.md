@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.21 已发布；job webhook durable outbox
+## 总览：v0.2.22 已发布；admin job-webhooks list/retry
 
 | 阶段 | 状态 |
 |------|------|
@@ -453,3 +453,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `job_webhook_outbox` store + enqueue on terminal
 - [x] worker retry/backoff/dead + metrics fail/dead
 - [x] 版本钉 **0.2.21** + tag
+
+### 本波（admin webhook retry）
+
+- [x] `GET /v1/admin/job-webhooks` list/get + `POST …/retry`
+- [x] store Get/ListWebhookOutbox；smoke + docs
+- [x] 版本钉 **0.2.22** + tag

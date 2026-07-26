@@ -1753,6 +1753,62 @@ func scanWebhookOutbox(row scannable) (*WebhookOutbox, error) {
 	return &e, nil
 }
 
+func (s *SQLite) GetWebhookOutbox(id string) (*WebhookOutbox, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	row := s.db.QueryRow(
+		`SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox WHERE id = ?`, id,
+	)
+	e, err := scanWebhookOutbox(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("webhook outbox not found")
+		}
+		// scanWebhookOutbox may wrap or return other errors
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, fmt.Errorf("webhook outbox not found")
+		}
+		return nil, err
+	}
+	return e, nil
+}
+
+func (s *SQLite) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT id, job_id, user_id, event, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at, delivered_at
+		 FROM job_webhook_outbox WHERE 1=1`
+	var args []interface{}
+	if strings.TrimSpace(f.Status) != "" {
+		q += ` AND status = ?`
+		args = append(args, strings.TrimSpace(f.Status))
+	}
+	q += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*WebhookOutbox
+	for rows.Next() {
+		e, err := scanWebhookOutbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func scanSnapshot(row interface{ Scan(dest ...any) error }) (*Snapshot, error) {
 	var sn Snapshot
 	var payload, created string

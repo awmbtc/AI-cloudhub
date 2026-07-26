@@ -134,6 +134,10 @@ POST /v1/admin/jobs/{id}/cancel
 
 POST /v1/admin/jobs/{id}/release
 { "note": "optional reason" }
+
+GET  /v1/admin/job-webhooks?status=&limit=
+GET  /v1/admin/job-webhooks/{id}
+POST /v1/admin/job-webhooks/{id}/retry
 ```
 
 - Cross-user listing; `limit` default 100, max 500.
@@ -142,8 +146,9 @@ POST /v1/admin/jobs/{id}/release
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
+- **Admin job-webhooks**: list/get outbox; `status=pending|delivered|dead`; retry requeues any row (including dead/delivered) with same `event_id`/`payload`, attempts reset to 0.
 - Agent tokens cannot call admin APIs.
-- Audit: `admin.jobs.list` / `stats` / `get` / `cancel` / `release`.
+- Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry`.
 
 ## Honesty
 

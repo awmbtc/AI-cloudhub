@@ -1190,3 +1190,49 @@ func (m *Memory) UpdateWebhookOutbox(e *WebhookOutbox) error {
 	m.webhooks[e.ID] = cloneWebhookOutbox(e)
 	return nil
 }
+
+func (m *Memory) GetWebhookOutbox(id string) (*WebhookOutbox, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	e, ok := m.webhooks[id]
+	if !ok {
+		return nil, fmt.Errorf("webhook outbox not found")
+	}
+	return cloneWebhookOutbox(e), nil
+}
+
+func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	status := strings.TrimSpace(f.Status)
+	var out []*WebhookOutbox
+	for _, e := range m.webhooks {
+		if status != "" && e.Status != status {
+			continue
+		}
+		out = append(out, cloneWebhookOutbox(e))
+	}
+	// newest created_at first
+	for i := 0; i < len(out); i++ {
+		for k := i + 1; k < len(out); k++ {
+			if out[k].CreatedAt.After(out[i].CreatedAt) {
+				out[i], out[k] = out[k], out[i]
+			}
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}

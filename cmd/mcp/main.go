@@ -29,7 +29,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.21"
+const serverVersion = "0.2.22"
 
 type principalCache struct {
 	mu       sync.Mutex

@@ -455,3 +455,39 @@ print("webhook outbox ok event_id", d["event_id"])
 # metrics should show webhook_ok after delivery
 "${CURL[@]}" "$API/metrics" | grep -q 'aicloudhub_jobs_webhook_ok_total [1-9]'
 echo "webhook metrics ok"
+echo "== admin job-webhooks list/get/retry =="
+WID=$("${CURL[@]}" "$API/v1/admin/job-webhooks?status=delivered&limit=20" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("count",0)>=1, d
+print(d["items"][0]["id"])
+')
+"${CURL[@]}" "$API/v1/admin/job-webhooks/$WID" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d.get("id")=="'"$WID"'", d
+assert d.get("payload"), d
+print("admin webhook get ok", d["id"], d.get("status"))
+'
+# re-fire delivered (same event_id)
+"${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/$WID/retry" -H "Authorization: Bearer $TOK" \
+  | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["status"]=="pending" and d["attempts"]==0, d
+print("admin webhook retry ok", d["id"])
+'
+# wait redeliver
+for _ in $(seq 1 40); do
+  st=$("${CURL[@]}" "$API/v1/admin/job-webhooks/$WID" -H "Authorization: Bearer $TOK" \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))')
+  if [[ "$st" == "delivered" ]]; then break; fi
+  sleep 0.15
+done
+test "$st" = "delivered"
+code=$("${CURL[@]}" -o /tmp/aihub-wh-adm.json -w "%{http_code}" \
+  "$API/v1/admin/job-webhooks" -H "Authorization: Bearer $ATOK")
+test "$code" = "403"
+echo "admin job-webhooks ok (agent denied $code)"

@@ -134,6 +134,8 @@ func New(d Deps) http.Handler {
 	if s.jobs != nil {
 		mux.HandleFunc("/v1/admin/jobs", s.withAdmin(s.handleAdminJobsList))
 		mux.HandleFunc("/v1/admin/jobs/", s.withAdmin(s.routeAdminJobsSub))
+		mux.HandleFunc("/v1/admin/job-webhooks", s.withAdmin(s.handleAdminJobWebhooksList))
+		mux.HandleFunc("/v1/admin/job-webhooks/", s.withAdmin(s.routeAdminJobWebhooksSub))
 	}
 	mux.HandleFunc("/v1/modules", s.method(http.MethodGet, s.handleModules))
 	// Stripe (or stub) payment webhook — verified via AI_CLOUDHUB_STRIPE_WEBHOOK_SECRET
@@ -2470,6 +2472,74 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 	}
 	s.auth.Audit(adminID, "admin.jobs.get", j.ID, "user="+j.UserID)
 	writeJSON(w, http.StatusOK, j)
+}
+
+// handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&limit=
+func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status != "" && status != "pending" && status != "delivered" && status != "dead" {
+		writeErr(w, http.StatusBadRequest, "status must be pending, delivered, or dead")
+		return
+	}
+	items := s.jobs.AdminListWebhooks(status, limit)
+	eff := limit
+	if eff <= 0 {
+		eff = 100
+	}
+	if eff > 500 {
+		eff = 500
+	}
+	s.auth.Audit(adminID, "admin.job_webhooks.list", "", fmt.Sprintf("n=%d status=%s", len(items), status))
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items":  items,
+		"status": status,
+		"limit":  eff,
+		"count":  len(items),
+	})
+}
+
+// routeAdminJobWebhooksSub: GET /{id} | POST /{id}/retry
+func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/admin/job-webhooks/"), "/")
+	if path == "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) == 2 && parts[1] == "retry" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		v, err := s.jobs.AdminRetryWebhook(parts[0])
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		s.auth.Audit(adminID, "admin.job_webhooks.retry", v.ID, "job="+v.JobID+" event="+v.Event)
+		writeJSON(w, http.StatusOK, v)
+		return
+	}
+	if len(parts) != 1 {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	v, err := s.jobs.AdminGetWebhook(parts[0])
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.auth.Audit(adminID, "admin.job_webhooks.get", v.ID, "job="+v.JobID)
+	writeJSON(w, http.StatusOK, v)
 }
 
 // parseLabelQuery parses repeated query values "key:value" into a map.
