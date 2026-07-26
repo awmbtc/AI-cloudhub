@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.14
+
+Job create idempotency and runner cancel detection.
+
+### Jobs
+- `idempotency_key` on create (unique per user; replay returns same job)
+- Runner polls job status while running; remote cancel kills agent (`AI_CLOUDHUB_CANCEL_POLL`)
+- Complete is no-op when job already terminal (incl. cancelled)
+
 ## v0.2.13
 
 Job labels, region-aware claim, webhook event envelope.

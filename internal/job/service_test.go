@@ -257,6 +257,55 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	}
 }
 
+func TestIdempotentCreate(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-idem"
+	a, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"echo"}, IdempotencyKey: "req-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"echo", "other"}, IdempotencyKey: "req-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID != b.ID {
+		t.Fatalf("idempotent create should return same id %s vs %s", a.ID, b.ID)
+	}
+	if b.IdempotencyKey != "req-1" {
+		t.Fatalf("key %q", b.IdempotencyKey)
+	}
+	// different key = new job
+	c, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"x"}, IdempotencyKey: "req-2"})
+	if err != nil || c.ID == a.ID {
+		t.Fatalf("new key: %v %s", err, c.ID)
+	}
+}
+
+func TestCompleteNoopWhenCancelled(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	j, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Claim("u", j.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Cancel("u", j.ID); err != nil {
+		t.Fatal(err)
+	}
+	done, err := svc.Complete("u", j.ID, CompleteInput{OK: true, Note: "late"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != StatusCancelled {
+		t.Fatalf("status %s want cancelled", done.Status)
+	}
+}
+
 func TestLabelsAndRegionClaim(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-lab"

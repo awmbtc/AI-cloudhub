@@ -74,6 +74,8 @@
 - Job priority：`priority` 更高先 claim（同优先级 FIFO）；默认 0，夹紧 ±1000。
 - Job labels：创建 `labels` 字符串 map；list 用重复 query `label=key:value`（全匹配）。
 - Job region claim：`X-AI-Cloudhub-Region` / body `region` / runner `AI_CLOUDHUB_REGION` 只 claim 匹配 `region_hint` 的 job。
+- Job idempotency：创建 `idempotency_key`（每用户唯一）；重放返回同一 job；控制面不保证跨副本强一致时序。
+- Job cancel → runner：worker 轮询 GET job（`AI_CLOUDHUB_CANCEL_POLL` 默认 5s）；取消后 CommandContext kill；complete 对已 terminal 为 no-op。
 - Job runner 身份：claim 可带 `X-AI-Cloudhub-Runner-Id` / body `runner_id`；runner 默认 `AI_CLOUDHUB_RUNNER_ID` 或 hostname。
 - Job webhook（可选）：POST envelope `{event_id,event,occurred_at,job}`；头 `X-AI-Cloudhub-Event-Id` / `Event`；`AI_CLOUDHUB_JOB_WEBHOOK_SECRET` 时 HMAC 签 `timestamp.body`。非可靠投递。
 - Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。

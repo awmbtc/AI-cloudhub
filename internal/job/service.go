@@ -50,6 +50,8 @@ type Job struct {
 	Priority int `json:"priority,omitempty"`
 	// Labels optional key/value tags for filtering (capped size).
 	Labels map[string]string `json:"labels,omitempty"`
+	// IdempotencyKey client create key unique per user (empty = none).
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// ExitCode process exit when reported by runner (nil = not set).
 	ExitCode *int `json:"exit_code,omitempty"`
 	// DurationMs runner wall time in milliseconds (0 = not reported).
@@ -90,6 +92,8 @@ type CreateInput struct {
 	Priority int `json:"priority"`
 	// Labels optional string map tags (max 16 keys, short values).
 	Labels map[string]string `json:"labels"`
+	// IdempotencyKey optional client key unique per user; replay returns same job.
+	IdempotencyKey string `json:"idempotency_key"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -140,12 +144,22 @@ func leaseFromEnv() time.Duration {
 }
 
 // Create enqueues a job for user runners to claim.
+// When IdempotencyKey is set and a job already exists for this user+key, that job is returned (200/201 same body).
 func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	if strings.TrimSpace(in.DriveID) == "" {
 		return nil, fmt.Errorf("drive_id required")
 	}
 	if len(in.Command) == 0 {
 		return nil, fmt.Errorf("command required (runs on BYOC runner, not platform pool)")
+	}
+	idem := strings.TrimSpace(in.IdempotencyKey)
+	if len(idem) > 128 {
+		return nil, fmt.Errorf("idempotency_key max 128 chars")
+	}
+	if idem != "" {
+		if existing, err := s.store.GetJobByIdempotencyKey(userID, idem); err == nil && existing != nil {
+			return jobFromStore(existing), nil
+		}
 	}
 	mode := in.Mode
 	if mode == "" {
@@ -181,25 +195,32 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		return nil, err
 	}
 	sj := &store.Job{
-		ID:          uuid.NewString(),
-		UserID:      userID,
-		DriveID:     in.DriveID,
-		BindingID:   in.BindingID,
-		Mode:        mode,
-		CommandJSON: cmdJSON,
-		Status:      string(StatusPending),
-		RegionHint:  in.RegionHint,
-		Note:        note,
-		ConnectorID: strings.TrimSpace(in.ConnectorID),
-		AgentID:     strings.TrimSpace(in.AgentID),
-		Priority:    priority,
-		LabelsJSON:  labelsJSON,
-		TimeoutSec:  timeoutSec,
-		MaxAttempts: maxAttempts,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:             uuid.NewString(),
+		UserID:         userID,
+		DriveID:        in.DriveID,
+		BindingID:      in.BindingID,
+		Mode:           mode,
+		CommandJSON:    cmdJSON,
+		Status:         string(StatusPending),
+		RegionHint:     in.RegionHint,
+		Note:           note,
+		ConnectorID:    strings.TrimSpace(in.ConnectorID),
+		AgentID:        strings.TrimSpace(in.AgentID),
+		Priority:       priority,
+		LabelsJSON:     labelsJSON,
+		IdempotencyKey: idem,
+		TimeoutSec:     timeoutSec,
+		MaxAttempts:    maxAttempts,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := s.store.CreateJob(sj); err != nil {
+		// Race on unique index: return existing if key set.
+		if idem != "" {
+			if existing, gerr := s.store.GetJobByIdempotencyKey(userID, idem); gerr == nil && existing != nil {
+				return jobFromStore(existing), nil
+			}
+		}
 		return nil, err
 	}
 	return jobFromStore(sj), nil
@@ -326,10 +347,14 @@ func (s *Service) Claim(userID, id, claimedByAgentID, claimedByRunnerID string) 
 }
 
 // Heartbeat refreshes lease on a running job. Runners should call periodically.
+// Returns error if job is not running (including cancelled) so the runner can stop.
 func (s *Service) Heartbeat(userID, id string) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
 	if err != nil {
 		return nil, fmt.Errorf("job not found")
+	}
+	if Status(sj.Status) == StatusCancelled {
+		return nil, fmt.Errorf("job cancelled")
 	}
 	if Status(sj.Status) != StatusRunning {
 		return nil, fmt.Errorf("job not running (status=%s)", sj.Status)
@@ -684,10 +709,15 @@ type CompleteInput struct {
 // Non-empty note is appended to the existing trail (create D-001 / release / clone path),
 // not replaced — same pattern as ReleaseToPending. Capped at 2000 chars.
 // Stdout/stderr are stored with a tail cap (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192).
+// Already-terminal jobs (including cancelled) are returned as-is without mutation.
 func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	sj, err := s.store.GetJob(userID, id)
 	if err != nil {
 		return nil, fmt.Errorf("job not found")
+	}
+	switch Status(sj.Status) {
+	case StatusSucceeded, StatusFailed, StatusCancelled:
+		return jobFromStore(sj), nil
 	}
 	if in.OK {
 		sj.Status = string(StatusSucceeded)
@@ -813,6 +843,7 @@ func jobFromStore(sj *store.Job) *Job {
 		ClaimedByRunnerID: sj.ClaimedByRunnerID,
 		Priority:          sj.Priority,
 		Labels:            decodeJobLabels(sj.LabelsJSON),
+		IdempotencyKey:    sj.IdempotencyKey,
 		DurationMs:        sj.DurationMs,
 		TimeoutSec:        sj.TimeoutSec,
 		AttemptCount:      sj.AttemptCount,

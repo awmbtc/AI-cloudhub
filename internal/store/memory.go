@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -579,6 +580,21 @@ func (m *Memory) GetJob(userID, id string) (*Job, error) {
 		return nil, fmt.Errorf("job not found")
 	}
 	return cloneJob(j), nil
+}
+
+func (m *Memory) GetJobByIdempotencyKey(userID, key string) (*Job, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("job not found")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, j := range m.jobs {
+		if j.UserID == userID && j.IdempotencyKey == key {
+			return cloneJob(j), nil
+		}
+	}
+	return nil, fmt.Errorf("job not found")
 }
 
 func (m *Memory) ListJobs(userID string) ([]*Job, error) {

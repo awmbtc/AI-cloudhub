@@ -140,6 +140,16 @@ print("priority claim high ok", d["id"])
   -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
 "${CURL[@]}" -X POST "$API/v1/jobs/$JLOW/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
 
+echo "== idempotency_key create replay =="
+IDEM_BODY="{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"idempotency_key\":\"smoke-idem-1\"}"
+J1=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$IDEM_BODY" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("idempotency_key")=="smoke-idem-1", d; print(d["id"])')
+J2=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "$IDEM_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+test "$J1" = "$J2"
+echo "idempotent create ok $J1"
+"${CURL[@]}" -X POST "$API/v1/jobs/$J1/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
+
 echo "== labels + region claim =="
 JREG=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d "{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"region_hint\":\"us-east\",\"labels\":{\"env\":\"prod\"}}" \

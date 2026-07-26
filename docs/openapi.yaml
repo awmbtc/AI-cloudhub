@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.13
+  version: 0.2.14
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -721,6 +721,9 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Optional string tags (max 16 keys)
+        idempotency_key:
+          type: string
+          description: Client create key unique per user (empty if none)
         stdout:
           type: string
           description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
@@ -774,6 +777,9 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Optional labels for filtering
+        idempotency_key:
+          type: string
+          description: Optional client dedup key unique per user
 
     JobComplete:
       type: object

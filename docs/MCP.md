@@ -48,7 +48,7 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
 | `list_jobs` | job.run | status / agent / labels 过滤 |
 | `get_job` | job.run | 含 exit/duration/labels/stdout… |
-| `create_job` | job.run | BYOC；可选 timeout / max_attempts / priority / labels |
+| `create_job` | job.run | BYOC；可选 timeout / max_attempts / priority / labels / `idempotency_key` |
 | `claim_next_job` | job.run | priority claim；可选 `runner_id` + `region` |
 | `complete_job` | job.run | complete — optional exit/duration/stdout/stderr + `*_truncated` |
 | `heartbeat_job` | job.run | `POST /v1/jobs/{id}/heartbeat` — refresh lease while running |

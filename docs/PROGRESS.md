@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.13 已发布；labels / region claim / webhook event_id
+## 总览：v0.2.14 已发布；idempotency_key + runner cancel
 
 | 阶段 | 状态 |
 |------|------|
@@ -403,3 +403,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] claim region filter（header/body/`AI_CLOUDHUB_REGION`）
 - [x] webhook envelope `event_id` + Event headers
 - [x] 版本钉 **0.2.13** + tag
+
+### 本波（idempotency + cancel to runner）
+
+- [x] `idempotency_key` create dedup（store unique + GetByKey）
+- [x] runner cancel poll + CommandContext kill；complete no-op if terminal
+- [x] 版本钉 **0.2.14** + tag

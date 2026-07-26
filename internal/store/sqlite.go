@@ -286,12 +286,17 @@ CREATE INDEX IF NOT EXISTS idx_connectors_user ON connectors(user_id);
 		`ALTER TABLE jobs ADD COLUMN priority INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN claimed_by_runner_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN labels_json TEXT`,
+		`ALTER TABLE jobs ADD COLUMN idempotency_key TEXT`,
 	} {
+
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Column already exists on upgraded installs — safe to ignore.
 			_ = err
 		}
 	}
+	// Best-effort unique idempotency per user (empty keys excluded).
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_user_idempotency
+		ON jobs(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != ''`)
 	return nil
 }
 
@@ -1017,6 +1022,7 @@ func parseTime(s string) time.Time {
 const jobSelectCols = `id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note,
 		 COALESCE(agent_id,''), COALESCE(claimed_by_agent_id,''), COALESCE(connector_id,''),
 		 COALESCE(claimed_by_runner_id,''), COALESCE(priority,0), COALESCE(labels_json,''),
+		 COALESCE(idempotency_key,''),
 		 exit_code, COALESCE(duration_ms,0), COALESCE(heartbeat_at,''), COALESCE(claimed_at,''),
 		 COALESCE(timeout_sec,0), COALESCE(attempt_count,0), COALESCE(max_attempts,0),
 		 COALESCE(stdout,''), COALESCE(stderr,''),
@@ -1034,10 +1040,11 @@ func (s *SQLite) CreateJob(j *Job) error {
 	}
 	labels := string(j.LabelsJSON)
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, claimed_by_runner_id, priority, labels_json, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, attempt_count, max_attempts, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO jobs (id, user_id, drive_id, binding_id, mode, command_json, status, region_hint, note, agent_id, claimed_by_agent_id, connector_id, claimed_by_runner_id, priority, labels_json, idempotency_key, exit_code, duration_ms, heartbeat_at, claimed_at, timeout_sec, attempt_count, max_attempts, stdout, stderr, stdout_truncated, stderr_truncated, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.ID, j.UserID, j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
-		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, labels, nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
+		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, labels, j.IdempotencyKey,
+		nullInt(j.ExitCode), j.DurationMs, hb, ca, j.TimeoutSec,
 		j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr, boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
 		j.CreatedAt.UTC().Format(time.RFC3339Nano), j.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
@@ -1050,6 +1057,17 @@ func (s *SQLite) CreateJob(j *Job) error {
 func (s *SQLite) GetJob(userID, id string) (*Job, error) {
 	row := s.db.QueryRow(
 		`SELECT `+jobSelectCols+` FROM jobs WHERE id = ? AND user_id = ?`, id, userID,
+	)
+	return scanJob(row)
+}
+
+func (s *SQLite) GetJobByIdempotencyKey(userID, key string) (*Job, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("job not found")
+	}
+	row := s.db.QueryRow(
+		`SELECT `+jobSelectCols+` FROM jobs WHERE user_id = ? AND idempotency_key = ?`, userID, key,
 	)
 	return scanJob(row)
 }
@@ -1128,12 +1146,14 @@ func (s *SQLite) UpdateJob(j *Job) error {
 	res, err := s.db.Exec(
 		`UPDATE jobs SET drive_id=?, binding_id=?, mode=?, command_json=?, status=?, region_hint=?, note=?,
 		 agent_id=?, claimed_by_agent_id=?, connector_id=?, claimed_by_runner_id=?, priority=?, labels_json=?,
+		 idempotency_key=?,
 		 exit_code=?, duration_ms=?, heartbeat_at=?,
 		 claimed_at=?, timeout_sec=?, attempt_count=?, max_attempts=?, stdout=?, stderr=?,
 		 stdout_truncated=?, stderr_truncated=?, updated_at=?
 		 WHERE id=? AND user_id=?`,
 		j.DriveID, j.BindingID, j.Mode, string(j.CommandJSON), j.Status, j.RegionHint, j.Note,
 		j.AgentID, j.ClaimedByAgentID, j.ConnectorID, j.ClaimedByRunnerID, j.Priority, string(j.LabelsJSON),
+		j.IdempotencyKey,
 		nullInt(j.ExitCode), j.DurationMs, hb,
 		ca, j.TimeoutSec, j.AttemptCount, j.MaxAttempts, j.Stdout, j.Stderr,
 		boolInt(j.StdoutTruncated), boolInt(j.StderrTruncated),
@@ -1592,10 +1612,10 @@ func scanJob(row scannable) (*Job, error) {
 	var exitCode sql.NullInt64
 	var durationMs int64
 	var timeoutSec, attemptCount, maxAttempts, priority, outTrunc, errTrunc int
-	var labels string
+	var labels, idem string
 	if err := row.Scan(
 		&j.ID, &j.UserID, &j.DriveID, &j.BindingID, &j.Mode, &cmd, &j.Status, &j.RegionHint, &j.Note,
-		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &j.ClaimedByRunnerID, &priority, &labels,
+		&j.AgentID, &j.ClaimedByAgentID, &j.ConnectorID, &j.ClaimedByRunnerID, &priority, &labels, &idem,
 		&exitCode, &durationMs, &heartbeat, &claimedAt,
 		&timeoutSec, &attemptCount, &maxAttempts, &stdout, &stderr, &outTrunc, &errTrunc,
 		&created, &updated,
@@ -1621,6 +1641,7 @@ func scanJob(row scannable) (*Job, error) {
 	if strings.TrimSpace(labels) != "" {
 		j.LabelsJSON = []byte(labels)
 	}
+	j.IdempotencyKey = idem
 	j.TimeoutSec = timeoutSec
 	j.AttemptCount = attemptCount
 	j.MaxAttempts = maxAttempts

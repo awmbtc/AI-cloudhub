@@ -140,6 +140,8 @@ type Job struct {
 	Priority int
 	// LabelsJSON optional string map (JSON object) for filtering.
 	LabelsJSON []byte
+	// IdempotencyKey optional client key unique per user (empty = none).
+	IdempotencyKey string
 	// ExitCode set on complete when runner reports process exit (nil = not reported).
 	ExitCode *int
 	// DurationMs wall time of runner execution in milliseconds (0 = not reported).
@@ -343,6 +345,8 @@ type Store interface {
 	// Jobs (BYOC queue)
 	CreateJob(j *Job) error
 	GetJob(userID, id string) (*Job, error)
+	// GetJobByIdempotencyKey returns a job for user with the given key (empty key = not found).
+	GetJobByIdempotencyKey(userID, key string) (*Job, error)
 	ListJobs(userID string) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.

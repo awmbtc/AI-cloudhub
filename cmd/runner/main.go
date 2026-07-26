@@ -184,8 +184,13 @@ func runWorker(api, token, mountPoint string) {
 				if errors.Is(err, errJobTimeout) {
 					exitCode = 124
 				}
+				if errors.Is(err, errJobCancelled) {
+					exitCode = 130
+					note = joinJobNote(res.CloneNote, "cancelled")
+				}
 				log.Printf("job %s failed: %v", j.ID, err)
 			}
+			// If remote cancel already set status, complete is no-op; still try to record note/exit.
 			_ = completeJob(api, token, j.ID, ok, note, &exitCode, durMs, res.Stdout, res.Stderr, res.StdoutTruncated, res.StderrTruncated)
 		}
 	}
@@ -587,6 +592,7 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	}
 
 	// Hard timeout: job.TimeoutSec, else AI_CLOUDHUB_JOB_TIMEOUT_SEC (0 = none).
+	// Cancel poll: when jobID set, poll GET job; if cancelled, cancel context and kill agent.
 	to := timeoutSec
 	if to <= 0 {
 		if v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_TIMEOUT_SEC")); v != "" {
@@ -600,13 +606,17 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 		ctx    context.Context
 		cancel context.CancelFunc
 	)
+	base := context.Background()
 	if to > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(to)*time.Second)
-		defer cancel()
-		agent = exec.CommandContext(ctx, args[0], args[1:]...)
+		ctx, cancel = context.WithTimeout(base, time.Duration(to)*time.Second)
 	} else {
-		agent = exec.Command(args[0], args[1:]...)
+		ctx, cancel = context.WithCancel(base)
 	}
+	defer cancel()
+	if jobID != "" {
+		go watchJobCancel(ctx, cancel, api, token, jobID)
+	}
+	agent = exec.CommandContext(ctx, args[0], args[1:]...)
 	agent.Dir = mountPoint
 	agent.Env = childEnv
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -622,12 +632,69 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 	out.StdoutTruncated = outLim.truncated
 	out.StderrTruncated = errLim.truncated
 	if runErr != nil {
-		if to > 0 && ctx != nil && ctx.Err() == context.DeadlineExceeded {
+		if ctx.Err() == context.DeadlineExceeded {
 			return out, fmt.Errorf("%w after %ds: %v", errJobTimeout, to, runErr)
+		}
+		if ctx.Err() == context.Canceled {
+			return out, fmt.Errorf("%w: %v", errJobCancelled, runErr)
 		}
 		return out, fmt.Errorf("agent: %w", runErr)
 	}
 	return out, nil
+}
+
+var errJobCancelled = errors.New("job cancelled")
+
+// watchJobCancel polls GET /v1/jobs/{id}; if status=cancelled, cancels agent context.
+func watchJobCancel(ctx context.Context, cancel context.CancelFunc, api, token, jobID string) {
+	interval := 5 * time.Second
+	if v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_CANCEL_POLL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			interval = d
+		}
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			st, err := getJobStatus(api, token, jobID)
+			if err != nil {
+				continue
+			}
+			if st == "cancelled" {
+				log.Printf("job %s cancelled remotely; stopping agent", jobID)
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func getJobStatus(api, token, id string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, api+"/v1/jobs/"+id, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		return "", fmt.Errorf("HTTP %d", res.StatusCode)
+	}
+	var j struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &j); err != nil {
+		return "", err
+	}
+	return j.Status, nil
 }
 
 // runnerOutputCap is how many bytes of agent stdout/stderr to keep for complete.

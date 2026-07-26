@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.13"
+const serverVersion = "0.2.14"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -348,7 +348,8 @@ func toolRegistry() []toolMeta {
 					"timeout_sec":  map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
 					"max_attempts": map[string]interface{}{"type": "integer", "description": "Max claims before lease expiry fails job (0=unlimited)"},
 					"priority":     map[string]interface{}{"type": "integer", "description": "Higher claimed first (default 0, clamped ±1000)"},
-					"labels":       map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Optional string labels (max 16)"},
+					"labels":          map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Optional string labels (max 16)"},
+					"idempotency_key": map[string]interface{}{"type": "string", "description": "Client dedup key unique per user (replay returns same job)"},
 				},
 				"required": []string{"drive_id", "command"},
 			},
@@ -778,8 +779,9 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			ConnectorID string   `json:"connector_id"`
 			TimeoutSec  int               `json:"timeout_sec"`
 			MaxAttempts int               `json:"max_attempts"`
-			Priority    int               `json:"priority"`
-			Labels      map[string]string `json:"labels"`
+			Priority       int               `json:"priority"`
+			Labels         map[string]string `json:"labels"`
+			IdempotencyKey string            `json:"idempotency_key"`
 		}
 		if err := decodeArgs(argsJSON, &args); err != nil {
 			return nil, err
@@ -787,7 +789,7 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		if strings.TrimSpace(args.DriveID) == "" || len(args.Command) == 0 {
 			return nil, fmt.Errorf("drive_id and command required")
 		}
-		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec, args.MaxAttempts, args.Priority, args.Labels)
+		return toolCreateJob(api, token, args.DriveID, args.Command, args.Mode, args.BindingID, args.RegionHint, args.Note, args.ConnectorID, args.TimeoutSec, args.MaxAttempts, args.Priority, args.Labels, args.IdempotencyKey)
 	case "claim_next_job":
 		var args struct {
 			RunnerID string `json:"runner_id"`
@@ -1317,7 +1319,7 @@ func toolListJobs(api, token, status, agentID, claimedBy, region string, labels 
 	return toolResultJSON(parsed)
 }
 
-func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec, maxAttempts, priority int, labels map[string]string) (interface{}, error) {
+func toolCreateJob(api, token, driveID string, command []string, mode, bindingID, regionHint, note, connectorID string, timeoutSec, maxAttempts, priority int, labels map[string]string, idempotencyKey string) (interface{}, error) {
 	payload := map[string]interface{}{
 		"drive_id": driveID,
 		"command":  command,
@@ -1348,6 +1350,9 @@ func toolCreateJob(api, token, driveID string, command []string, mode, bindingID
 	}
 	if len(labels) > 0 {
 		payload["labels"] = labels
+	}
+	if strings.TrimSpace(idempotencyKey) != "" {
+		payload["idempotency_key"] = strings.TrimSpace(idempotencyKey)
 	}
 	body, code, err := httpDo(http.MethodPost, api+"/v1/jobs", token, payload)
 	if err != nil {
