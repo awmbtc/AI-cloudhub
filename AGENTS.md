@@ -34,7 +34,8 @@ When tempted to add another Job ops admin button without a customer incident, **
 | `make smoke-mcp` | `scripts/smoke-mcp-jobs.sh` (jobs + Stage C MCP tools) |
 | `make smoke-stage-c` | marketplace / memory / graph / connectors |
 | `make smoke-byoc` | local git clone + postgres/mysql env materialize (`MATERIALIZE_ONLY`) |
-| `make smoke-sts` | offline multi-cloud STS path + `go test ./internal/sts` |
+| `make smoke-sts` | offline multi-cloud STS path + fail-open + unit tests |
+| `make smoke-sts-live` | live MinIO STS (optional soft-skip) |
 | `make smoke-quickstart-agent` | QUICKSTART-AGENT path |
 | `make smoke-golden` | **Product golden path** (D-003 / `docs/GOLDEN-PATH.md`) |
 | `make smoke-golden-minio` | Live MinIO golden path (optional soft-skip) |
@@ -74,6 +75,7 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 - Golden path (mainline demo): `docs/GOLDEN-PATH.md`
 - Limits: `docs/KNOWN_LIMITATIONS.md`
 - Production cutover: `docs/PRODUCTION.md` · `docs/CUTOVER.md` + `make prod-preflight` / `smoke-prod-preflight`
+- STS 联调: `docs/STS-RUNBOOK.md` + `make smoke-sts` / `smoke-sts-live`
 - Stage C: `docs/STAGE-C.md` · Memory scope: `docs/STAGE-C-SCOPE-MEMORY.md` · connectors: `docs/CONNECTORS.md`
 - OpenAPI: `docs/openapi.yaml` (includes Stage C paths)
 - MCP tools: `docs/MCP.md`

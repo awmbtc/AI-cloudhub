@@ -26,6 +26,7 @@
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
 | [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
+| [docs/STS-RUNBOOK.md](docs/STS-RUNBOOK.md) | **STS 联调剧本**（fail-open + live MinIO） |
 | [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：字段、env、curl、session.note） |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
@@ -53,7 +54,7 @@
 | **厂商 C** | qiniu、oracle | ✅ |
 | **黑名单** | 自建大规模 Runner 池 | 禁止（D-001） |
 | **限制** | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | v0.2 |
-| **发布** | `v0.2.55`：生产 cutover / preflight 纪律 | ✅ |
+| **发布** | `v0.2.56`：STS 联调 runbook + fail-open / live MinIO | ✅ |
 
 ## 快速开始
 

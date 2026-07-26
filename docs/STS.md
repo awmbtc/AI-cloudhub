@@ -114,13 +114,18 @@ See [METRICS.md](./METRICS.md).
 
 ## Offline smoke / 联调
 
+**完整剧本：** [STS-RUNBOOK.md](./STS-RUNBOOK.md)
+
 ```bash
 make smoke-sts
-# = go test ./internal/sts + API flags-off source=embedded + qiniu_download + metrics
-# Live MinIO STS (optional):
-#   AI_CLOUDHUB_SMOKE_STS_LIVE=1 make smoke-sts
-#   MINIO_ENDPOINT=http://127.0.0.1:9000  (or auto docker minio/minio)
-#   AI_CLOUDHUB_SMOKE_STS_REQUIRE=1  → fail if MinIO unavailable
+# = go test ./internal/sts
+#   + flags-off source=embedded (多厂商)
+#   + qiniu_download
+#   + Phase F: MINIO_STS=1 + 坏端点 → fail-open embedded
+# Live MinIO (optional, auto-start binary):
+make smoke-sts-live
+#   AI_CLOUDHUB_SMOKE_STS_LIVE=1 AI_CLOUDHUB_SMOKE_STS_REQUIRE=1  → hard fail if MinIO unavailable
+#   MINIO_ENDPOINT=http://127.0.0.1:9000  optional override
 ```
 
 Also: [CLOUD-INTEGRATION.md](./CLOUD-INTEGRATION.md) offline table.

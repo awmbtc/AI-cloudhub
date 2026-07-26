@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.56
+
+STS vendor runbook (D-003 P1 real-path):
+
+- `docs/STS-RUNBOOK.md` — source matrix, fail-open, live MinIO steps
+- `smoke-sts` Phase F: flags ON + bad endpoint → `embedded` + note
+- Live MinIO: auto-start official binary (no docker required); `make smoke-sts-live`
+- Portable `mktemp` templates for macOS
+
 ## v0.2.55
 
 Production discipline (D-003 P1 — not Job ops):

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.55（+ 生产纪律 cutover）
+## 总览：v0.2.56（+ STS 联调 runbook）
 
 | 阶段 | 状态 |
 |------|------|
@@ -542,5 +542,12 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `docs/CUTOVER.md` + `make smoke-prod-preflight`
 - [x] STRICT 启动警告：metrics / admin CIDR / JWT≥32 建议
 - [x] 版本钉 **0.2.55** + tag
+
+### 本波（v0.2.56 · STS 联调）
+
+- [x] `docs/STS-RUNBOOK.md` 厂商 source 矩阵 + 真 MinIO 步骤
+- [x] smoke-sts Phase F fail-open；`make smoke-sts-live` 自动起 MinIO
+- [x] 版本钉 **0.2.56** + tag
+
 
 
