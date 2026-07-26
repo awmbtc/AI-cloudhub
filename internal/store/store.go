@@ -134,6 +134,10 @@ type Job struct {
 	AgentID string
 	// ClaimedByAgentID is the agent that last claimed the job (empty = human runner).
 	ClaimedByAgentID string
+	// ClaimedByRunnerID optional host/worker identity reported by the BYOC runner.
+	ClaimedByRunnerID string
+	// Priority higher values claim first (default 0).
+	Priority int
 	// ExitCode set on complete when runner reports process exit (nil = not reported).
 	ExitCode *int
 	// DurationMs wall time of runner execution in milliseconds (0 = not reported).
@@ -340,9 +344,9 @@ type Store interface {
 	ListJobs(userID string) ([]*Job, error)
 	ListPendingJobs(userID string) ([]*Job, error)
 	// ClaimPendingJob atomically sets status to running if still pending/dispatched.
-	// claimedByAgentID is stored on the job (empty for human runners).
+	// claimedByAgentID / claimedByRunnerID may be empty.
 	// Returns the updated job, or an error if not found / not claimable.
-	ClaimPendingJob(userID, id, claimedByAgentID string) (*Job, error)
+	ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error)
 	UpdateJob(j *Job) error
 
 	// Snapshots (metadata only)

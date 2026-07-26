@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.11 已发布；job attempts/metrics/webhook
+## 总览：v0.2.12 已发布；priority / runner_id / webhook HMAC
 
 | 阶段 | 状态 |
 |------|------|
@@ -390,3 +390,9 @@ curl -s localhost:8080/v1/runtime/check
 - [x] metrics：timeout / lease_reclaim / max_attempts / heartbeat / webhook_ok
 - [x] `AI_CLOUDHUB_JOB_WEBHOOK_URL` terminal 异步 POST
 - [x] 版本钉 **0.2.11** + tag
+
+### 本波（priority + runner_id + webhook HMAC）
+
+- [x] `priority` claim 排序；`claimed_by_runner_id` header/body + runner env
+- [x] webhook `AI_CLOUDHUB_JOB_WEBHOOK_SECRET` HMAC-SHA256（timestamp.body）
+- [x] MCP/OpenAPI/smoke；版本钉 **0.2.12** + tag

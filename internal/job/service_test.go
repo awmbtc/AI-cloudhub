@@ -1,6 +1,9 @@
 package job
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,7 +67,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			j, err := svc.ClaimNext(uid, "")
+			j, err := svc.ClaimNext(uid, "", "")
 			if err != nil {
 				return
 			}
@@ -87,7 +90,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	}
 
 	// Second ClaimNext must fail — no pending left.
-	if _, err := svc.ClaimNext(uid, ""); err == nil {
+	if _, err := svc.ClaimNext(uid, "", ""); err == nil {
 		t.Fatal("expected ClaimNext to fail when nothing pending")
 	}
 
@@ -111,14 +114,14 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 		}
 		ids = append(ids, j.ID)
 	}
-	first, err := svc.ClaimNext(uid, "")
+	first, err := svc.ClaimNext(uid, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID != ids[0] {
 		t.Fatalf("expected oldest %s, got %s", ids[0], first.ID)
 	}
-	second, err := svc.ClaimNext(uid, "")
+	second, err := svc.ClaimNext(uid, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +137,7 @@ func TestReleaseToPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := svc.Claim(uid, j.ID, "agent-claim")
+	claimed, err := svc.Claim(uid, j.ID, "agent-claim", "")
 	if err != nil || claimed.Status != StatusRunning {
 		t.Fatalf("claim: %v %+v", err, claimed)
 	}
@@ -152,7 +155,7 @@ func TestReleaseToPending(t *testing.T) {
 		t.Fatalf("note %q", rel.Note)
 	}
 	// can claim again
-	again, err := svc.Claim(uid, j.ID, "agent-2")
+	again, err := svc.Claim(uid, j.ID, "agent-2", "")
 	if err != nil || again.Status != StatusRunning {
 		t.Fatalf("reclaim: %v %+v", err, again)
 	}
@@ -171,7 +174,7 @@ func TestCompleteAppendsNote(t *testing.T) {
 	if !strings.Contains(j.Note, "user-seed") || !strings.Contains(j.Note, "BYOC only") {
 		t.Fatalf("create note %q", j.Note)
 	}
-	if _, err := svc.Claim(uid, j.ID, ""); err != nil {
+	if _, err := svc.Claim(uid, j.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	code := 0
@@ -196,7 +199,7 @@ func TestCompleteAppendsNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Claim(uid, j2.ID, ""); err != nil {
+	if _, err := svc.Claim(uid, j2.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	keep, err := svc.Complete(uid, j2.ID, CompleteInput{OK: true})
@@ -215,7 +218,7 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Claim(uid, j.ID, ""); err != nil {
+	if _, err := svc.Claim(uid, j.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AI_CLOUDHUB_JOB_OUTPUT_MAX", "16")
@@ -254,6 +257,55 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	}
 }
 
+func TestClaimPriorityOrder(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-pri"
+	low, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"low"}, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"high"}, Priority: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.ClaimNext(uid, "", "runner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != high.ID {
+		t.Fatalf("want high priority %s got %s", high.ID, first.ID)
+	}
+	if first.ClaimedByRunnerID != "runner-a" {
+		t.Fatalf("runner_id %q", first.ClaimedByRunnerID)
+	}
+	second, err := svc.ClaimNext(uid, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != low.ID {
+		t.Fatalf("want low %s got %s", low.ID, second.ID)
+	}
+}
+
+func TestWebhookHMACVerify(t *testing.T) {
+	body := []byte(`{"id":"j1","status":"succeeded"}`)
+	ts := "1700000000"
+	secret := "whsec_test"
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(ts + "."))
+	_, _ = mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	if !VerifyJobWebhookSignature(secret, ts, sig, body) {
+		t.Fatal("expected valid signature")
+	}
+	if VerifyJobWebhookSignature(secret, ts, "sha256=deadbeef", body) {
+		t.Fatal("bad sig")
+	}
+	if VerifyJobWebhookSignature(secret, "1", sig, body) {
+		t.Fatal("wrong ts")
+	}
+}
+
 func TestMaxAttemptsOnLeaseExpiry(t *testing.T) {
 	mem := store.NewMemory()
 	svc := NewService(mem)
@@ -266,7 +318,7 @@ func TestMaxAttemptsOnLeaseExpiry(t *testing.T) {
 	if j.MaxAttempts != 1 {
 		t.Fatalf("max_attempts %d", j.MaxAttempts)
 	}
-	claimed, err := svc.Claim(uid, j.ID, "a")
+	claimed, err := svc.Claim(uid, j.ID, "a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +354,7 @@ func TestHardTimeoutFailsJob(t *testing.T) {
 	if j.TimeoutSec != 1 {
 		t.Fatalf("timeout_sec %d", j.TimeoutSec)
 	}
-	claimed, err := svc.Claim(uid, j.ID, "a")
+	claimed, err := svc.Claim(uid, j.ID, "a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +397,7 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := svc.Claim(uid, j.ID, "agent-1")
+	claimed, err := svc.Claim(uid, j.ID, "agent-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,12 +440,12 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Claim(uid, j2.ID, "a"); err != nil {
+	if _, err := svc.Claim(uid, j2.ID, "a", ""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(80 * time.Millisecond)
 	// Oldest reclaimed job first, then we can claim again.
-	next, err := svc.ClaimNext(uid, "a2")
+	next, err := svc.ClaimNext(uid, "a2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +482,7 @@ func TestListFilterByAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Claim(uid, j2.ID, "claimer-x"); err != nil {
+	if _, err := svc.Claim(uid, j2.ID, "claimer-x", ""); err != nil {
 		t.Fatal(err)
 	}
 	onlyA1 := svc.List(uid, ListFilter{AgentID: "a1"})
@@ -458,7 +510,7 @@ func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.ClaimNextFiltered(uid, "runner-bot", func(driveID string) string {
+	got, err := svc.ClaimNextFiltered(uid, "runner-bot", "", func(driveID string) string {
 		if driveID == "forbidden" {
 			return "drive not allowed for agent"
 		}
@@ -489,7 +541,7 @@ func TestClaimNextFilteredAllDenied(t *testing.T) {
 	if _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.ClaimNextFiltered(uid, "bot", func(string) string { return "blocked" })
+	_, err := svc.ClaimNextFiltered(uid, "bot", "", func(string) string { return "blocked" })
 	if err == nil || !strings.Contains(err.Error(), "no claimable") {
 		t.Fatalf("err=%v", err)
 	}

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.12
+
+Job priority queue, runner identity on claim, webhook HMAC.
+
+### Jobs
+- `priority` (higher first, then FIFO); create + claim sort
+- `claimed_by_runner_id` via `X-AI-Cloudhub-Runner-Id` or body `runner_id`
+- Runner sets identity from `AI_CLOUDHUB_RUNNER_ID` or hostname
+- Webhook HMAC: `AI_CLOUDHUB_JOB_WEBHOOK_SECRET` signs `timestamp.body` → `X-AI-Cloudhub-Signature`
+
 ## v0.2.11
 
 Job attempt budget, ops metrics, optional terminal webhook.

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.11
+  version: 0.2.12
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -711,6 +711,12 @@ components:
         max_attempts:
           type: integer
           description: When >0, lease expiry after this many claims fails the job
+        priority:
+          type: integer
+          description: Higher values claimed first (default 0)
+        claimed_by_runner_id:
+          type: string
+          description: Optional BYOC runner host/worker id from claim
         stdout:
           type: string
           description: Capped agent stdout tail (AI_CLOUDHUB_JOB_OUTPUT_MAX, default 8192)
@@ -757,6 +763,9 @@ components:
         max_attempts:
           type: integer
           description: Optional max claims; lease expiry fails job when attempt_count reaches this
+        priority:
+          type: integer
+          description: Higher values are claimed first (clamped ±1000)
 
     JobComplete:
       type: object

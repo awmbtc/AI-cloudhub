@@ -399,11 +399,23 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 		if pr := principalFrom(r); pr != nil {
 			claimedBy = pr.AgentID
 		}
+		// Optional BYOC runner identity (header preferred; body.runner_id fallback).
+		runnerID := strings.TrimSpace(r.Header.Get("X-AI-Cloudhub-Runner-Id"))
+		if runnerID == "" {
+			var claimBody struct {
+				RunnerID string `json:"runner_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&claimBody)
+			runnerID = strings.TrimSpace(claimBody.RunnerID)
+		}
+		if len(runnerID) > 128 {
+			runnerID = runnerID[:128]
+		}
 		var j *job.Job
 		var err error
 		if id == "next" {
 			// Skip + release jobs whose drive the agent cannot access.
-			j, err = s.jobs.ClaimNextFiltered(userID, claimedBy, s.agentJobDriveDenyReason(r))
+			j, err = s.jobs.ClaimNextFiltered(userID, claimedBy, runnerID, s.agentJobDriveDenyReason(r))
 		} else {
 			// Known id: pre-check drive when possible, claim, then re-check + release on deny.
 			driveID := ""
@@ -413,7 +425,7 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 			if !s.allowAgentJob(w, r, driveID) {
 				return
 			}
-			j, err = s.jobs.Claim(userID, id, claimedBy)
+			j, err = s.jobs.Claim(userID, id, claimedBy, runnerID)
 			if err == nil && j != nil {
 				if reason := s.agentJobDriveDenyReason(r)(j.DriveID); reason != "" {
 					if _, rerr := s.jobs.ReleaseToPending(userID, j.ID, reason); rerr != nil {

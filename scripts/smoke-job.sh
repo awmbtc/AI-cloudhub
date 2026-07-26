@@ -107,17 +107,38 @@ PEND=$("${CURL[@]}" "$API/v1/jobs?status=pending" -H "Authorization: Bearer $ATO
 echo "pending_after_restart=$PEND"
 test "$PEND" = "1"
 
-echo "== agent claim next (claimed_by_agent_id set) =="
-CLAIM=$("${CURL[@]}" -X POST "$API/v1/jobs/next/claim" -H "Authorization: Bearer $ATOK")
+echo "== agent claim next (runner_id + claimed_by_agent_id) =="
+CLAIM=$("${CURL[@]}" -X POST "$API/v1/jobs/next/claim" -H "Authorization: Bearer $ATOK" \
+  -H 'X-AI-Cloudhub-Runner-Id: smoke-runner-1')
 echo "$CLAIM" | python3 -c '
 import sys,json
 d=json.load(sys.stdin)
 assert d["status"]=="running", d
 assert d.get("agent_id"), d
 assert d.get("claimed_by_agent_id"), d
+assert d.get("claimed_by_runner_id")=="smoke-runner-1", d
 assert d["agent_id"]==d["claimed_by_agent_id"] or True
-print("claimed", d["id"], "creator", d["agent_id"], "claimer", d["claimed_by_agent_id"], d["command"])
+print("claimed", d["id"], "creator", d["agent_id"], "claimer", d["claimed_by_agent_id"], "runner", d.get("claimed_by_runner_id"), d["command"])
 '
+
+echo "== priority: high claims before low =="
+JLOW=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"echo\",\"low\"],\"priority\":1}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+JHIGH=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"echo\",\"high\"],\"priority\":50}" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("priority")==50, d; print(d["id"])')
+C1=$("${CURL[@]}" -X POST "$API/v1/jobs/next/claim" -H "Authorization: Bearer $ATOK" -H 'X-AI-Cloudhub-Runner-Id: pri-r')
+echo "$C1" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert d["id"]=="'"$JHIGH"'", d
+assert d.get("priority")==50, d
+print("priority claim high ok", d["id"])
+'
+"${CURL[@]}" -X POST "$API/v1/jobs/$JHIGH/complete" -H "Authorization: Bearer $ATOK" \
+  -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
+"${CURL[@]}" -X POST "$API/v1/jobs/$JLOW/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
 
 echo "== heartbeat while running =="
 HB=$("${CURL[@]}" -X POST "$API/v1/jobs/$JID/heartbeat" -H "Authorization: Bearer $ATOK")

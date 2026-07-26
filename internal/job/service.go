@@ -2,6 +2,9 @@ package job
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,8 +43,11 @@ type Job struct {
 	RegionHint       string    `json:"region_hint,omitempty"`
 	Note             string    `json:"note,omitempty"`
 	ConnectorID      string    `json:"connector_id,omitempty"` // Stage C: git/etc for runner
-	AgentID          string    `json:"agent_id,omitempty"`            // creator agent
-	ClaimedByAgentID string    `json:"claimed_by_agent_id,omitempty"` // last claimer agent
+	AgentID             string `json:"agent_id,omitempty"`              // creator agent
+	ClaimedByAgentID    string `json:"claimed_by_agent_id,omitempty"`   // last claimer agent
+	ClaimedByRunnerID   string `json:"claimed_by_runner_id,omitempty"`  // optional runner host/worker id
+	// Priority higher claims first (default 0).
+	Priority int `json:"priority,omitempty"`
 	// ExitCode process exit when reported by runner (nil = not set).
 	ExitCode *int `json:"exit_code,omitempty"`
 	// DurationMs runner wall time in milliseconds (0 = not reported).
@@ -78,6 +84,8 @@ type CreateInput struct {
 	TimeoutSec int `json:"timeout_sec"`
 	// MaxAttempts optional claim budget before lease expiry fails the job (0 = unlimited).
 	MaxAttempts int `json:"max_attempts"`
+	// Priority higher values are claimed first (clamped; default 0).
+	Priority int `json:"priority"`
 	// AgentID set by control plane from principal (not client spoofable).
 	AgentID string `json:"-"`
 }
@@ -157,6 +165,13 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	if maxAttempts < 0 {
 		maxAttempts = 0
 	}
+	priority := in.Priority
+	if priority > 1000 {
+		priority = 1000
+	}
+	if priority < -1000 {
+		priority = -1000
+	}
 	sj := &store.Job{
 		ID:          uuid.NewString(),
 		UserID:      userID,
@@ -169,6 +184,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		Note:        note,
 		ConnectorID: strings.TrimSpace(in.ConnectorID),
 		AgentID:     strings.TrimSpace(in.AgentID),
+		Priority:    priority,
 		TimeoutSec:  timeoutSec,
 		MaxAttempts: maxAttempts,
 		CreatedAt:   now,
@@ -243,11 +259,10 @@ func (s *Service) ListPending(userID, region string) []*Job {
 	return out
 }
 
-// ClaimNext claims the oldest pending job for the user (BYOC worker).
-// Lists claimable jobs, then tries atomic claim on each until one succeeds
-// (another worker may have claimed in between). claimedByAgentID may be empty (human).
+// ClaimNext claims the highest-priority then oldest pending job (BYOC worker).
+// claimedByAgentID / claimedByRunnerID may be empty.
 // Stale running jobs (no heartbeat within lease) are reclaimed first.
-func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
+func (s *Service) ClaimNext(userID, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
 	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
 	if err != nil {
@@ -256,15 +271,18 @@ func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
 	if len(list) == 0 {
 		return nil, fmt.Errorf("no pending jobs")
 	}
-	// sqlite/postgres return oldest-first; memory map order is undefined — sort.
+	// Priority DESC, then oldest created_at (memory map order is undefined).
 	sort.Slice(list, func(i, j int) bool {
+		if list[i].Priority != list[j].Priority {
+			return list[i].Priority > list[j].Priority
+		}
 		return list[i].CreatedAt.Before(list[j].CreatedAt)
 	})
 	for _, j := range list {
 		if j.Status != string(StatusPending) && j.Status != string(StatusDispatched) {
 			continue
 		}
-		claimed, err := s.store.ClaimPendingJob(userID, j.ID, claimedByAgentID)
+		claimed, err := s.store.ClaimPendingJob(userID, j.ID, claimedByAgentID, claimedByRunnerID)
 		if err != nil {
 			// Already claimed or gone — try next.
 			continue
@@ -275,10 +293,10 @@ func (s *Service) ClaimNext(userID, claimedByAgentID string) (*Job, error) {
 }
 
 // Claim marks a pending job as running (atomic: only if still claimable).
-// claimedByAgentID may be empty (human runner).
-func (s *Service) Claim(userID, id, claimedByAgentID string) (*Job, error) {
+// claimedByAgentID / claimedByRunnerID may be empty.
+func (s *Service) Claim(userID, id, claimedByAgentID, claimedByRunnerID string) (*Job, error) {
 	_, _ = s.ReclaimStale(userID)
-	sj, err := s.store.ClaimPendingJob(userID, id, claimedByAgentID)
+	sj, err := s.store.ClaimPendingJob(userID, id, claimedByAgentID, claimedByRunnerID)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +416,7 @@ func (s *Service) failTimeout(userID, id string, sec int) (*Job, error) {
 	sj.Note = appendJobNote(sj.Note, fmt.Sprintf("timeout after %ds", sec))
 	sj.HeartbeatAt = time.Time{}
 	sj.ClaimedAt = time.Time{}
+	sj.ClaimedByRunnerID = ""
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -422,6 +441,7 @@ func (s *Service) failMaxAttempts(userID, id string, attempt, max int) (*Job, er
 	sj.Note = appendJobNote(sj.Note, fmt.Sprintf("max attempts exceeded (%d/%d) after lease expired", attempt, max))
 	sj.HeartbeatAt = time.Time{}
 	sj.ClaimedAt = time.Time{}
+	sj.ClaimedByRunnerID = ""
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -432,6 +452,8 @@ func (s *Service) failMaxAttempts(userID, id string, attempt, max int) (*Job, er
 }
 
 // notifyJobTerminal best-effort POSTs job JSON to AI_CLOUDHUB_JOB_WEBHOOK_URL (async).
+// When AI_CLOUDHUB_JOB_WEBHOOK_SECRET is set, signs with HMAC-SHA256 over "timestamp.body"
+// and sets X-AI-Cloudhub-Timestamp + X-AI-Cloudhub-Signature: sha256=<hex>.
 func notifyJobTerminal(j *Job) {
 	if j == nil {
 		return
@@ -444,6 +466,15 @@ func notifyJobTerminal(j *Job) {
 	if err != nil {
 		return
 	}
+	secret := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_JOB_WEBHOOK_SECRET"))
+	ts := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	var sig string
+	if secret != "" {
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write([]byte(ts + "."))
+		_, _ = mac.Write(payload)
+		sig = "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
 	go func() {
 		client := &http.Client{Timeout: 5 * time.Second}
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
@@ -452,6 +483,10 @@ func notifyJobTerminal(j *Job) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "AI-cloudhub-job-webhook/1")
+		req.Header.Set("X-AI-Cloudhub-Timestamp", ts)
+		if sig != "" {
+			req.Header.Set("X-AI-Cloudhub-Signature", sig)
+		}
 		res, err := client.Do(req)
 		if err != nil {
 			return
@@ -461,6 +496,24 @@ func notifyJobTerminal(j *Job) {
 			metrics.IncJobWebhook()
 		}
 	}()
+}
+
+// VerifyJobWebhookSignature checks HMAC for receivers (exported for tests/docs).
+// signed = HMAC-SHA256(secret, timestamp + "." + body); header "sha256=<hex>".
+func VerifyJobWebhookSignature(secret, timestamp, signatureHeader string, body []byte) bool {
+	secret = strings.TrimSpace(secret)
+	if secret == "" || timestamp == "" || signatureHeader == "" {
+		return false
+	}
+	want := signatureHeader
+	if strings.HasPrefix(want, "sha256=") {
+		want = strings.TrimPrefix(want, "sha256=")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp + "."))
+	_, _ = mac.Write(body)
+	got := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(got), []byte(want))
 }
 
 // ReleaseToPending returns a running job to pending so another BYOC runner can claim it.
@@ -480,6 +533,7 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 	}
 	sj.Status = string(StatusPending)
 	sj.ClaimedByAgentID = "" // clear claimer so another runner can take ownership
+	sj.ClaimedByRunnerID = ""
 	sj.HeartbeatAt = time.Time{}
 	sj.ClaimedAt = time.Time{}
 	sj.UpdatedAt = time.Now().UTC()
@@ -502,16 +556,15 @@ func (s *Service) ReleaseToPending(userID, id, reason string) (*Job, error) {
 	return jobFromStore(sj), nil
 }
 
-// ClaimNextFiltered claims the oldest pending job whose driveID passes allow.
+// ClaimNextFiltered claims the highest-priority pending job whose driveID passes allow.
 // allow(driveID) should return "" if allowed, or a short deny reason if not.
 //
 // Jobs are filtered **before** claim using the pending list (avoids reclaim loops).
 // After a successful atomic claim, allow is re-checked; on deny the job is
 // ReleaseToPending and the scan continues. If allow is nil, behaves like ClaimNext.
-// claimedByAgentID may be empty (human).
-func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(driveID string) string) (*Job, error) {
+func (s *Service) ClaimNextFiltered(userID, claimedByAgentID, claimedByRunnerID string, allow func(driveID string) string) (*Job, error) {
 	if allow == nil {
-		return s.ClaimNext(userID, claimedByAgentID)
+		return s.ClaimNext(userID, claimedByAgentID, claimedByRunnerID)
 	}
 	_, _ = s.ReclaimStale(userID)
 	list, err := s.store.ListPendingJobs(userID)
@@ -522,6 +575,9 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 		return nil, fmt.Errorf("no pending jobs")
 	}
 	sort.Slice(list, func(i, j int) bool {
+		if list[i].Priority != list[j].Priority {
+			return list[i].Priority > list[j].Priority
+		}
 		return list[i].CreatedAt.Before(list[j].CreatedAt)
 	})
 	var lastDeny string
@@ -535,7 +591,7 @@ func (s *Service) ClaimNextFiltered(userID, claimedByAgentID string, allow func(
 			skipped++
 			continue
 		}
-		claimed, err := s.store.ClaimPendingJob(userID, cand.ID, claimedByAgentID)
+		claimed, err := s.store.ClaimPendingJob(userID, cand.ID, claimedByAgentID, claimedByRunnerID)
 		if err != nil {
 			// Race: another worker took it.
 			continue
@@ -608,6 +664,7 @@ func (s *Service) Complete(userID, id string, in CompleteInput) (*Job, error) {
 	}
 	sj.HeartbeatAt = time.Time{}
 	sj.ClaimedAt = time.Time{}
+	// Keep claimed_by_runner_id on terminal for attribution.
 	sj.UpdatedAt = time.Now().UTC()
 	if err := s.store.UpdateJob(sj); err != nil {
 		return nil, err
@@ -699,11 +756,13 @@ func jobFromStore(sj *store.Job) *Job {
 		Note:             sj.Note,
 		ConnectorID:      sj.ConnectorID,
 		AgentID:          sj.AgentID,
-		ClaimedByAgentID: sj.ClaimedByAgentID,
-		DurationMs:       sj.DurationMs,
-		TimeoutSec:       sj.TimeoutSec,
-		AttemptCount:     sj.AttemptCount,
-		MaxAttempts:      sj.MaxAttempts,
+		ClaimedByAgentID:  sj.ClaimedByAgentID,
+		ClaimedByRunnerID: sj.ClaimedByRunnerID,
+		Priority:          sj.Priority,
+		DurationMs:        sj.DurationMs,
+		TimeoutSec:        sj.TimeoutSec,
+		AttemptCount:      sj.AttemptCount,
+		MaxAttempts:       sj.MaxAttempts,
 		Stdout:           sj.Stdout,
 		Stderr:           sj.Stderr,
 		StdoutTruncated:  sj.StdoutTruncated,

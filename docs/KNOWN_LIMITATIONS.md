@@ -71,7 +71,9 @@
 - Job lease：默认 `AI_CLOUDHUB_JOB_LEASE_SEC=300`；runner 周期性 `POST …/heartbeat`；过期 running 在下次 claim 时回 pending（note `released: lease expired`）。`0` 关闭回收。无法检测「进程存活但卡死且仍心跳」。
 - Job hard timeout：`timeout_sec`（创建）或全局 `AI_CLOUDHUB_JOB_TIMEOUT_SEC`；从 `claimed_at` 起算，超时在 claim 路径 fail（exit 124 + note）。runner 侧 `CommandContext` 杀进程。
 - Job attempts：`attempt_count` 每次 claim +1；`max_attempts>0` 时 lease 过期且次数耗尽 → fail（不再 re-queue）。
-- Job webhook（可选）：`AI_CLOUDHUB_JOB_WEBHOOK_URL` 在 terminal（complete/cancel/timeout/max_attempts）异步 POST job JSON；失败静默、不计可靠投递。
+- Job priority：`priority` 更高先 claim（同优先级 FIFO）；默认 0，夹紧 ±1000。
+- Job runner 身份：claim 可带 `X-AI-Cloudhub-Runner-Id` / body `runner_id`；runner 默认 `AI_CLOUDHUB_RUNNER_ID` 或 hostname。
+- Job webhook（可选）：`AI_CLOUDHUB_JOB_WEBHOOK_URL` terminal 异步 POST；`AI_CLOUDHUB_JOB_WEBHOOK_SECRET` 时 HMAC-SHA256 签 `timestamp.body`（头 `X-AI-Cloudhub-Timestamp` / `X-AI-Cloudhub-Signature: sha256=…`）。非可靠投递。
 - Job 输出：complete 可带 `stdout`/`stderr`（默认各最多 8KiB 尾部，`AI_CLOUDHUB_JOB_OUTPUT_MAX`）+ `stdout_truncated`/`stderr_truncated`；非流式、非对象存储日志。
 
 ## 产品

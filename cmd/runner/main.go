@@ -213,11 +213,34 @@ type jobDTO struct {
 	AgentID          string   `json:"agent_id"`
 	ClaimedByAgentID string   `json:"claimed_by_agent_id"`
 	TimeoutSec       int      `json:"timeout_sec"`
+	Priority         int      `json:"priority"`
+}
+
+// runnerIdentity is AI_CLOUDHUB_RUNNER_ID or hostname (for claim attribution).
+func runnerIdentity() string {
+	if v := strings.TrimSpace(os.Getenv("AI_CLOUDHUB_RUNNER_ID")); v != "" {
+		if len(v) > 128 {
+			return v[:128]
+		}
+		return v
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	h = strings.TrimSpace(h)
+	if len(h) > 128 {
+		return h[:128]
+	}
+	return h
 }
 
 func claimNext(api, token string) (*jobDTO, error) {
 	req, _ := http.NewRequest(http.MethodPost, api+"/v1/jobs/next/claim", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	if rid := runnerIdentity(); rid != "" {
+		req.Header.Set("X-AI-Cloudhub-Runner-Id", rid)
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
