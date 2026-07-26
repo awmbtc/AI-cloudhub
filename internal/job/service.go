@@ -1092,12 +1092,21 @@ func webhookViewFromStore(e *store.WebhookOutbox, withPayload bool) *WebhookOutb
 	return v
 }
 
-// AdminListWebhooks lists outbox rows (admin). status empty = all; limit default 100 max 500.
-// List items omit payload body (use AdminGetWebhook for full envelope).
-func (s *Service) AdminListWebhooks(status string, limit int) []*WebhookOutboxView {
+// AdminWebhookFilter filters admin outbox list / batch retry.
+type AdminWebhookFilter struct {
+	Status string // empty = all (list) or dead (batch retry default)
+	JobID  string
+	UserID string
+	Limit  int
+}
+
+// AdminListWebhooks lists outbox rows (admin). List items omit payload (use AdminGetWebhook).
+func (s *Service) AdminListWebhooks(f AdminWebhookFilter) []*WebhookOutboxView {
 	list, err := s.store.ListWebhookOutbox(store.WebhookOutboxFilter{
-		Status: strings.TrimSpace(status),
-		Limit:  limit,
+		Status: strings.TrimSpace(f.Status),
+		JobID:  strings.TrimSpace(f.JobID),
+		UserID: strings.TrimSpace(f.UserID),
+		Limit:  f.Limit,
 	})
 	if err != nil {
 		return nil
@@ -1151,11 +1160,11 @@ func (s *Service) AdminRetryWebhook(id string) (*WebhookOutboxView, error) {
 	return webhookViewFromStore(e, true), nil
 }
 
-// AdminRetryWebhooksBatch requeues up to limit outbox rows with the given status (admin).
-// status defaults to "dead"; allowed: pending|delivered|dead. limit default 100, max 500.
-// Returns how many rows were requeued. Kicks one delivery pass when any requeued and URL set.
-func (s *Service) AdminRetryWebhooksBatch(status string, limit int) (int, error) {
-	status = strings.TrimSpace(status)
+// AdminRetryWebhooksBatch requeues up to limit outbox rows matching filter (admin).
+// Status defaults to "dead"; allowed: pending|delivered|dead. Optional JobID/UserID scope.
+// Limit default 100, max 500. Kicks one delivery pass when any requeued and URL set.
+func (s *Service) AdminRetryWebhooksBatch(f AdminWebhookFilter) (int, error) {
+	status := strings.TrimSpace(f.Status)
 	if status == "" {
 		status = "dead"
 	}
@@ -1164,13 +1173,19 @@ func (s *Service) AdminRetryWebhooksBatch(status string, limit int) (int, error)
 	default:
 		return 0, fmt.Errorf("status must be pending, delivered, or dead")
 	}
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > 500 {
 		limit = 500
 	}
-	list, err := s.store.ListWebhookOutbox(store.WebhookOutboxFilter{Status: status, Limit: limit})
+	list, err := s.store.ListWebhookOutbox(store.WebhookOutboxFilter{
+		Status: status,
+		JobID:  strings.TrimSpace(f.JobID),
+		UserID: strings.TrimSpace(f.UserID),
+		Limit:  limit,
+	})
 	if err != nil {
 		return 0, err
 	}

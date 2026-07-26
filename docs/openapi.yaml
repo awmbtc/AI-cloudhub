@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.25
+  version: 0.2.26
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -1950,7 +1950,7 @@ paths:
       summary: List job webhook outbox rows (admin)
       operationId: adminListJobWebhooks
       description: |
-        Durable terminal webhook outbox. Filter by `status` (pending|delivered|dead).
+        Durable terminal webhook outbox. Filter by `status`, `job_id`, and/or `user_id`.
         List items omit payload; use get-by-id for full envelope.
       security:
         - bearerAuth: []
@@ -1960,6 +1960,12 @@ paths:
           schema:
             type: string
             enum: [pending, delivered, dead]
+        - name: job_id
+          in: query
+          schema: { type: string }
+        - name: user_id
+          in: query
+          schema: { type: string }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500 }
@@ -1976,6 +1982,8 @@ paths:
                     items: { $ref: '#/components/schemas/JobWebhookOutbox' }
                   count: { type: integer }
                   status: { type: string }
+                  job_id: { type: string }
+                  user_id: { type: string }
                   limit: { type: integer }
         '403':
           description: Admin required
@@ -2037,7 +2045,7 @@ paths:
       operationId: adminRetryAllJobWebhooks
       description: |
         Requeues up to `limit` rows with the given `status` (default `dead`) to pending
-        with attempts=0. Kicks one delivery pass when any requeued.
+        with attempts=0. Optional `job_id` / `user_id` scope. Kicks one delivery pass when any requeued.
       security:
         - bearerAuth: []
       parameters:
@@ -2047,6 +2055,12 @@ paths:
             type: string
             enum: [pending, delivered, dead]
             default: dead
+        - name: job_id
+          in: query
+          schema: { type: string }
+        - name: user_id
+          in: query
+          schema: { type: string }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
@@ -2060,6 +2074,8 @@ paths:
                 properties:
                   requeued: { type: integer }
                   status: { type: string }
+                  job_id: { type: string }
+                  user_id: { type: string }
                   limit: { type: integer }
         '400':
           $ref: '#/components/responses/BadRequest'

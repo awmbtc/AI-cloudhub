@@ -53,7 +53,7 @@ func TestSQLiteWebhookRetryRedeliver(t *testing.T) {
 	if hits.Load() < 1 {
 		t.Fatalf("first deliver hits=%d", hits.Load())
 	}
-	list := svc.AdminListWebhooks("delivered", 10)
+	list := svc.AdminListWebhooks(AdminWebhookFilter{Status: "delivered", Limit: 10})
 	if len(list) != 1 {
 		t.Fatalf("delivered %d", len(list))
 	}

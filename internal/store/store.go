@@ -462,6 +462,8 @@ type Store interface {
 // WebhookOutboxFilter filters admin outbox listings.
 type WebhookOutboxFilter struct {
 	Status string // empty = all; pending|delivered|dead
+	JobID  string // empty = all jobs
+	UserID string // empty = all users
 	Limit  int    // 0 = default 100; max 500
 }
 

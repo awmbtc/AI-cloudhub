@@ -472,6 +472,11 @@ d=json.load(sys.stdin)
 assert d.get("count",0)>=1, d
 print(d["items"][0]["id"])
 ')
+# job_id filter should find the webhook for JWH
+N_J=$("${CURL[@]}" "$API/v1/admin/job-webhooks?job_id=$JWH&limit=20" -H "Authorization: Bearer $TOK" \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("count",0)>=1, d; print(d["count"])')
+test "$N_J" -ge 1
+echo "admin webhook job_id filter ok count=$N_J"
 "${CURL[@]}" "$API/v1/admin/job-webhooks/$WID" -H "Authorization: Bearer $TOK" \
   | python3 -c '
 import sys,json
@@ -502,13 +507,13 @@ code=$("${CURL[@]}" -o /tmp/aihub-wh-adm.json -w "%{http_code}" \
 test "$code" = "403"
 echo "admin job-webhooks ok (agent denied $code)"
 # retry-all requeues delivered (batch) then empty dead batch
-RQ=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/retry-all?status=delivered&limit=50" -H "Authorization: Bearer $TOK" \
+RQ=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/retry-all?status=delivered&job_id=$JWH&limit=50" -H "Authorization: Bearer $TOK" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "requeued" in d, d; print(int(d["requeued"]))')
 test "$RQ" -ge 1
 RQ0=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/retry-all?status=dead&limit=10" -H "Authorization: Bearer $TOK" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("status")=="dead", d; print(int(d["requeued"]))')
 test "$RQ0" = "0"
-echo "admin webhook retry-all ok requeued=$RQ dead_batch=$RQ0"
+echo "admin webhook retry-all ok requeued=$RQ dead_batch=$RQ0 job_scoped"
 DEL=$("${CURL[@]}" -X POST "$API/v1/admin/job-webhooks/purge?older_than_sec=1" -H "Authorization: Bearer $TOK" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("deleted",0)))')
 test "$DEL" -ge 0

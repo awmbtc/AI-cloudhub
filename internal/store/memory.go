@@ -1229,9 +1229,17 @@ func (m *Memory) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 		limit = 500
 	}
 	status := strings.TrimSpace(f.Status)
+	jobID := strings.TrimSpace(f.JobID)
+	userID := strings.TrimSpace(f.UserID)
 	var out []*WebhookOutbox
 	for _, e := range m.webhooks {
 		if status != "" && e.Status != status {
+			continue
+		}
+		if jobID != "" && e.JobID != jobID {
+			continue
+		}
+		if userID != "" && e.UserID != userID {
 			continue
 		}
 		out = append(out, cloneWebhookOutbox(e))

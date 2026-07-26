@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.26
+
+Admin job-webhooks filter by `job_id` / `user_id`.
+
+### Admin / Webhook
+- `GET /v1/admin/job-webhooks` accepts `job_id` and `user_id` query filters
+- `POST /v1/admin/job-webhooks/retry-all` accepts the same filters (scope batch requeue)
+- Store indexes on `job_id` and `user_id`
+
 ## v0.2.25
 
 Admin batch requeue for job webhook outbox.

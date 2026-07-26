@@ -754,28 +754,65 @@ func TestAdminRetryWebhooksBatch(t *testing.T) {
 		ID: "del-1", JobID: "j", UserID: "u", Event: "job.succeeded",
 		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
 	})
-	n, err := svc.AdminRetryWebhooksBatch("dead", 10)
+	n, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Status: "dead", Limit: 10})
 	if err != nil || n != 3 {
 		t.Fatalf("batch dead: n=%d err=%v", n, err)
 	}
-	if len(svc.AdminListWebhooks("dead", 10)) != 0 {
+	if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "dead", Limit: 10})) != 0 {
 		t.Fatal("dead should be empty")
 	}
-	if len(svc.AdminListWebhooks("pending", 10)) != 3 {
-		t.Fatalf("pending want 3 got %d", len(svc.AdminListWebhooks("pending", 10)))
+	if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "pending", Limit: 10})) != 3 {
+		t.Fatalf("pending want 3 got %d", len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "pending", Limit: 10})))
 	}
 	// default status is dead
-	n0, err := svc.AdminRetryWebhooksBatch("", 10)
+	n0, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Limit: 10})
 	if err != nil || n0 != 0 {
 		t.Fatalf("empty dead batch: n=%d err=%v", n0, err)
 	}
 	// delivered batch
-	n2, err := svc.AdminRetryWebhooksBatch("delivered", 10)
+	n2, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Status: "delivered", Limit: 10})
 	if err != nil || n2 != 1 {
 		t.Fatalf("batch delivered: n=%d err=%v", n2, err)
 	}
-	if _, err := svc.AdminRetryWebhooksBatch("nope", 10); err == nil {
+	if _, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Status: "nope", Limit: 10}); err == nil {
 		t.Fatal("expected invalid status")
+	}
+}
+
+func TestAdminWebhookFilterByJobID(t *testing.T) {
+	mem := store.NewMemory()
+	svc := NewService(mem)
+	now := time.Now().UTC()
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e1", JobID: "job-a", UserID: "u1", Event: "job.succeeded",
+		PayloadJSON: []byte(`{}`), Status: "delivered", DeliveredAt: now, CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e2", JobID: "job-b", UserID: "u1", Event: "job.failed",
+		PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	_ = mem.EnqueueWebhookOutbox(&store.WebhookOutbox{
+		ID: "e3", JobID: "job-a", UserID: "u2", Event: "job.cancelled",
+		PayloadJSON: []byte(`{}`), Status: "dead", CreatedAt: now, UpdatedAt: now, NextAttemptAt: now,
+	})
+	byJob := svc.AdminListWebhooks(AdminWebhookFilter{JobID: "job-a", Limit: 10})
+	if len(byJob) != 2 {
+		t.Fatalf("job-a want 2 got %d", len(byJob))
+	}
+	byUser := svc.AdminListWebhooks(AdminWebhookFilter{UserID: "u2", Limit: 10})
+	if len(byUser) != 1 || byUser[0].ID != "e3" {
+		t.Fatalf("user filter: %+v", byUser)
+	}
+	byBoth := svc.AdminListWebhooks(AdminWebhookFilter{JobID: "job-a", Status: "dead", Limit: 10})
+	if len(byBoth) != 1 || byBoth[0].ID != "e3" {
+		t.Fatalf("job+status: %+v", byBoth)
+	}
+	n, err := svc.AdminRetryWebhooksBatch(AdminWebhookFilter{Status: "dead", JobID: "job-a", Limit: 10})
+	if err != nil || n != 1 {
+		t.Fatalf("retry job-a dead: n=%d err=%v", n, err)
+	}
+	if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "dead", JobID: "job-b", Limit: 10})) != 1 {
+		t.Fatal("job-b dead should remain")
 	}
 }
 
@@ -818,7 +855,7 @@ func TestAdminRetryWebhook(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	dead := svc.AdminListWebhooks("dead", 10)
+	dead := svc.AdminListWebhooks(AdminWebhookFilter{Status: "dead", Limit: 10})
 	if len(dead) != 1 {
 		t.Fatalf("want 1 dead got %d", len(dead))
 	}
@@ -835,7 +872,7 @@ func TestAdminRetryWebhook(t *testing.T) {
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = svc.ProcessWebhookOutbox(8)
-		if len(svc.AdminListWebhooks("delivered", 10)) >= 1 {
+		if len(svc.AdminListWebhooks(AdminWebhookFilter{Status: "delivered", Limit: 10})) >= 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)

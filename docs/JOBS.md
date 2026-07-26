@@ -139,10 +139,10 @@ POST /v1/admin/jobs/{id}/cancel
 POST /v1/admin/jobs/{id}/release
 { "note": "optional reason" }
 
-GET  /v1/admin/job-webhooks?status=&limit=
+GET  /v1/admin/job-webhooks?status=&job_id=&user_id=&limit=
 GET  /v1/admin/job-webhooks/{id}
 POST /v1/admin/job-webhooks/{id}/retry
-POST /v1/admin/job-webhooks/retry-all?status=dead&limit=
+POST /v1/admin/job-webhooks/retry-all?status=dead&job_id=&user_id=&limit=
 POST /v1/admin/job-webhooks/purge?older_than_sec=
 ```
 
@@ -152,7 +152,7 @@ POST /v1/admin/job-webhooks/purge?older_than_sec=
 - **Admin cancel** any non-terminal job (owner-agnostic); runner still detects via cancel poll.
 - Note append: `admin cancel: <note>` when body note set; cancel is idempotent if already cancelled.
 - **Admin release** returns `running`/`dispatched` → `pending` (`released: admin: …`) so another runner can claim (force requeue).
-- **Admin job-webhooks**: list/get outbox; `status=pending|delivered|dead`; retry requeues any row (including dead/delivered) with same `event_id`/`payload`, attempts reset to 0; **retry-all** batch requeue (default `status=dead`, limit default 100 max 500); **purge** deletes old delivered/dead (`older_than_sec` optional).
+- **Admin job-webhooks**: list/get outbox; filters `status` / `job_id` / `user_id`; retry requeues any row (same `event_id`/`payload`, attempts=0); **retry-all** batch requeue (default `status=dead`, same filters, limit default 100 max 500); **purge** deletes old delivered/dead (`older_than_sec` optional).
 - Agent tokens cannot call admin APIs.
 - Audit: `admin.jobs.*` / `admin.job_webhooks.list|get|retry|retry_all|purge`.
 

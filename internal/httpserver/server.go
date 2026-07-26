@@ -2474,7 +2474,7 @@ func (s *Server) routeAdminJobsSub(w http.ResponseWriter, r *http.Request, admin
 	writeJSON(w, http.StatusOK, j)
 }
 
-// handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&limit=
+// handleAdminJobWebhooksList: GET /v1/admin/job-webhooks?status=&job_id=&user_id=&limit=
 func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Request, adminID, _, _ string) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2486,7 +2486,13 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, "status must be pending, delivered, or dead")
 		return
 	}
-	items := s.jobs.AdminListWebhooks(status, limit)
+	filt := job.AdminWebhookFilter{
+		Status: status,
+		JobID:  strings.TrimSpace(r.URL.Query().Get("job_id")),
+		UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
+		Limit:  limit,
+	}
+	items := s.jobs.AdminListWebhooks(filt)
 	eff := limit
 	if eff <= 0 {
 		eff = 100
@@ -2494,12 +2500,14 @@ func (s *Server) handleAdminJobWebhooksList(w http.ResponseWriter, r *http.Reque
 	if eff > 500 {
 		eff = 500
 	}
-	s.auth.Audit(adminID, "admin.job_webhooks.list", "", fmt.Sprintf("n=%d status=%s", len(items), status))
+	s.auth.Audit(adminID, "admin.job_webhooks.list", filt.JobID, fmt.Sprintf("n=%d status=%s job_id=%s user_id=%s", len(items), status, filt.JobID, filt.UserID))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"items":  items,
-		"status": status,
-		"limit":  eff,
-		"count":  len(items),
+		"items":   items,
+		"status":  status,
+		"job_id":  filt.JobID,
+		"user_id": filt.UserID,
+		"limit":   eff,
+		"count":   len(items),
 	})
 }
 
@@ -2538,7 +2546,13 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 		}
 		status := strings.TrimSpace(r.URL.Query().Get("status"))
 		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
-		n, err := s.jobs.AdminRetryWebhooksBatch(status, limit)
+		filt := job.AdminWebhookFilter{
+			Status: status,
+			JobID:  strings.TrimSpace(r.URL.Query().Get("job_id")),
+			UserID: strings.TrimSpace(r.URL.Query().Get("user_id")),
+			Limit:  limit,
+		}
+		n, err := s.jobs.AdminRetryWebhooksBatch(filt)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -2553,10 +2567,12 @@ func (s *Server) routeAdminJobWebhooksSub(w http.ResponseWriter, r *http.Request
 		if eff > 500 {
 			eff = 500
 		}
-		s.auth.Audit(adminID, "admin.job_webhooks.retry_all", "", fmt.Sprintf("requeued=%d status=%s limit=%d", n, status, eff))
+		s.auth.Audit(adminID, "admin.job_webhooks.retry_all", filt.JobID, fmt.Sprintf("requeued=%d status=%s job_id=%s user_id=%s limit=%d", n, status, filt.JobID, filt.UserID, eff))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"requeued": n,
 			"status":   status,
+			"job_id":   filt.JobID,
+			"user_id":  filt.UserID,
 			"limit":    eff,
 		})
 		return

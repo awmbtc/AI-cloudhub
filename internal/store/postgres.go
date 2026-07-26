@@ -223,6 +223,8 @@ CREATE TABLE IF NOT EXISTS job_webhook_outbox (
   delivered_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_outbox_due ON job_webhook_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_job ON job_webhook_outbox(job_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id);
 `
 	if _, err := p.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate postgres: %w", err)
@@ -1662,6 +1664,16 @@ func (p *Postgres) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, e
 	if strings.TrimSpace(f.Status) != "" {
 		q += fmt.Sprintf(` AND status=$%d`, n)
 		args = append(args, strings.TrimSpace(f.Status))
+		n++
+	}
+	if strings.TrimSpace(f.JobID) != "" {
+		q += fmt.Sprintf(` AND job_id=$%d`, n)
+		args = append(args, strings.TrimSpace(f.JobID))
+		n++
+	}
+	if strings.TrimSpace(f.UserID) != "" {
+		q += fmt.Sprintf(` AND user_id=$%d`, n)
+		args = append(args, strings.TrimSpace(f.UserID))
 		n++
 	}
 	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, n)

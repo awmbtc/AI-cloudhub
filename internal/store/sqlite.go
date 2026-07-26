@@ -269,6 +269,8 @@ CREATE TABLE IF NOT EXISTS job_webhook_outbox (
   delivered_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_outbox_due ON job_webhook_outbox(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_job ON job_webhook_outbox(job_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -1832,6 +1834,14 @@ func (s *SQLite) ListWebhookOutbox(f WebhookOutboxFilter) ([]*WebhookOutbox, err
 	if strings.TrimSpace(f.Status) != "" {
 		q += ` AND status = ?`
 		args = append(args, strings.TrimSpace(f.Status))
+	}
+	if strings.TrimSpace(f.JobID) != "" {
+		q += ` AND job_id = ?`
+		args = append(args, strings.TrimSpace(f.JobID))
+	}
+	if strings.TrimSpace(f.UserID) != "" {
+		q += ` AND user_id = ?`
+		args = append(args, strings.TrimSpace(f.UserID))
 	}
 	q += ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
