@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,6 +19,9 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/store"
 	"github.com/google/uuid"
 )
+
+// ErrIdempotencyConflict is returned when idempotency_key is reused with a different payload.
+var ErrIdempotencyConflict = errors.New("idempotency conflict: key reused with different payload")
 
 // Status of a BYOC job (never implies platform-owned large runner pool).
 type Status string
@@ -144,22 +148,18 @@ func leaseFromEnv() time.Duration {
 }
 
 // Create enqueues a job for user runners to claim.
-// When IdempotencyKey is set and a job already exists for this user+key, that job is returned (200/201 same body).
-func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
+// When IdempotencyKey is set and a job already exists for this user+key with the same
+// payload, that job is returned with created=false. Different payload → ErrIdempotencyConflict.
+func (s *Service) Create(userID string, in CreateInput) (j *Job, created bool, err error) {
 	if strings.TrimSpace(in.DriveID) == "" {
-		return nil, fmt.Errorf("drive_id required")
+		return nil, false, fmt.Errorf("drive_id required")
 	}
 	if len(in.Command) == 0 {
-		return nil, fmt.Errorf("command required (runs on BYOC runner, not platform pool)")
+		return nil, false, fmt.Errorf("command required (runs on BYOC runner, not platform pool)")
 	}
 	idem := strings.TrimSpace(in.IdempotencyKey)
 	if len(idem) > 128 {
-		return nil, fmt.Errorf("idempotency_key max 128 chars")
-	}
-	if idem != "" {
-		if existing, err := s.store.GetJobByIdempotencyKey(userID, idem); err == nil && existing != nil {
-			return jobFromStore(existing), nil
-		}
+		return nil, false, fmt.Errorf("idempotency_key max 128 chars")
 	}
 	mode := in.Mode
 	if mode == "" {
@@ -167,14 +167,8 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	}
 	cmdJSON, err := json.Marshal(in.Command)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	now := time.Now().UTC()
-	note := strings.TrimSpace(in.Note)
-	if note != "" {
-		note += " | "
-	}
-	note += "BYOC only: claim with your runner; no platform large pool (D-001)"
 	timeoutSec := in.TimeoutSec
 	if timeoutSec < 0 {
 		timeoutSec = 0
@@ -192,8 +186,23 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 	}
 	labelsJSON, err := encodeJobLabels(in.Labels)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	connectorID := strings.TrimSpace(in.ConnectorID)
+	if idem != "" {
+		if existing, gerr := s.store.GetJobByIdempotencyKey(userID, idem); gerr == nil && existing != nil {
+			if !sameCreatePayload(existing, in, mode, cmdJSON, labelsJSON, connectorID, priority, timeoutSec, maxAttempts) {
+				return nil, false, ErrIdempotencyConflict
+			}
+			return jobFromStore(existing), false, nil
+		}
+	}
+	now := time.Now().UTC()
+	note := strings.TrimSpace(in.Note)
+	if note != "" {
+		note += " | "
+	}
+	note += "BYOC only: claim with your runner; no platform large pool (D-001)"
 	sj := &store.Job{
 		ID:             uuid.NewString(),
 		UserID:         userID,
@@ -204,7 +213,7 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		Status:         string(StatusPending),
 		RegionHint:     in.RegionHint,
 		Note:           note,
-		ConnectorID:    strings.TrimSpace(in.ConnectorID),
+		ConnectorID:    connectorID,
 		AgentID:        strings.TrimSpace(in.AgentID),
 		Priority:       priority,
 		LabelsJSON:     labelsJSON,
@@ -215,15 +224,98 @@ func (s *Service) Create(userID string, in CreateInput) (*Job, error) {
 		UpdatedAt:      now,
 	}
 	if err := s.store.CreateJob(sj); err != nil {
-		// Race on unique index: return existing if key set.
+		// Race on unique index: re-check existing.
 		if idem != "" {
 			if existing, gerr := s.store.GetJobByIdempotencyKey(userID, idem); gerr == nil && existing != nil {
-				return jobFromStore(existing), nil
+				if !sameCreatePayload(existing, in, mode, cmdJSON, labelsJSON, connectorID, priority, timeoutSec, maxAttempts) {
+					return nil, false, ErrIdempotencyConflict
+				}
+				return jobFromStore(existing), false, nil
 			}
 		}
-		return nil, err
+		return nil, false, err
 	}
-	return jobFromStore(sj), nil
+	return jobFromStore(sj), true, nil
+}
+
+// sameCreatePayload reports whether an existing job matches the create input (idempotent replay).
+func sameCreatePayload(sj *store.Job, in CreateInput, mode string, cmdJSON, labelsJSON []byte, connectorID string, priority, timeoutSec, maxAttempts int) bool {
+	if sj.DriveID != in.DriveID || sj.BindingID != in.BindingID || sj.Mode != mode {
+		return false
+	}
+	if !bytes.Equal(sj.CommandJSON, cmdJSON) {
+		return false
+	}
+	if strings.TrimSpace(sj.RegionHint) != strings.TrimSpace(in.RegionHint) {
+		return false
+	}
+	if sj.ConnectorID != connectorID {
+		return false
+	}
+	if sj.Priority != priority || sj.TimeoutSec != timeoutSec || sj.MaxAttempts != maxAttempts {
+		return false
+	}
+	// Labels: treat empty/null equal.
+	a := bytes.TrimSpace(sj.LabelsJSON)
+	b := bytes.TrimSpace(labelsJSON)
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	// Compare as decoded maps (key order independent).
+	return mapsEqual(decodeJobLabels(a), decodeJobLabels(b))
+}
+
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// Stats counts jobs by status for a user (BYOC queue snapshot).
+type Stats struct {
+	Pending    int `json:"pending"`
+	Dispatched int `json:"dispatched"`
+	Running    int `json:"running"`
+	Succeeded  int `json:"succeeded"`
+	Failed     int `json:"failed"`
+	Cancelled  int `json:"cancelled"`
+	Total      int `json:"total"`
+}
+
+// Stats returns per-status counts for the user.
+func (s *Service) Stats(userID string) Stats {
+	list, err := s.store.ListJobs(userID)
+	if err != nil {
+		return Stats{}
+	}
+	var st Stats
+	for _, sj := range list {
+		st.Total++
+		switch Status(sj.Status) {
+		case StatusPending:
+			st.Pending++
+		case StatusDispatched:
+			st.Dispatched++
+		case StatusRunning:
+			st.Running++
+		case StatusSucceeded:
+			st.Succeeded++
+		case StatusFailed:
+			st.Failed++
+		case StatusCancelled:
+			st.Cancelled++
+		}
+	}
+	return st
 }
 
 // Get returns a job if owned by user.

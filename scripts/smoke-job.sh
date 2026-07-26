@@ -140,15 +140,33 @@ print("priority claim high ok", d["id"])
   -H 'Content-Type: application/json' -d '{"ok":true}' >/dev/null
 "${CURL[@]}" -X POST "$API/v1/jobs/$JLOW/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
 
-echo "== idempotency_key create replay =="
+echo "== idempotency_key create replay + conflict =="
 IDEM_BODY="{\"drive_id\":\"$DID\",\"command\":[\"true\"],\"idempotency_key\":\"smoke-idem-1\"}"
-J1=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
-  -d "$IDEM_BODY" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("idempotency_key")=="smoke-idem-1", d; print(d["id"])')
-J2=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
-  -d "$IDEM_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+code1=$("${CURL[@]}" -o /tmp/aihub-idem1.json -w "%{http_code}" -X POST "$API/v1/jobs" \
+  -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$IDEM_BODY")
+test "$code1" = "201"
+J1=$(python3 -c 'import json; d=json.load(open("/tmp/aihub-idem1.json")); assert d.get("idempotency_key")=="smoke-idem-1"; print(d["id"])')
+code2=$("${CURL[@]}" -o /tmp/aihub-idem2.json -w "%{http_code}" -X POST "$API/v1/jobs" \
+  -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' -d "$IDEM_BODY")
+test "$code2" = "200"
+J2=$(python3 -c 'import json; print(json.load(open("/tmp/aihub-idem2.json"))["id"])')
 test "$J1" = "$J2"
-echo "idempotent create ok $J1"
+# conflict different command
+code3=$("${CURL[@]}" -o /tmp/aihub-idem3.json -w "%{http_code}" -X POST "$API/v1/jobs" \
+  -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
+  -d "{\"drive_id\":\"$DID\",\"command\":[\"false\"],\"idempotency_key\":\"smoke-idem-1\"}")
+test "$code3" = "409"
+echo "idempotent create ok $J1 (replay 200, conflict 409)"
 "${CURL[@]}" -X POST "$API/v1/jobs/$J1/cancel" -H "Authorization: Bearer $ATOK" >/dev/null
+
+echo "== jobs stats =="
+"${CURL[@]}" "$API/v1/jobs/stats" -H "Authorization: Bearer $ATOK" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+assert "total" in d and d["total"]>=1, d
+assert "pending" in d and "running" in d, d
+print("stats ok total", d["total"], "pending", d.get("pending"), "cancelled", d.get("cancelled"))
+'
 
 echo "== labels + region claim =="
 JREG=$("${CURL[@]}" -X POST "$API/v1/jobs" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \

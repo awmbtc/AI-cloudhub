@@ -1,6 +1,7 @@
 package job
 
 import (
+	"errors"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,13 +17,13 @@ import (
 func TestListPendingFiltersByRegion(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u1"
-	if _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "a"}, RegionHint: "us-east"}); err != nil {
+	if _, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "a"}, RegionHint: "us-east"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "b"}, RegionHint: "eu-west"}); err != nil {
+	if _, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "b"}, RegionHint: "eu-west"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "c"}}); err != nil {
+	if _, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo", "c"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +49,7 @@ func TestClaimNextOnlyClaimsPendingOnce(t *testing.T) {
 	mem := store.NewMemory()
 	svc := NewService(mem)
 	uid := "u-claim"
-	created, err := svc.Create(uid, CreateInput{
+	created, _, err := svc.Create(uid, CreateInput{
 		DriveID: "drive-1",
 		Command: []string{"echo", "once"},
 	})
@@ -108,7 +109,7 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 	uid := "u2"
 	var ids []string
 	for i := 0; i < 3; i++ {
-		j, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"echo", "x"}})
+		j, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"echo", "x"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +134,7 @@ func TestClaimNextPicksOldestAmongMany(t *testing.T) {
 func TestReleaseToPending(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-rel"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestReleaseToPending(t *testing.T) {
 func TestCompleteAppendsNote(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-note"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}, Note: "user-seed"})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}, Note: "user-seed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,7 @@ func TestCompleteAppendsNote(t *testing.T) {
 		t.Fatalf("clone path missing: %q", done.Note)
 	}
 	// empty complete note must not wipe
-	j2, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	j2, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestCompleteAppendsNote(t *testing.T) {
 func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-out"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"echo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,34 +261,52 @@ func TestCompleteStdoutStderrCapAndListStatus(t *testing.T) {
 func TestIdempotentCreate(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-idem"
-	a, err := svc.Create(uid, CreateInput{
+	a, created, err := svc.Create(uid, CreateInput{
 		DriveID: "d", Command: []string{"echo"}, IdempotencyKey: "req-1",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !created {
+		t.Fatalf("create: %v created=%v", err, created)
 	}
-	b, err := svc.Create(uid, CreateInput{
-		DriveID: "d", Command: []string{"echo", "other"}, IdempotencyKey: "req-1",
+	// same key + same payload → replay
+	b, created2, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"echo"}, IdempotencyKey: "req-1",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || created2 {
+		t.Fatalf("replay: %v created=%v", err, created2)
 	}
 	if a.ID != b.ID {
 		t.Fatalf("idempotent create should return same id %s vs %s", a.ID, b.ID)
 	}
-	if b.IdempotencyKey != "req-1" {
-		t.Fatalf("key %q", b.IdempotencyKey)
+	// same key + different command → conflict
+	if _, _, err := svc.Create(uid, CreateInput{
+		DriveID: "d", Command: []string{"echo", "other"}, IdempotencyKey: "req-1",
+	}); err == nil || !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("want conflict, got %v", err)
 	}
 	// different key = new job
-	c, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"x"}, IdempotencyKey: "req-2"})
-	if err != nil || c.ID == a.ID {
-		t.Fatalf("new key: %v %s", err, c.ID)
+	c, created3, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"x"}, IdempotencyKey: "req-2"})
+	if err != nil || !created3 || c.ID == a.ID {
+		t.Fatalf("new key: %v created=%v %s", err, created3, c.ID)
+	}
+}
+
+func TestJobStats(t *testing.T) {
+	svc := NewService(store.NewMemory())
+	uid := "u-st"
+	j1, _, _ := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"a"}})
+	j2, _, _ := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"b"}})
+	_, _ = svc.Claim(uid, j1.ID, "", "")
+	_, _ = svc.Complete(uid, j1.ID, CompleteInput{OK: true})
+	_, _ = svc.Cancel(uid, j2.ID)
+	st := svc.Stats(uid)
+	if st.Total != 2 || st.Succeeded != 1 || st.Cancelled != 1 {
+		t.Fatalf("stats %+v", st)
 	}
 }
 
 func TestCompleteNoopWhenCancelled(t *testing.T) {
 	svc := NewService(store.NewMemory())
-	j, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})
+	j, _, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,14 +328,14 @@ func TestCompleteNoopWhenCancelled(t *testing.T) {
 func TestLabelsAndRegionClaim(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-lab"
-	_, err := svc.Create(uid, CreateInput{
+	_, _, err := svc.Create(uid, CreateInput{
 		DriveID: "d", Command: []string{"a"}, RegionHint: "us-east",
 		Labels: map[string]string{"env": "prod", "team": "ml"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Create(uid, CreateInput{
+	_, _, err = svc.Create(uid, CreateInput{
 		DriveID: "d", Command: []string{"b"}, RegionHint: "eu-west",
 		Labels: map[string]string{"env": "dev"},
 	})
@@ -348,11 +367,11 @@ func TestLabelsAndRegionClaim(t *testing.T) {
 func TestClaimPriorityOrder(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-pri"
-	low, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"low"}, Priority: 1})
+	low, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"low"}, Priority: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	high, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"high"}, Priority: 10})
+	high, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"high"}, Priority: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +418,7 @@ func TestMaxAttemptsOnLeaseExpiry(t *testing.T) {
 	svc := NewService(mem)
 	svc.SetLease(50 * time.Millisecond)
 	uid := "u-max"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, MaxAttempts: 1})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, MaxAttempts: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +454,7 @@ func TestHardTimeoutFailsJob(t *testing.T) {
 	svc := NewService(mem)
 	svc.SetLease(0) // only timeout path
 	uid := "u-to"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, TimeoutSec: 1})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}, TimeoutSec: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +500,7 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	svc.SetLease(50 * time.Millisecond)
 	uid := "u-lease"
-	j, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"sleep"}})
+	j, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"sleep"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +543,7 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 		t.Fatalf("note %q", got.Note)
 	}
 	// ClaimNext path reclaims too.
-	j2, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}})
+	j2, _, err := svc.Create(uid, CreateInput{DriveID: "d1", Command: []string{"x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +566,7 @@ func TestHeartbeatAndLeaseReclaim(t *testing.T) {
 
 func TestCreateRecordsAgentID(t *testing.T) {
 	svc := NewService(store.NewMemory())
-	j, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}, AgentID: "creator-a"})
+	j, _, err := svc.Create("u", CreateInput{DriveID: "d", Command: []string{"x"}, AgentID: "creator-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,10 +582,10 @@ func TestCreateRecordsAgentID(t *testing.T) {
 func TestListFilterByAgent(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-lf"
-	if _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"a"}, AgentID: "a1"}); err != nil {
+	if _, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"a"}, AgentID: "a1"}); err != nil {
 		t.Fatal(err)
 	}
-	j2, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"b"}, AgentID: "a2"})
+	j2, _, err := svc.Create(uid, CreateInput{DriveID: "d", Command: []string{"b"}, AgentID: "a2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,11 +609,11 @@ func TestListFilterByAgent(t *testing.T) {
 func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-filt"
-	j1, err := svc.Create(uid, CreateInput{DriveID: "forbidden", Command: []string{"a"}})
+	j1, _, err := svc.Create(uid, CreateInput{DriveID: "forbidden", Command: []string{"a"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	j2, err := svc.Create(uid, CreateInput{DriveID: "allowed", Command: []string{"b"}})
+	j2, _, err := svc.Create(uid, CreateInput{DriveID: "allowed", Command: []string{"b"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,7 +645,7 @@ func TestClaimNextFilteredSkipsDeniedDrives(t *testing.T) {
 func TestClaimNextFilteredAllDenied(t *testing.T) {
 	svc := NewService(store.NewMemory())
 	uid := "u-alldeny"
-	if _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
+	if _, _, err := svc.Create(uid, CreateInput{DriveID: "x", Command: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := svc.ClaimNextFiltered(uid, "bot", "", "", func(string) string { return "blocked" })

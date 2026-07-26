@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.2.15
+
+Idempotency conflict (409), job stats, JOBS runbook.
+
+### Jobs
+- Same `idempotency_key` + different payload → HTTP 409; same payload → 200 replay / 201 create
+- `GET /v1/jobs/stats` per-status counts; MCP `job_stats`
+- docs/JOBS.md operational runbook
+
 ## v0.2.14
 
 Job create idempotency and runner cancel detection.

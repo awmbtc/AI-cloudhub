@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.14 已发布；idempotency_key + runner cancel
+## 总览：v0.2.15 已发布；idempotency 409 + job stats + JOBS runbook
 
 | 阶段 | 状态 |
 |------|------|
@@ -409,3 +409,10 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `idempotency_key` create dedup（store unique + GetByKey）
 - [x] runner cancel poll + CommandContext kill；complete no-op if terminal
 - [x] 版本钉 **0.2.14** + tag
+
+### 本波（idempotency 409 + stats + runbook）
+
+- [x] 同 key 不同 payload → 409；同 payload → 200 重放 / 201 新建
+- [x] `GET /v1/jobs/stats` + MCP `job_stats`
+- [x] docs/JOBS.md 运维 runbook
+- [x] 版本钉 **0.2.15** + tag

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI-cloudhub HTTP API
-  version: 0.2.14
+  version: 0.2.15
   description: |
     Control-plane HTTP API for **AI-cloudhub** — a multi-cloud disk OS for humans and agents.
 
@@ -3308,6 +3308,30 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
+
+  /v1/jobs/stats:
+    get:
+      tags: [jobs]
+      summary: Job counts by status
+      operationId: jobStats
+      description: Snapshot counts for the authenticated user's BYOC queue.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending: { type: integer }
+                  dispatched: { type: integer }
+                  running: { type: integer }
+                  succeeded: { type: integer }
+                  failed: { type: integer }
+                  cancelled: { type: integer }
+                  total: { type: integer }
 
   /v1/jobs:
     get:

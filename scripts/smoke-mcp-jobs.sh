@@ -66,7 +66,7 @@ for line in sys.stdin:
   d=json.loads(line)
   for t in (d.get("result") or {}).get("tools") or []:
     names.add(t["name"])
-need={"list_jobs","get_job","create_job","claim_next_job","complete_job","heartbeat_job","cancel_job","list_providers",
+need={"list_jobs","job_stats","get_job","create_job","claim_next_job","complete_job","heartbeat_job","cancel_job","list_providers",
       "list_marketplace","install_marketplace","marketplace_checkout","list_memory","put_memory","search_memory",
       "list_graph","link_graph","list_connectors","connectors_catalog","create_connector","get_connector","delete_connector",
       "list_lineage","record_lineage"}

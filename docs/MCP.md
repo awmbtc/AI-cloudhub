@@ -47,6 +47,7 @@ go build -o .bin/mcp ./cmd/mcp
 | `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
 | `list_jobs` | job.run | status / agent / labels 过滤 |
+| `job_stats` | job.run | `GET /v1/jobs/stats` 各状态计数 |
 | `get_job` | job.run | 含 exit/duration/labels/stdout… |
 | `create_job` | job.run | BYOC；可选 timeout / max_attempts / priority / labels / `idempotency_key` |
 | `claim_next_job` | job.run | priority claim；可选 `runner_id` + `region` |

@@ -28,7 +28,7 @@ import (
 
 const serverName = "ai-cloudhub-mcp"
 // Keep in sync with internal/version.Version / release tags.
-const serverVersion = "0.2.14"
+const serverVersion = "0.2.15"
 
 type principalCache struct {
 	mu       sync.Mutex
@@ -148,7 +148,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job", "list_providers",
+	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "job_stats", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job", "list_providers",
 		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector", "marketplace_checkout", "list_lineage", "record_lineage":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
@@ -320,6 +320,11 @@ func toolRegistry() []toolMeta {
 					"labels":              map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
 				},
 			},
+		},
+		{
+			name: "job_stats", description: "Per-status job counts (GET /v1/jobs/stats). Requires job.run for agents.",
+			scopes: []string{auth.ScopeJobRun},
+			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
 			name: "get_job", description: "Get one BYOC job by id (GET /v1/jobs/{id}). Includes exit_code/duration_ms when completed. Requires job.run.",
@@ -757,6 +762,8 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 			return nil, err
 		}
 		return toolListJobs(api, token, args.Status, args.AgentID, args.ClaimedByAgentID, args.Region, args.Labels)
+	case "job_stats":
+		return toolJobStats(api, token)
 	case "get_job":
 		var args struct {
 			JobID string `json:"job_id"`
@@ -1283,6 +1290,19 @@ func toolObjectPost(api, token, driveID, action string, payload map[string]inter
 	return toolResultJSON(parsed)
 }
 
+func toolJobStats(api, token string) (interface{}, error) {
+	body, code, err := httpDo(http.MethodGet, api+"/v1/jobs/stats", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("job stats HTTP %d: %s", code, truncate(string(body), 512))
+	}
+	var parsed interface{}
+	_ = json.Unmarshal(body, &parsed)
+	return toolResultJSON(parsed)
+}
+
 func toolListJobs(api, token, status, agentID, claimedBy, region string, labels map[string]string) (interface{}, error) {
 	url := api + "/v1/jobs"
 	q := []string{}
@@ -1520,7 +1540,7 @@ func toolWorkspaceEnv(workspace string) interface{} {
 		"tools": []string{
 			"whoami", "list_drives", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
-			"list_jobs", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job",
+			"list_jobs", "job_stats", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job",
 			"list_marketplace", "install_marketplace", "marketplace_checkout", "list_memory", "put_memory", "search_memory",
 			"list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector",
 			"list_lineage", "record_lineage",

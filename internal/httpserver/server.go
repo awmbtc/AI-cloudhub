@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -299,21 +300,30 @@ func (s *Server) routeJobsRoot(w http.ResponseWriter, r *http.Request, userID, _
 		if pr := principalFrom(r); pr != nil {
 			in.AgentID = pr.AgentID
 		}
-		j, err := s.jobs.Create(userID, in)
+		j, created, err := s.jobs.Create(userID, in)
 		if err != nil {
+			if errors.Is(err, job.ErrIdempotencyConflict) {
+				writeErr(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		metrics.IncJobCreated()
-		if j.ConnectorID != "" {
-			metrics.IncJobWithConnector()
+		if created {
+			metrics.IncJobCreated()
+			if j.ConnectorID != "" {
+				metrics.IncJobWithConnector()
+			}
+			if pr := principalFrom(r); pr != nil {
+				s.auth.AuditAgent(userID, pr.AgentID, "job.create", j.ID, in.DriveID)
+			} else {
+				s.auth.Audit(userID, "job.create", j.ID, in.DriveID)
+			}
+			writeJSON(w, http.StatusCreated, j)
+			return
 		}
-		if pr := principalFrom(r); pr != nil {
-			s.auth.AuditAgent(userID, pr.AgentID, "job.create", j.ID, in.DriveID)
-		} else {
-			s.auth.Audit(userID, "job.create", j.ID, in.DriveID)
-		}
-		writeJSON(w, http.StatusCreated, j)
+		// Idempotent replay: same key + same payload.
+		writeJSON(w, http.StatusOK, j)
 	case http.MethodGet:
 		// List is human-oriented; agents need job.run for pending claim workflows.
 		if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
@@ -366,6 +376,20 @@ func (s *Server) routeJobsSub(w http.ResponseWriter, r *http.Request, userID, _,
 	if len(parts) == 1 {
 		if r.Method != http.MethodGet {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		// GET /v1/jobs/stats — per-status counts (before job id lookup).
+		if id == "stats" {
+			if pr := principalFrom(r); pr != nil && pr.AgentID != "" {
+				if !s.requireScope(w, r, auth.ScopeJobRun) {
+					return
+				}
+				if !s.allowAgentJob(w, r, "") {
+					return
+				}
+			}
+			st := s.jobs.Stats(userID)
+			writeJSON(w, http.StatusOK, st)
 			return
 		}
 		j, err := s.jobs.Get(userID, id)
