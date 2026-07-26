@@ -54,6 +54,7 @@ help:
 	@echo "  make smoke-hubd    hubd check + dry-run (no FUSE; docs/HUBD.md)"
 	@echo "  make smoke-runner  runner check + dry-run (no claim; docs/RUNNER.md)"
 	@echo "  make smoke-runtime hubd+runner (docs/RUNTIME.md)"
+	@echo "  make demo-local    Real MinIO → local dir via sync_workspace (no FUSE)"
 	@echo "  make smoke-stage-c  Stage C memory/marketplace/connectors"
 	@echo "  make smoke-byoc     BYOC git/pg/mysql materialize (local)"
 	@echo "  make smoke-sts      Offline STS path selection + unit tests (+ fail-open)"
@@ -110,6 +111,11 @@ smoke-runner: build
 # Combined user-side runtime path (hubd + runner); see docs/RUNTIME.md
 smoke-runtime: smoke-hubd smoke-runner
 	@echo "OK smoke-runtime (hubd + runner)"
+
+# Usable local files without FUSE: MinIO seed → hubd once sync_workspace → ~/aihub-demo-workspace
+demo-local: build
+	@chmod +x scripts/demo-local-workspace.sh
+	./scripts/demo-local-workspace.sh
 
 smoke-stage-c: build
 	./scripts/smoke-stage-c.sh

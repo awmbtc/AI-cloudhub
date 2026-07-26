@@ -41,6 +41,7 @@
 | 只物化 git/DB 连接器 | **runner materialize** |
 | 只想确认本机能不能挂 | **`hubd check` / `runner check`** |
 | 只想看 session conf / 队列，不真挂不真跑 | **`dry-run`** |
+| **扩展/FUSE 搞不定，但要本机看到云上文件** | **`make demo-local`**（`sync_workspace`，无 FUSE） |
 
 详文：
 

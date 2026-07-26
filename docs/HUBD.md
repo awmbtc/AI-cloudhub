@@ -60,6 +60,20 @@ conf 写在 `$AI_CLOUDHUB_STATE/dry-run/<binding_id>/rclone.conf`。
 
 ---
 
+## 无 FUSE 也可用：sync_workspace 同步到本机目录
+
+扩展找不到、或 macOS 不允许系统扩展时，**不要卡在 mount**。产品支持：
+
+```bash
+make demo-local
+# → 真 MinIO 对象拉取到 ~/aihub-demo-workspace
+# open ~/aihub-demo-workspace
+```
+
+`mode=sync_workspace`：`rclone sync` 拉/推，**不需要** FUSE/`rclone mount`。
+
+---
+
 ## 真挂盘剧本（人工）
 
 1. 控制面：provider → drive → binding(`device_id=laptop-1`,`desired=mounted`)  

@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.59（+ Runtime 总览收口）
+## 总览：v0.2.60（+ 无 FUSE 本机工作区 demo）
 
 | 阶段 | 状态 |
 |------|------|
@@ -566,6 +566,11 @@ curl -s localhost:8080/v1/runtime/check
 - [x] `docs/RUNTIME.md` hubd+runner 一张图与验收顺序
 - [x] `make smoke-runtime`
 - [x] 版本钉 **0.2.59** + tag
+
+### 本波（v0.2.60 · 无 FUSE 可用）
+
+- [x] `make demo-local` sync_workspace 真桶→本机目录
+- [x] 版本钉 **0.2.60** + tag
 
 
 

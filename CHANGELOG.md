@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.60
+
+Usable local workspace without FUSE:
+
+- `scripts/demo-local-workspace.sh` / `make demo-local`
+- Real MinIO seed → hubd once `sync_workspace` → `~/aihub-demo-workspace`
+- Docs: HUBD / RUNTIME when system extension UI is unavailable
+
 ## v0.2.59
 
 Runtime overview close-out:
