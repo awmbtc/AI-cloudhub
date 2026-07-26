@@ -117,6 +117,8 @@ func New(d Deps) http.Handler {
 		store:     d.Store,
 	}
 	mux := http.NewServeMux()
+	// Browser landing for domain front door (e.g. https://sstc.chat/) — not a full web UI.
+	mux.HandleFunc("/", s.method(http.MethodGet, s.handleRoot))
 	mux.HandleFunc("/healthz", s.method(http.MethodGet, s.handleHealth))
 	mux.HandleFunc("/readyz", s.method(http.MethodGet, s.handleReadyz))
 	mux.HandleFunc("/metrics", s.handleMetrics)
@@ -220,6 +222,73 @@ func (s *Server) method(m string, h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r)
 	}
+}
+
+// handleRoot serves a tiny status page for GET / so domain front doors are not a bare 404.
+// Accept: application/json → JSON; otherwise HTML.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// Go 1.22+ "/" is exact; still reject non-root if older mux ever catches subtree.
+	if r.URL.Path != "/" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	payload := map[string]interface{}{
+		"status":  "ok",
+		"product": version.Product,
+		"version": version.Version,
+		"message": "AI-cloudhub control plane — API only (not a file host)",
+		"links": map[string]string{
+			"healthz": "/healthz",
+			"readyz":  "/readyz",
+			"login":   "POST /v1/auth/login",
+			"docs":    "https://github.com/awmbtc/AI-cloudhub",
+		},
+		"note": "Use Agent/human tokens against /v1/*; object bytes stay on your BYOS storage.",
+	}
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") {
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI-cloudhub</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background: #0b0f14; color: #e8eef5; }
+  main { max-width: 36rem; padding: 2rem; border: 1px solid #243041; border-radius: 12px; background: #121821; }
+  h1 { margin: 0 0 .5rem; font-size: 1.5rem; letter-spacing: .02em; }
+  .muted { color: #9aadc2; font-size: .95rem; line-height: 1.5; }
+  code, a { color: #7dd3fc; }
+  ul { padding-left: 1.2rem; margin: 1rem 0 0; }
+  li { margin: .35rem 0; }
+  .ok { display:inline-block; margin-top: 1rem; padding: .25rem .6rem; border-radius: 999px;
+    background: #0f3d2e; color: #6ee7b7; font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI-cloudhub</h1>
+  <p class="muted">控制面 API · 版本 <code>%s</code></p>
+  <p class="muted">这是人和 Agent 的多云磁盘控制面，不是网盘首页。对象存储在您自己的桶（BYOS）；算力在用户侧 hubd/runner（BYOC）。</p>
+  <ul class="muted">
+    <li>健康检查：<a href="/healthz"><code>/healthz</code></a></li>
+    <li>就绪检查：<a href="/readyz"><code>/readyz</code></a></li>
+    <li>登录：<code>POST /v1/auth/login</code></li>
+    <li>Agent / MCP：设置 <code>AI_CLOUDHUB_API=https://您的域名</code></li>
+  </ul>
+  <span class="ok">status: ok</span>
+</main>
+</body>
+</html>
+`, version.Version)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

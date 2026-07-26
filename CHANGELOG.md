@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.2.63
+
+Browser landing for domain front door:
+
+- `GET /` HTML status page (JSON if Accept: application/json)
+- Avoid bare 404 on https://sstc.chat/
+
 ## v0.2.62
 
 Local runtime demo path close-out (post-reboot FUSE verified):

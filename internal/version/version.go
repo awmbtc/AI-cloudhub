@@ -1,7 +1,7 @@
 package version
 
 // Version is set at build time via -ldflags "-X github.com/awmbtc/AI-cloudhub/internal/version.Version=..."
-var Version = "0.2.62"
+var Version = "0.2.63"
 
 // Product name constant.
 const Product = "AI-cloudhub"
