@@ -55,6 +55,7 @@ help:
 	@echo "  make smoke-runner  runner check + dry-run (no claim; docs/RUNNER.md)"
 	@echo "  make smoke-runtime hubd+runner (docs/RUNTIME.md)"
 	@echo "  make demo-local    Real MinIO → local dir via sync_workspace (no FUSE)"
+	@echo "  make smoke-hubd-fuse  Real FUSE mount (soft-skip; REQUIRE=1 hard)"
 	@echo "  make smoke-stage-c  Stage C memory/marketplace/connectors"
 	@echo "  make smoke-byoc     BYOC git/pg/mysql materialize (local)"
 	@echo "  make smoke-sts      Offline STS path selection + unit tests (+ fail-open)"
@@ -116,6 +117,11 @@ smoke-runtime: smoke-hubd smoke-runner
 demo-local: build
 	@chmod +x scripts/demo-local-workspace.sh
 	./scripts/demo-local-workspace.sh
+
+# Real FUSE: mode=mount + official rclone. Soft-skips if macFUSE not loaded.
+smoke-hubd-fuse: build
+	@chmod +x scripts/smoke-hubd-fuse.sh
+	./scripts/smoke-hubd-fuse.sh
 
 smoke-stage-c: build
 	./scripts/smoke-stage-c.sh

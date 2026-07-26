@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.61
+
+FUSE mount smoke tooling (honest):
+
+- `scripts/smoke-hubd-fuse.sh` / `make smoke-hubd-fuse`
+- Auto-fetch official rclone (Homebrew macOS rclone refuses mount)
+- Soft-skip when macFUSE kernel FS not available; docs note
+
 ## v0.2.60
 
 Usable local workspace without FUSE:

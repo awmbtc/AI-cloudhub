@@ -1,6 +1,6 @@
 # 实现进度（对照架构定稿）
 
-## 总览：v0.2.60（+ 无 FUSE 本机工作区 demo）
+## 总览：v0.2.61（+ FUSE smoke 工具）
 
 | 阶段 | 状态 |
 |------|------|
@@ -571,6 +571,11 @@ curl -s localhost:8080/v1/runtime/check
 
 - [x] `make demo-local` sync_workspace 真桶→本机目录
 - [x] 版本钉 **0.2.60** + tag
+
+### 本波（v0.2.61 · FUSE 专项）
+
+- [x] `make smoke-hubd-fuse`（官方 rclone；扩展未加载时软跳过）
+- [x] 版本钉 **0.2.61** + tag
 
 
 

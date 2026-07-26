@@ -72,6 +72,24 @@ make demo-local
 
 `mode=sync_workspace`：`rclone sync` 拉/推，**不需要** FUSE/`rclone mount`。
 
+### macOS 真 FUSE 专项（`mode=mount`）
+
+```bash
+# 1) 必须用官方 rclone（Homebrew 版会拒绝 mount）
+#    脚本会自动拉到 .bin/rclone-official
+# 2) macFUSE 系统扩展必须已加载，否则：
+#    mount_macfuse: the file system is not available (1)
+
+AI_CLOUDHUB_SMOKE_FUSE_REQUIRE=1 make smoke-hubd-fuse
+# 软跳过（无 FUSE 时 exit 0）：
+make smoke-hubd-fuse
+```
+
+**本机实测（2026-07）：**  
+- brew rclone → `mount is not supported … Homebrew` ❌  
+- 官方 rclone + hubd 报 `mounted`，但内核报 `file system is not available` → 挂载点仍空 ❌（扩展未真正启用）  
+- `make demo-local` / sync ✅  
+
 ---
 
 ## 真挂盘剧本（人工）
