@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI-cloudhub 连接向导</title>
+<style>
+:root { color-scheme: dark light; --bg:#0b0f14; --card:#121821; --border:#243041; --text:#e8eef5; --muted:#9aadc2; --accent:#7dd3fc; --ok:#6ee7b7; --okbg:#0f3d2e; --warn:#fbbf24; --err:#f87171; --btn:#1e3a5f; --btnh:#2563eb; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); line-height:1.45; }
+.wrap { max-width: 40rem; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:1rem; }
+h1 { margin:0; font-size:1.25rem; letter-spacing:.02em; }
+.muted { color:var(--muted); font-size:.9rem; }
+a { color:var(--accent); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.82rem; }
+.badge { display:inline-block; padding:.2rem .55rem; border-radius:999px; background:var(--okbg); color:var(--ok); font-size:.75rem; }
+.steps { display:flex; flex-wrap:wrap; gap:.4rem; margin:1rem 0 1.25rem; }
+.steps button { flex:1 1 auto; min-width:4.5rem; border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:8px; padding:.45rem .4rem; font-size:.78rem; cursor:pointer; }
+.steps button.active { border-color:var(--accent); color:var(--accent); background:#0c1a28; }
+.steps button.done { color:var(--ok); }
+.card { border:1px solid var(--border); border-radius:12px; background:var(--card); padding:1.1rem 1rem 1.25rem; }
+.card h2 { margin:0 0 .75rem; font-size:1.05rem; }
+label { display:block; font-size:.85rem; color:var(--muted); margin:.65rem 0 .25rem; }
+input, select, textarea { width:100%; padding:.55rem .65rem; border-radius:8px; border:1px solid var(--border); background:#0b121a; color:var(--text); font-size:.95rem; }
+textarea { min-height:7rem; resize:vertical; }
+.row { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.9rem; }
+.row > * { flex:1 1 8rem; }
+button.primary, button.secondary, button.danger { border:0; border-radius:8px; padding:.55rem .9rem; font-size:.9rem; cursor:pointer; }
+button.primary { background:var(--btnh); color:#fff; }
+button.secondary { background:var(--btn); color:var(--text); }
+button.danger { background:#7f1d1d; color:#fecaca; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+.hint { font-size:.8rem; color:var(--muted); margin-top:.5rem; }
+.warn { color:var(--warn); font-size:.82rem; margin:.5rem 0; }
+.err { color:var(--err); font-size:.88rem; white-space:pre-wrap; margin:.6rem 0; min-height:1.2em; }
+.list { margin:.75rem 0 0; padding:0; list-style:none; }
+.list li { border:1px solid var(--border); border-radius:8px; padding:.55rem .7rem; margin:.4rem 0; font-size:.88rem; }
+.list li .meta { color:var(--muted); font-size:.78rem; margin-top:.2rem; }
+.checks { display:flex; flex-wrap:wrap; gap:.6rem 1rem; margin:.5rem 0; }
+.checks label { display:flex; align-items:center; gap:.4rem; margin:0; color:var(--text); font-size:.9rem; }
+.checks input { width:auto; }
+.token-box { word-break:break-all; background:#0b121a; border:1px solid var(--border); border-radius:8px; padding:.7rem; margin:.5rem 0; }
+.nav { display:flex; justify-content:space-between; gap:.6rem; margin-top:1.1rem; }
+pre.snippet { background:#0b121a; border:1px solid var(--border); border-radius:8px; padding:.75rem; overflow:auto; white-space:pre-wrap; }
+.topbar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; font-size:.82rem; color:var(--muted); }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>AI-cloudhub 连接向导</h1>
+      <p class="muted">极简手动运维 · Phase-0（注册 → Provider → Drive → Agent Token → Cursor MCP）</p>
+    </div>
+    <div class="topbar">
+      <span id="healthBadge" class="badge">…</span>
+      <button type="button" class="secondary" id="btnLogout" style="display:none">退出登录</button>
+      <a href="/">首页</a>
+    </div>
+  </header>
+
+  <p class="warn">⚠️ Token / AK·SK 仅存于本浏览器内存与 localStorage，勿在共享电脑或公共 Kiosk 上使用；不要把 Token 提交到 Git。</p>
+
+  <nav class="steps" id="stepNav" aria-label="步骤"></nav>
+  <div id="err" class="err" role="alert"></div>
+
+  <!-- Step 1: Auth -->
+  <section class="card step" data-step="1">
+    <h2>1. 账号</h2>
+    <div class="row">
+      <div>
+        <label>用户名</label>
+        <input id="username" autocomplete="username" placeholder="username"/>
+      </div>
+      <div>
+        <label>密码</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="password"/>
+      </div>
+    </div>
+    <div class="row">
+      <button type="button" class="primary" id="btnLogin">登录</button>
+      <button type="button" class="secondary" id="btnRegister">注册</button>
+    </div>
+    <p class="hint">登录成功后 JWT 存 localStorage（仅本机运维工具）。MCP 插件请用下一步生成的 <strong>Agent Token</strong>，不要用人 JWT。</p>
+    <p class="muted" id="authStatus"></p>
+    <div class="nav">
+      <span></span>
+      <button type="button" class="primary" data-next="2">下一步：云账号 →</button>
+    </div>
+  </section>
+
+  <!-- Step 2: Provider -->
+  <section class="card step hidden" data-step="2">
+    <h2>2. 云账号 Provider</h2>
+    <label>显示名称</label>
+    <input id="provName" placeholder="my-r2"/>
+    <label>类型</label>
+    <select id="provType">
+      <option value="r2">r2 (Cloudflare R2)</option>
+      <option value="minio">minio</option>
+      <option value="s3">s3</option>
+      <option value="oss">oss (阿里云)</option>
+      <option value="cos">cos (腾讯云)</option>
+      <option value="b2">b2 (Backblaze)</option>
+      <option value="qiniu">qiniu</option>
+      <option value="oracle">oracle</option>
+    </select>
+    <label>Access Key</label>
+    <input id="provAK" autocomplete="off"/>
+    <label>Secret Key</label>
+    <input id="provSK" type="password" autocomplete="off"/>
+    <label>Endpoint（可选；R2 可留空若填了 account_id）</label>
+    <input id="provEndpoint" placeholder="s3.xxx.r2.cloudflarestorage.com"/>
+    <label>Region（可选）</label>
+    <input id="provRegion" placeholder="auto / us-east-1"/>
+    <label>Account ID（R2 常用）</label>
+    <input id="provAccount" placeholder="Cloudflare account id"/>
+    <div class="row">
+      <button type="button" class="primary" id="btnCreateProv">创建 Provider</button>
+      <button type="button" class="secondary" id="btnRefreshProv">刷新列表</button>
+    </div>
+    <ul class="list" id="provList"></ul>
+    <div class="nav">
+      <button type="button" class="secondary" data-prev="1">← 上一步</button>
+      <button type="button" class="primary" data-next="3">下一步：逻辑盘 →</button>
+    </div>
+  </section>
+
+  <!-- Step 3: Drive -->
+  <section class="card step hidden" data-step="3">
+    <h2>3. 逻辑盘 Drive</h2>
+    <label>名称</label>
+    <input id="driveName" placeholder="R2 reports"/>
+    <label>Provider</label>
+    <select id="driveProvider"></select>
+    <label>Bucket</label>
+    <input id="driveBucket" placeholder="my-bucket"/>
+    <label>Prefix（可选）</label>
+    <input id="drivePrefix" placeholder="workspace/"/>
+    <label>Alias（盘符，如 A / B）</label>
+    <input id="driveAlias" placeholder="A" maxlength="16"/>
+    <label>Mount point</label>
+    <input id="driveMount" placeholder="/workspace" value="/workspace"/>
+    <div class="row">
+      <button type="button" class="primary" id="btnCreateDrive">创建 Drive</button>
+      <button type="button" class="secondary" id="btnRefreshDrive">刷新列表</button>
+    </div>
+    <ul class="list" id="driveList"></ul>
+    <div class="nav">
+      <button type="button" class="secondary" data-prev="2">← 上一步</button>
+      <button type="button" class="primary" data-next="4">下一步：插件认证 →</button>
+    </div>
+  </section>
+
+  <!-- Step 4: Agent -->
+  <section class="card step hidden" data-step="4">
+    <h2>4. 插件认证（Agent + Token）</h2>
+    <label>Agent 名称</label>
+    <input id="agentName" placeholder="cursor-writer"/>
+    <label>Scopes</label>
+    <div class="checks">
+      <label><input type="checkbox" id="scopeRead" checked/> drive.read</label>
+      <label><input type="checkbox" id="scopeWrite" checked/> drive.write</label>
+    </div>
+    <label>允许的 Drive（多选）</label>
+    <select id="agentDrives" multiple size="4"></select>
+    <p class="hint">按住 Cmd/Ctrl 多选。建议只勾选需要的盘（A/B）。</p>
+    <div class="row">
+      <button type="button" class="primary" id="btnCreateAgent">创建 Agent</button>
+      <button type="button" class="secondary" id="btnRefreshAgents">刷新 Agents</button>
+    </div>
+    <ul class="list" id="agentList"></ul>
+    <label>为已有 Agent 签发 Token</label>
+    <select id="mintAgentSel"></select>
+    <label>TTL（分钟）</label>
+    <input id="mintTTL" type="number" min="1" value="1440"/>
+    <div class="row">
+      <button type="button" class="primary" id="btnMintToken">签发 Agent Token</button>
+    </div>
+    <div id="tokenOnce" class="hidden">
+      <p class="warn">Token 仅显示一次，请立即复制到 MCP 配置。推荐用 Agent Token，不要用人 JWT。</p>
+      <div class="token-box" id="tokenValue"></div>
+      <button type="button" class="secondary" id="btnCopyToken">复制 Token</button>
+    </div>
+    <div class="nav">
+      <button type="button" class="secondary" data-prev="3">← 上一步</button>
+      <button type="button" class="primary" data-next="5">下一步：Cursor 插件 →</button>
+    </div>
+  </section>
+
+  <!-- Step 5: Cursor MCP -->
+  <section class="card step hidden" data-step="5">
+    <h2>5. Cursor 插件（MCP）</h2>
+    <label>AI_CLOUDHUB_API</label>
+    <input id="mcpApi" />
+    <label>AI_CLOUDHUB_TOKEN（粘贴 Agent Token）</label>
+    <input id="mcpToken" placeholder="&lt;agent_token&gt;" autocomplete="off"/>
+    <label>MCP 二进制绝对路径</label>
+    <input id="mcpBin" placeholder="/absolute/path/to/AI-cloudhub/.bin/mcp" value="/absolute/path/to/AI-cloudhub/.bin/mcp"/>
+    <label>AI_CLOUDHUB_WORKSPACE</label>
+    <input id="mcpWs" value="/workspace"/>
+    <label>mcp.json 片段</label>
+    <pre class="snippet" id="mcpSnippet"></pre>
+    <div class="row">
+      <button type="button" class="secondary" id="btnCopyMcp">复制片段</button>
+      <button type="button" class="secondary" id="btnDlMcp">下载 mcp.json</button>
+    </div>
+    <p class="hint">文档：仓库内 <code>docs/CURSOR-MCP.md</code> · <code>docs/PLUGIN-FOR-AGENTS.md</code> · 一键脚本 <code>./scripts/cursor-mcp-install.sh</code></p>
+    <p class="warn">安全：不要把 Token 写入已跟踪的仓库文件；MCP 优先用 Agent Token（带 drive 白名单），不要用人 JWT。</p>
+    <div class="nav">
+      <button type="button" class="secondary" data-prev="4">← 上一步</button>
+      <span class="muted">完成 · 在 Cursor 重载 MCP</span>
+    </div>
+  </section>
+</div>
+<script>
+(function () {
+  const STEPS = [
+    { n: 1, label: '账号' },
+    { n: 2, label: 'Provider' },
+    { n: 3, label: 'Drive' },
+    { n: 4, label: 'Agent' },
+    { n: 5, label: 'Cursor' }
+  ];
+  const LS_TOKEN = 'ai_cloudhub_wizard_token';
+  const LS_USER = 'ai_cloudhub_wizard_user';
+  const LS_AGENT_TOK = 'ai_cloudhub_wizard_agent_token';
+
+  let step = 1;
+  let jwt = localStorage.getItem(LS_TOKEN) || '';
+  let username = localStorage.getItem(LS_USER) || '';
+  let lastAgentToken = localStorage.getItem(LS_AGENT_TOK) || '';
+  let providers = [];
+  let drives = [];
+  let agents = [];
+
+  const $ = (id) => document.getElementById(id);
+  const errEl = $('err');
+
+  function setErr(msg) {
+    errEl.textContent = msg || '';
+  }
+
+  function apiBase() {
+    return window.location.origin;
+  }
+
+  async function api(method, path, body, useAuth) {
+    const headers = { 'Accept': 'application/json' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (useAuth !== false && jwt) headers['Authorization'] = 'Bearer ' + jwt;
+    const res = await fetch(path, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = { raw: text }; }
+    if (!res.ok) {
+      const msg = (data && (data.error || data.message)) || (text || res.statusText) || ('HTTP ' + res.status);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function renderNav() {
+    const nav = $('stepNav');
+    nav.innerHTML = '';
+    STEPS.forEach(s => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = s.n + '. ' + s.label;
+      if (s.n === step) b.classList.add('active');
+      if (s.n < step) b.classList.add('done');
+      b.addEventListener('click', () => showStep(s.n));
+      nav.appendChild(b);
+    });
+  }
+
+  function showStep(n) {
+    step = n;
+    document.querySelectorAll('.step').forEach(el => {
+      el.classList.toggle('hidden', Number(el.dataset.step) !== n);
+    });
+    renderNav();
+    setErr('');
+    if (n >= 2) refreshProviders().catch(e => setErr(e.message));
+    if (n >= 3) refreshDrives().catch(e => setErr(e.message));
+    if (n >= 4) refreshAgents().catch(e => setErr(e.message));
+    if (n === 5) updateMcpSnippet();
+    updateAuthUI();
+  }
+
+  function updateAuthUI() {
+    const st = $('authStatus');
+    const btn = $('btnLogout');
+    if (jwt) {
+      st.textContent = '已登录' + (username ? ('：' + username) : '') + '（JWT 在 localStorage）';
+      btn.style.display = '';
+    } else {
+      st.textContent = '未登录';
+      btn.style.display = 'none';
+    }
+  }
+
+  function requireAuth() {
+    if (!jwt) throw new Error('请先登录（步骤 1）');
+  }
+
+  async function loadHealth() {
+    try {
+      const d = await api('GET', '/healthz', undefined, false);
+      $('healthBadge').textContent = 'v' + (d.version || '?') + ' · ' + (d.status || 'ok');
+    } catch (e) {
+      $('healthBadge').textContent = 'healthz 失败';
+    }
+  }
+
+  async function doLogin() {
+    setErr('');
+    const u = $('username').value.trim();
+    const p = $('password').value;
+    const pair = await api('POST', '/v1/auth/login', { username: u, password: p }, false);
+    jwt = pair.token || '';
+    username = (pair.user && pair.user.username) || u;
+    localStorage.setItem(LS_TOKEN, jwt);
+    localStorage.setItem(LS_USER, username);
+    updateAuthUI();
+  }
+
+  async function doRegister() {
+    setErr('');
+    const u = $('username').value.trim();
+    const p = $('password').value;
+    await api('POST', '/v1/auth/register', { username: u, password: p }, false);
+    await doLogin();
+  }
+
+  function logout() {
+    jwt = '';
+    username = '';
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_USER);
+    updateAuthUI();
+    showStep(1);
+  }
+
+  function renderProvList() {
+    const ul = $('provList');
+    ul.innerHTML = '';
+    if (!providers.length) {
+      ul.innerHTML = '<li class="muted">暂无 Provider</li>';
+      return;
+    }
+    providers.forEach(p => {
+      const li = document.createElement('li');
+      li.innerHTML = '<strong>' + esc(p.name) + '</strong> · <code>' + esc(p.type) + '</code>' +
+        '<div class="meta">id=' + esc(p.id) + (p.endpoint ? (' · ' + esc(p.endpoint)) : '') + '</div>';
+      ul.appendChild(li);
+    });
+    const sel = $('driveProvider');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    providers.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.name + ' (' + p.type + ')';
+      sel.appendChild(o);
+    });
+    if (cur) sel.value = cur;
+  }
+
+  async function refreshProviders() {
+    requireAuth();
+    const d = await api('GET', '/v1/providers');
+    providers = d.items || [];
+    renderProvList();
+  }
+
+  async function createProvider() {
+    requireAuth();
+    setErr('');
+    const body = {
+      name: $('provName').value.trim(),
+      type: $('provType').value,
+      credentials: {
+        access_key: $('provAK').value,
+        secret_key: $('provSK').value,
+        endpoint: $('provEndpoint').value.trim(),
+        region: $('provRegion').value.trim(),
+        account_id: $('provAccount').value.trim()
+      }
+    };
+    await api('POST', '/v1/providers', body);
+    $('provSK').value = '';
+    await refreshProviders();
+  }
+
+  function renderDriveList() {
+    const ul = $('driveList');
+    ul.innerHTML = '';
+    if (!drives.length) {
+      ul.innerHTML = '<li class="muted">暂无 Drive</li>';
+    } else {
+      drives.forEach(d => {
+        const li = document.createElement('li');
+        li.innerHTML = '<strong>' + esc(d.name) + '</strong>' +
+          (d.alias ? (' · 盘符 <code>' + esc(d.alias) + '</code>') : '') +
+          '<div class="meta">id=' + esc(d.id) + ' · bucket=' + esc(d.bucket) +
+          (d.prefix ? (' · prefix=' + esc(d.prefix)) : '') +
+          ' · mount=' + esc(d.mount_point) + '</div>';
+        ul.appendChild(li);
+      });
+    }
+    const multi = $('agentDrives');
+    const selected = new Set(Array.from(multi.selectedOptions).map(o => o.value));
+    multi.innerHTML = '';
+    drives.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = (d.alias ? (d.alias + ' — ') : '') + d.name + ' (' + d.id.slice(0, 8) + '…)';
+      if (selected.has(d.id)) o.selected = true;
+      multi.appendChild(o);
+    });
+  }
+
+  async function refreshDrives() {
+    requireAuth();
+    const d = await api('GET', '/v1/drives');
+    drives = d.items || [];
+    renderDriveList();
+  }
+
+  async function createDrive() {
+    requireAuth();
+    setErr('');
+    const body = {
+      name: $('driveName').value.trim(),
+      provider_id: $('driveProvider').value,
+      bucket: $('driveBucket').value.trim(),
+      prefix: $('drivePrefix').value.trim(),
+      alias: $('driveAlias').value.trim(),
+      mount_point: $('driveMount').value.trim() || '/workspace'
+    };
+    await api('POST', '/v1/drives', body);
+    await refreshDrives();
+  }
+
+  function renderAgents() {
+    const ul = $('agentList');
+    const mint = $('mintAgentSel');
+    ul.innerHTML = '';
+    mint.innerHTML = '';
+    if (!agents.length) {
+      ul.innerHTML = '<li class="muted">暂无 Agent</li>';
+      return;
+    }
+    agents.forEach(a => {
+      const li = document.createElement('li');
+      li.innerHTML = '<strong>' + esc(a.name) + '</strong> · ' + esc(a.status) +
+        '<div class="meta">id=' + esc(a.id) + ' · scopes=' + esc((a.default_scopes || []).join(',')) +
+        ' · drives=' + esc((a.allowed_drive_ids || []).length) + '</div>';
+      ul.appendChild(li);
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.name + ' (' + a.id.slice(0, 8) + '…)';
+      mint.appendChild(o);
+    });
+  }
+
+  async function refreshAgents() {
+    requireAuth();
+    const d = await api('GET', '/v1/agents');
+    agents = d.items || [];
+    renderAgents();
+  }
+
+  async function createAgent() {
+    requireAuth();
+    setErr('');
+    const scopes = [];
+    if ($('scopeRead').checked) scopes.push('drive.read');
+    if ($('scopeWrite').checked) scopes.push('drive.write');
+    const allowed = Array.from($('agentDrives').selectedOptions).map(o => o.value);
+    const body = {
+      name: $('agentName').value.trim(),
+      default_scopes: scopes,
+      allowed_drive_ids: allowed
+    };
+    const rec = await api('POST', '/v1/agents', body);
+    await refreshAgents();
+    if (rec && rec.id) $('mintAgentSel').value = rec.id;
+  }
+
+  async function mintToken() {
+    requireAuth();
+    setErr('');
+    const id = $('mintAgentSel').value;
+    if (!id) throw new Error('请先创建或选择 Agent');
+    const ttl = parseInt($('mintTTL').value, 10) || 60;
+    const d = await api('POST', '/v1/agents/' + encodeURIComponent(id) + '/token', { ttl_min: ttl });
+    lastAgentToken = d.token || '';
+    if (lastAgentToken) {
+      try { localStorage.setItem(LS_AGENT_TOK, lastAgentToken); } catch (_) {}
+      $('mcpToken').value = lastAgentToken;
+    }
+    $('tokenValue').textContent = lastAgentToken;
+    $('tokenOnce').classList.remove('hidden');
+    updateMcpSnippet();
+  }
+
+  function mcpConfigObj() {
+    return {
+      mcpServers: {
+        'ai-cloudhub': {
+          command: $('mcpBin').value.trim() || '/absolute/path/to/AI-cloudhub/.bin/mcp',
+          args: [],
+          env: {
+            AI_CLOUDHUB_API: $('mcpApi').value.trim() || apiBase(),
+            AI_CLOUDHUB_TOKEN: $('mcpToken').value.trim() || '<agent_token>',
+            AI_CLOUDHUB_WORKSPACE: $('mcpWs').value.trim() || '/workspace'
+          }
+        }
+      }
+    };
+  }
+
+  function updateMcpSnippet() {
+    if (!$('mcpApi').value) $('mcpApi').value = apiBase();
+    if (!$('mcpToken').value && lastAgentToken) $('mcpToken').value = lastAgentToken;
+    $('mcpSnippet').textContent = JSON.stringify(mcpConfigObj(), null, 2);
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+  }
+
+  // Wire events
+  $('btnLogin').addEventListener('click', () => doLogin().catch(e => setErr(e.message)));
+  $('btnRegister').addEventListener('click', () => doRegister().catch(e => setErr(e.message)));
+  $('btnLogout').addEventListener('click', logout);
+  $('btnCreateProv').addEventListener('click', () => createProvider().catch(e => setErr(e.message)));
+  $('btnRefreshProv').addEventListener('click', () => refreshProviders().catch(e => setErr(e.message)));
+  $('btnCreateDrive').addEventListener('click', () => createDrive().catch(e => setErr(e.message)));
+  $('btnRefreshDrive').addEventListener('click', () => refreshDrives().catch(e => setErr(e.message)));
+  $('btnCreateAgent').addEventListener('click', () => createAgent().catch(e => setErr(e.message)));
+  $('btnRefreshAgents').addEventListener('click', () => refreshAgents().catch(e => setErr(e.message)));
+  $('btnMintToken').addEventListener('click', () => mintToken().catch(e => setErr(e.message)));
+  $('btnCopyToken').addEventListener('click', () => copyText($('tokenValue').textContent).then(() => setErr('已复制 Token')).catch(e => setErr(e.message)));
+  ['mcpApi', 'mcpToken', 'mcpBin', 'mcpWs'].forEach(id => {
+    $(id).addEventListener('input', updateMcpSnippet);
+  });
+  $('btnCopyMcp').addEventListener('click', () => {
+    updateMcpSnippet();
+    copyText($('mcpSnippet').textContent).then(() => setErr('已复制 mcp.json 片段')).catch(e => setErr(e.message));
+  });
+  $('btnDlMcp').addEventListener('click', () => {
+    updateMcpSnippet();
+    const blob = new Blob([JSON.stringify(mcpConfigObj(), null, 2) + '\n'], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'mcp.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  document.querySelectorAll('[data-next]').forEach(b => b.addEventListener('click', () => showStep(Number(b.dataset.next))));
+  document.querySelectorAll('[data-prev]').forEach(b => b.addEventListener('click', () => showStep(Number(b.dataset.prev))));
+
+  // init
+  $('mcpApi').value = apiBase();
+  if (lastAgentToken) $('mcpToken').value = lastAgentToken;
+  loadHealth();
+  updateAuthUI();
+  showStep(jwt ? 2 : 1);
+})();
+</script>
+</body>
+</html>

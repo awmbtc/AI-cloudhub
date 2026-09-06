@@ -50,8 +50,8 @@
 ### 3.1 人：只做一次（或很少改）
 
 1. 在云厂商控制台创建最小权限 AK/SK，建好桶。  
-2. 登录 AI-cloudhub API / 控制面（现网或自建）。  
-3. `POST /v1/providers` 登记密钥（见 [PROVIDERS.md](./PROVIDERS.md)）。  
+2. 登录 AI-cloudhub API / 控制面（现网或自建），或打开浏览器 **连接向导** `/wizard`（同 `/app`）。  
+3. `POST /v1/providers` 登记密钥（见 [PROVIDERS.md](./PROVIDERS.md)）；向导可代替纯 curl。  
 4. `POST /v1/drives` 建逻辑盘：例如 name=`A` → R2 某桶；name=`B` → COS 某桶。  
 5. （可选）建 Agent，设 `allowed_drive_ids` 只含 A/B，scopes 最小（如 `drive.read` / `drive.write`）。
 
@@ -88,7 +88,7 @@ Agent 应：
 | Agent Token + scopes + drive 白名单 | ✅ | 禁用/降权即时失效已加强 |
 | MCP tools（list drives/objects、job…） | ✅ `cmd/mcp`（compatible-ish） | 各宿主「一键安装」体验未产品化 |
 | 本机自动挂载 | ✅ hubd | 依赖 rclone + FUSE；无 FUSE 用 sync_workspace |
-| 登录 / OAuth 装插件向导 | ⚠️ 现为 API login | **产品缺口**：见 [PLUGIN-OAUTH.md](./PLUGIN-OAUTH.md)（设计；Phase 0 = 手动 Agent Token） |
+| 登录 / OAuth 装插件向导 | ⚠️ API + **`/wizard`** 手动 Phase-0 | OAuth 仍见 [PLUGIN-OAUTH.md](./PLUGIN-OAUTH.md)；浏览器向导已覆盖 register→MCP 片段 |
 | 「A 盘」口语 → Drive 解析 | ✅ `alias` + MCP `resolve_drive` + HTTP by-alias | 见 [CURSOR-MCP.md](./CURSOR-MCP.md) |
 | 跨宿主官方插件包 | ❌ | Cursor / Claude Desktop 等需分别适配 |
 
@@ -125,7 +125,7 @@ Agent 应：
 |--------|-----|
 | P0 | ✅ 盘符 `alias` + OpenAPI + `GET /v1/drives/by-alias/{alias}` + MCP `resolve_drive`；Cursor 一键：[CURSOR-MCP.md](./CURSOR-MCP.md) · OAuth 设计：[PLUGIN-OAUTH.md](./PLUGIN-OAUTH.md) |
 | P1 | ✅ Cursor MCP 一页安装说明（同上） |
-| P2 | 控制面简易「连接向导」或落地页引导（仍可不做完整网盘 UI） |
+| P2 | ✅ 控制面简易「连接向导」：浏览器 `/wizard`（或 `/app`）— 注册 / Provider / Drive / Agent Token / Cursor MCP 片段（仍非网盘 UI） |
 | 冻结 | 不为插件叙事新开 Job admin / 平台 Runner 池 |
 
 ---
@@ -136,3 +136,4 @@ Agent 应：
 |------|------|
 | 2026-09-06 | 初稿：确认「后台配桶 → 盘符 → 他端 Agent 插件登录 → 按盘符写入 BYOS」逻辑与现有架构同构，并记录缺口 |
 | 2026-09-07 | 落地 Drive.`alias`、list `?alias=`、`GET /v1/drives/by-alias/{alias}`、MCP `resolve_drive`、Cursor 一键脚本、[CURSOR-MCP.md](./CURSOR-MCP.md)、[PLUGIN-OAUTH.md](./PLUGIN-OAUTH.md) |
+| 2026-09-07 | 连接向导 `/wizard`（`/app`）：嵌入式中文多步页，覆盖 Phase-0 手动 ops（无 OAuth / 无 Job / 无对象代理） |

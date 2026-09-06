@@ -117,8 +117,13 @@ func New(d Deps) http.Handler {
 		store:      d.Store,
 	}
 	mux := http.NewServeMux()
-	// Browser landing for domain front door (e.g. https://sstc.chat/) — not a full web UI.
+	// Browser landing for domain front door (e.g. https://sstc.chat/). Full wizard: /wizard or /app.
 	mux.HandleFunc("/", s.method(http.MethodGet, s.handleRoot))
+	// Phase-0 manual ops wizard (embedded HTML); JSON API unchanged on /v1/*.
+	mux.HandleFunc("/wizard", s.method(http.MethodGet, s.handleWizard))
+	mux.HandleFunc("/wizard/", s.method(http.MethodGet, s.handleWizard))
+	mux.HandleFunc("/app", s.method(http.MethodGet, s.handleWizard))
+	mux.HandleFunc("/app/", s.method(http.MethodGet, s.handleWizard))
 	mux.HandleFunc("/healthz", s.method(http.MethodGet, s.handleHealth))
 	mux.HandleFunc("/readyz", s.method(http.MethodGet, s.handleReadyz))
 	mux.HandleFunc("/metrics", s.handleMetrics)
@@ -240,6 +245,8 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"links": map[string]string{
 			"healthz": "/healthz",
 			"readyz":  "/readyz",
+			"wizard":  "/wizard",
+			"app":     "/app",
 			"login":   "POST /v1/auth/login",
 			"docs":    "https://github.com/awmbtc/AI-cloudhub",
 		},
@@ -279,10 +286,11 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
   <p class="muted">控制面 API · 版本 <code>%s</code></p>
   <p class="muted">这是人和 Agent 的多云磁盘控制面，不是网盘首页。对象存储在您自己的桶（BYOS）；算力在用户侧 hubd/runner（BYOC）。</p>
   <ul class="muted">
+    <li><strong>连接向导（推荐）</strong>：<a href="/wizard"><code>/wizard</code></a>（同 <a href="/app"><code>/app</code></a>）— 注册 / Provider / Drive / Agent Token / Cursor MCP</li>
     <li>健康检查：<a href="/healthz"><code>/healthz</code></a></li>
     <li>就绪检查：<a href="/readyz"><code>/readyz</code></a></li>
     <li>登录：<code>POST /v1/auth/login</code></li>
-    <li>Agent / MCP：设置 <code>AI_CLOUDHUB_API=https://您的域名</code></li>
+    <li>Agent / MCP：设置 <code>AI_CLOUDHUB_API=https://您的域名</code> · 文档 <code>docs/CURSOR-MCP.md</code></li>
   </ul>
   <span class="ok">status: ok</span>
 </main>

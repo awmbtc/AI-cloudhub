@@ -28,6 +28,7 @@
 | [docs/PROGRESS.md](docs/PROGRESS.md) | **实现进度对照表** |
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
 | [docs/CURSOR-MCP.md](docs/CURSOR-MCP.md) | **Cursor 一键**：`scripts/cursor-mcp-install.sh` + Agent Token + 「写到 A 盘」 |
+| **连接向导** `/wizard`（或 `/app`） | **浏览器极简向导**：注册 / Provider / Drive / Agent Token / 复制 Cursor `mcp.json`（替代纯 curl Phase-0） |
 | [docs/PLUGIN-OAUTH.md](docs/PLUGIN-OAUTH.md) | 宿主 OAuth / 应用商店：**设计**（Phase 0 手动 token） |
 | [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
@@ -72,6 +73,9 @@ go build -o .bin/api ./cmd/api
 go build -o .bin/hubd ./cmd/hubd
 go build -o .bin/runner ./cmd/runner
 go build -o .bin/mcp ./cmd/mcp
+
+# 启动 API 后打开连接向导（中文）：http://127.0.0.1:8080/wizard
+# （同 /app；首页 / 有入口。JSON 客户端对 / 仍可 Accept: application/json）
 
 # 可选：加密 Provider 密钥
 export AI_CLOUDHUB_MASTER_KEY="$(openssl rand -base64 32)"

@@ -6,6 +6,16 @@ Related: [MCP.md](./MCP.md) · [QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md) · [
 
 ---
 
+## 0b. Browser wizard (no curl)
+
+With the API running, open **`/wizard`** (same as **`/app`**), e.g. `http://127.0.0.1:8080/wizard`.
+
+Chinese multi-step UI: register/login → Provider (AK/SK) → Drive (alias A/B) → create Agent + mint token → copy Cursor `mcp.json` (`AI_CLOUDHUB_API` defaults to the page origin). Prefer **Agent Token** in MCP, not the human JWT. Tokens stay in browser memory/localStorage — do not use on shared kiosks; do not commit tokens.
+
+Landing page `/` links here. JSON clients can still `Accept: application/json` on `/`.
+
+---
+
 ## 0. One-command install (recommended)
 
 From the repo root:
