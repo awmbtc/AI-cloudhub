@@ -31,6 +31,7 @@
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
 | [docs/STS-RUNBOOK.md](docs/STS-RUNBOOK.md) | **STS 联调剧本**（fail-open + live MinIO） |
 | [docs/PROVIDERS.md](docs/PROVIDERS.md) | **对象存储密钥配置**（各厂商 AK/SK 怎么填、Provider+Drive 图文流程） |
+| [docs/PLUGIN-FOR-AGENTS.md](docs/PLUGIN-FOR-AGENTS.md) | **插件叙事**：他端 Agent 登录接入；盘符 A/B → BYOS |
 | [docs/CLOUD-INTEGRATION.md](docs/CLOUD-INTEGRATION.md) | **多云接入 runbook**（OSS/COS/Qiniu/OCI：STS 进阶、env、session.note） |
 | [docs/POLICY.md](docs/POLICY.md) | Policy JSON + 可选 OPA/Rego |
 | [docs/PRODUCTION.md](docs/PRODUCTION.md) | **生产 checklist**（STRICT / 密钥 / Compose / TLS） |
