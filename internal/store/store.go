@@ -114,7 +114,9 @@ type Agent struct {
 	// Empty = full workspace (AllowedPaths = mount root).
 	ReadPrefixes  []string
 	WritePrefixes []string
-	CreatedAt     time.Time
+	// TokenVersion is embedded in agent JWTs (atv); bumping invalidates outstanding agent tokens.
+	TokenVersion int
+	CreatedAt    time.Time
 }
 
 // Job is a BYOC work item (compute on user runners only).
@@ -357,6 +359,8 @@ type Store interface {
 	// Session revocation
 	// BumpTokenVersion increments users.token_version (invalidates all tokens).
 	BumpTokenVersion(userID string) (newVersion int, err error)
+	// BumpAgentTokenVersion increments agents.token_version (invalidates that agent's JWTs).
+	BumpAgentTokenVersion(agentID string) (newVersion int, err error)
 	// RevokeJTI marks a single token id as revoked until expiresAt.
 	RevokeJTI(jti string, expiresAt time.Time) error
 	// IsJTIRevoked reports whether jti is on the denylist (and not expired).

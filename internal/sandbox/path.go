@@ -3,6 +3,7 @@ package sandbox
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -28,6 +29,8 @@ func NewPathJail(root string) *PathJail {
 
 // Allow reports whether path is under Root (after clean).
 // path may be absolute or relative to Root.
+// When the path (or an existing parent) resolves via symlink, EvalSymlinks is
+// applied and the resolved target is re-checked under Root (blocks symlink escape).
 func (j *PathJail) Allow(path string) error {
 	if j == nil {
 		return fmt.Errorf("sandbox: nil jail")
@@ -36,29 +39,75 @@ func (j *PathJail) Allow(path string) error {
 	if path == "" {
 		return fmt.Errorf("sandbox: empty path")
 	}
-	// Reject null bytes and obvious escapes in raw form.
 	if strings.Contains(path, "\x00") {
 		return fmt.Errorf("sandbox: invalid path")
 	}
 
-	root := j.Root
+	lexicalRoot := j.Root
+	resolvedRoot := lexicalRoot
+	if rr, err := filepath.EvalSymlinks(lexicalRoot); err == nil {
+		resolvedRoot = rr
+	}
+
 	var candidate string
 	if filepath.IsAbs(path) || isWindowsDrive(path) {
 		candidate = filepath.Clean(path)
 	} else {
-		// relative → under root
-		candidate = filepath.Clean(filepath.Join(root, path))
+		candidate = filepath.Clean(filepath.Join(resolvedRoot, path))
 	}
 
-	// filepath.Rel fails if on different volumes (Windows); treat as deny.
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return fmt.Errorf("sandbox: path outside workspace")
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// Lexical containment against either form of root (macOS /var vs /private/var).
+	if underRoot(lexicalRoot, candidate) != nil && underRoot(resolvedRoot, candidate) != nil {
 		return fmt.Errorf("sandbox: path outside workspace: %s", path)
 	}
+
+	resolved, err := evalExisting(candidate)
+	if err != nil {
+		return nil
+	}
+	if underRoot(resolvedRoot, resolved) != nil && underRoot(lexicalRoot, resolved) != nil {
+		return fmt.Errorf("sandbox: symlink escape: %s -> %s", path, resolved)
+	}
 	return nil
+}
+
+
+func underRoot(root, candidate string) error {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return fmt.Errorf("outside")
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("outside")
+	}
+	return nil
+}
+
+// evalExisting resolves symlinks for candidate when it exists, or for the
+// longest existing parent so link/newfile still evaluates through the link.
+func evalExisting(candidate string) (string, error) {
+	if _, err := os.Lstat(candidate); err == nil {
+		return filepath.EvalSymlinks(candidate)
+	}
+	dir := filepath.Dir(candidate)
+	for {
+		if _, err := os.Lstat(dir); err == nil {
+			resolvedDir, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				return "", err
+			}
+			rel, err := filepath.Rel(dir, candidate)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Clean(filepath.Join(resolvedDir, rel)), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
 }
 
 // AllowAll checks every path; returns first error.

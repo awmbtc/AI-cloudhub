@@ -2249,7 +2249,7 @@ func (s *Server) routeAgentsSub(w http.ResponseWriter, r *http.Request, userID, 
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		tok, err := s.auth.IssueAgentToken(userID, username, role, rec.ID, u.TokenVersion, scopes, ttl)
+		tok, err := s.auth.IssueAgentToken(userID, username, role, rec.ID, u.TokenVersion, rec.TokenVersion, scopes, ttl)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

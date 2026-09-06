@@ -716,8 +716,12 @@ func runOnce(api, token, mountPoint, driveID, bindingID, jobID string, args []st
 			_ = mountCmd.Process.Signal(syscall.SIGTERM)
 			_, _ = mountCmd.Process.Wait()
 		}
-		_ = exec.Command("fusermount", "-u", mountPoint).Run()
-		_ = exec.Command("umount", mountPoint).Run()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = exec.CommandContext(ctx, "fusermount", "-u", mountPoint).Run()
+		cancel()
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = exec.CommandContext(ctx2, "umount", mountPoint).Run()
+		cancel2()
 	}
 	defer cleanup()
 

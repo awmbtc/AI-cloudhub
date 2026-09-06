@@ -41,14 +41,15 @@ type Service struct {
 }
 
 type tokenPayload struct {
-	UserID       string   `json:"uid"`
-	Username     string   `json:"un"`
-	Role         string   `json:"role"`
-	Exp          int64    `json:"exp"`
-	JTI          string   `json:"jti,omitempty"`
-	TokenVersion int      `json:"tv,omitempty"`
-	AgentID      string   `json:"aid,omitempty"`
-	Scopes       []string `json:"scopes,omitempty"`
+	UserID            string   `json:"uid"`
+	Username          string   `json:"un"`
+	Role              string   `json:"role"`
+	Exp               int64    `json:"exp"`
+	JTI               string   `json:"jti,omitempty"`
+	TokenVersion      int      `json:"tv,omitempty"`
+	AgentID           string   `json:"aid,omitempty"`
+	AgentTokenVersion int      `json:"atv,omitempty"`
+	Scopes            []string `json:"scopes,omitempty"`
 }
 
 // Principal is the authenticated API caller (human or agent token).
@@ -196,7 +197,8 @@ func (s *Service) ParsePrincipal(token string) (*Principal, error) {
 
 // IssueAgentToken mints a short-lived access token bound to an agent principal.
 // scopes empty → use provided defaults; unknown scopes rejected.
-func (s *Service) IssueAgentToken(userID, username, role, agentID string, tokenVersion int, scopes []string, ttl time.Duration) (string, error) {
+// userTokenVersion is users.token_version; agentTokenVersion is agents.token_version (atv).
+func (s *Service) IssueAgentToken(userID, username, role, agentID string, userTokenVersion, agentTokenVersion int, scopes []string, ttl time.Duration) (string, error) {
 	if agentID == "" {
 		return "", fmt.Errorf("agent_id required")
 	}
@@ -212,7 +214,7 @@ func (s *Service) IssueAgentToken(userID, username, role, agentID string, tokenV
 			ttl = time.Hour // agent tokens default-cap 1h when using long human TTL
 		}
 	}
-	return s.issue(userID, username, role, tokenVersion, ttl, agentID, scopes)
+	return s.issue(userID, username, role, userTokenVersion, ttl, agentID, agentTokenVersion, scopes)
 }
 
 func (s *Service) parsePayload(token string) (*tokenPayload, error) {
@@ -250,8 +252,23 @@ func (s *Service) parsePayload(token string) (*tokenPayload, error) {
 		}
 	}
 	// Version check: invalidate after password change / admin revoke-all.
-	if rec, err := s.store.GetUserByID(p.UserID); err == nil {
-		if p.TokenVersion != rec.TokenVersion {
+	rec, err := s.store.GetUserByID(p.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("token revoked")
+	}
+	if p.TokenVersion != rec.TokenVersion {
+		return nil, fmt.Errorf("token revoked")
+	}
+	// Agent tokens: reject disabled/deleted agents and bumped agent token_version.
+	if p.AgentID != "" {
+		a, err := s.store.GetAgentByID(p.AgentID)
+		if err != nil || a == nil {
+			return nil, fmt.Errorf("token revoked")
+		}
+		if a.Status != "active" {
+			return nil, fmt.Errorf("agent disabled")
+		}
+		if p.AgentTokenVersion != a.TokenVersion {
 			return nil, fmt.Errorf("token revoked")
 		}
 	}
@@ -448,19 +465,20 @@ func (s *Service) ListAuditFilter(f store.AuditFilter) ([]*store.AuditEvent, err
 	return s.store.ListAudit(f)
 }
 
-func (s *Service) issue(userID, username, role string, tokenVersion int, ttl time.Duration, agentID string, scopes []string) (string, error) {
+func (s *Service) issue(userID, username, role string, tokenVersion int, ttl time.Duration, agentID string, agentTokenVersion int, scopes []string) (string, error) {
 	if role == "" {
 		role = RoleUser
 	}
 	p := tokenPayload{
-		UserID:       userID,
-		Username:     username,
-		Role:         role,
-		Exp:          time.Now().Add(ttl).Unix(),
-		JTI:          uuid.NewString(),
-		TokenVersion: tokenVersion,
-		AgentID:      agentID,
-		Scopes:       scopes,
+		UserID:            userID,
+		Username:          username,
+		Role:              role,
+		Exp:               time.Now().Add(ttl).Unix(),
+		JTI:               uuid.NewString(),
+		TokenVersion:      tokenVersion,
+		AgentID:           agentID,
+		AgentTokenVersion: agentTokenVersion,
+		Scopes:            scopes,
 	}
 	raw, err := json.Marshal(p)
 	if err != nil {

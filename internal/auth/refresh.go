@@ -47,7 +47,7 @@ func (s *Service) IssueTokens(userID, username, role string, tokenVersion int) (
 	}
 	accessTTL := s.tokenTTLOrDefault()
 	// Human login tokens: no agent_id / unrestricted scopes.
-	access, err := s.issue(userID, username, role, tokenVersion, accessTTL, "", nil)
+	access, err := s.issue(userID, username, role, tokenVersion, accessTTL, "", 0, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -95,8 +95,10 @@ func (s *Service) Refresh(rawRefresh string) (*TokenPair, error) {
 	if role == "" {
 		role = RoleUser
 	}
-	// Rotate: revoke old refresh before issuing new pair.
-	_ = s.store.RevokeRefreshToken(rec.ID)
+	// Rotate atomically: only the first concurrent refresher may revoke+issue.
+	if err := s.store.RevokeRefreshToken(rec.ID); err != nil {
+		return nil, fmt.Errorf("invalid refresh token")
+	}
 	return s.IssueTokens(u.ID, u.Username, role, u.TokenVersion)
 }
 

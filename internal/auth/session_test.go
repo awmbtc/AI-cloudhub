@@ -110,3 +110,107 @@ func TestRefreshRotates(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAgentTokenRevokedOnDisable(t *testing.T) {
+	st := store.NewMemory()
+	svc := New("test-secret-long", st)
+	u, err := svc.Register("agentowner", "password1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &store.Agent{
+		ID:            "ag1",
+		OwnerUserID:   u.ID,
+		Name:          "bot",
+		Status:        "active",
+		DefaultScopes: []string{ScopeDriveRead},
+	}
+	if err := st.CreateAgent(a); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := svc.IssueAgentToken(u.ID, u.Username, u.Role, a.ID, 0, a.TokenVersion, []string{ScopeDriveRead}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ParsePrincipal(tok); err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	a.Status = "disabled"
+	a.TokenVersion++
+	if err := st.UpdateAgent(a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ParsePrincipal(tok); err == nil {
+		t.Fatal("expected reject after disable")
+	}
+}
+
+func TestAgentTokenRevokedOnVersionBump(t *testing.T) {
+	st := store.NewMemory()
+	svc := New("test-secret-long", st)
+	u, err := svc.Register("agentowner2", "password1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &store.Agent{
+		ID: "ag2", OwnerUserID: u.ID, Name: "bot", Status: "active",
+		DefaultScopes: []string{ScopeDriveRead},
+	}
+	if err := st.CreateAgent(a); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := svc.IssueAgentToken(u.ID, u.Username, u.Role, a.ID, 0, 0, []string{ScopeDriveRead}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BumpAgentTokenVersion(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ParsePrincipal(tok); err == nil {
+		t.Fatal("expected revoked after agent token_version bump")
+	}
+}
+
+func TestRefreshConcurrentSingleIssue(t *testing.T) {
+	st := store.NewMemory()
+	svc := New("test-secret-long", st)
+	if _, err := svc.Register("race", "password1"); err != nil {
+		t.Fatal(err)
+	}
+	pair, err := svc.Login("race", "password1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		pair *TokenPair
+		err  error
+	}
+	ch := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			p, err := svc.Refresh(pair.RefreshToken)
+			ch <- result{p, err}
+		}()
+	}
+	var ok, fail int
+	var winner *TokenPair
+	for i := 0; i < 2; i++ {
+		r := <-ch
+		if r.err == nil {
+			ok++
+			winner = r.pair
+		} else {
+			fail++
+		}
+	}
+	if ok != 1 || fail != 1 {
+		t.Fatalf("want exactly one success and one failure, got ok=%d fail=%d", ok, fail)
+	}
+	if winner == nil || winner.AccessToken == "" {
+		t.Fatal("winner missing access")
+	}
+	// winner refresh can be used once more
+	if _, err := svc.Refresh(winner.RefreshToken); err != nil {
+		t.Fatalf("winner refresh should work: %v", err)
+	}
+}

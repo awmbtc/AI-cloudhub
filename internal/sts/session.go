@@ -34,6 +34,10 @@ type Session struct {
 	Source string `json:"source,omitempty"`
 	// Note is an optional human-readable hint (e.g. why native STS was skipped/failed).
 	Note string `json:"note,omitempty"`
+	// AgentID / path prefixes retained so Refresh rebuilds Manifest with the same policy.
+	AgentID       string   `json:"agent_id,omitempty"`
+	ReadPrefixes  []string `json:"-"`
+	WritePrefixes []string `json:"-"`
 }
 
 // Service issues and validates mount sessions.
@@ -106,18 +110,21 @@ func (s *Service) Issue(in IssueInput) (*Session, error) {
 		WritePrefixes: in.WritePrefixes,
 	})
 	sess := &Session{
-		ID:         uuid.NewString(),
-		UserID:     in.UserID,
-		DriveID:    in.DriveID,
-		DeviceID:   in.DeviceID,
-		MountPoint: in.MountPoint,
-		Mode:       in.Mode,
-		ExpiresAt:  exp,
-		Spec:       spec,
-		Manifest:   man,
-		Token:      tok,
-		Source:     source,
-		Note:       note,
+		ID:            uuid.NewString(),
+		UserID:        in.UserID,
+		DriveID:       in.DriveID,
+		DeviceID:      in.DeviceID,
+		MountPoint:    in.MountPoint,
+		Mode:          in.Mode,
+		ExpiresAt:     exp,
+		Spec:          spec,
+		Manifest:      man,
+		Token:         tok,
+		Source:        source,
+		Note:          note,
+		AgentID:       in.AgentID,
+		ReadPrefixes:  append([]string(nil), in.ReadPrefixes...),
+		WritePrefixes: append([]string(nil), in.WritePrefixes...),
 	}
 	s.mu.Lock()
 	s.byToken[tok] = sess
@@ -174,11 +181,14 @@ func (s *Service) Refresh(oldToken string, resolved *provider.Resolved, bucket, 
 		return nil, err
 	}
 	man := manifest.Build(manifest.Input{
-		DriveID:    old.DriveID,
-		MountPoint: old.MountPoint,
-		Mode:       old.Mode,
-		APIBase:    s.apiBase,
-		TTL:        s.ttl,
+		DriveID:       old.DriveID,
+		MountPoint:    old.MountPoint,
+		Mode:          old.Mode,
+		APIBase:       s.apiBase,
+		TTL:           s.ttl,
+		AgentID:       old.AgentID,
+		ReadPrefixes:  old.ReadPrefixes,
+		WritePrefixes: old.WritePrefixes,
 	})
 	// drop old token mapping
 	delete(s.byToken, old.Token)

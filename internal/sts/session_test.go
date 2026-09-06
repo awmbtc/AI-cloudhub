@@ -151,3 +151,37 @@ func TestSessionTokenInConf(t *testing.T) {
 		t.Fatalf("expected session_token in conf:\n%s", sess.Spec.RcloneConf)
 	}
 }
+
+func TestRefreshPreservesAgentManifest(t *testing.T) {
+	t.Setenv("AI_CLOUDHUB_MINIO_STS", "0")
+	t.Setenv("AI_CLOUDHUB_AWS_STS", "0")
+	s := New(time.Minute, "http://localhost:8080")
+	resolved := testResolved()
+	sess, err := s.Issue(IssueInput{
+		UserID: "u1", DriveID: "d1", MountPoint: "/workspace", Mode: "mount",
+		Bucket: "b", Resolved: resolved,
+		AgentID: "agent-9", ReadPrefixes: []string{"in"}, WritePrefixes: []string{"out"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Manifest.Agent.AgentID != "agent-9" {
+		t.Fatalf("issue agent_id: %+v", sess.Manifest.Agent)
+	}
+	if sess.Manifest.Permissions == nil || len(sess.Manifest.Permissions.Read) == 0 {
+		t.Fatalf("issue permissions missing: %+v", sess.Manifest.Permissions)
+	}
+	ref, err := s.Refresh(sess.Token, resolved, "b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Manifest.Agent.AgentID != "agent-9" {
+		t.Fatalf("refresh lost agent_id: %+v", ref.Manifest.Agent)
+	}
+	if ref.Manifest.Permissions == nil {
+		t.Fatal("refresh lost permissions")
+	}
+	if len(ref.Manifest.Permissions.Read) == 0 || len(ref.Manifest.Permissions.Write) == 0 {
+		t.Fatalf("refresh prefixes empty: %+v", ref.Manifest.Permissions)
+	}
+}

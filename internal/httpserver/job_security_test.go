@@ -109,7 +109,7 @@ func (e *jobSecurityEnv) agentToken(t *testing.T, user *auth.User, name string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := e.auth.IssueAgentToken(user.ID, user.Username, user.Role, rec.ID, su.TokenVersion, scopes, time.Hour)
+	tok, err := e.auth.IssueAgentToken(user.ID, user.Username, user.Role, rec.ID, su.TokenVersion, rec.TokenVersion, scopes, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

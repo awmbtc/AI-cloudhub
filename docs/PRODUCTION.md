@@ -24,6 +24,11 @@ Object bytes stay client↔your store. Jobs run only on **user** runners (D-001:
 | Redis rate limit | `AI_CLOUDHUB_REDIS=redis://…` | Multi-instance shared limiter |
 | Listen | `HTTP_ADDR=:8080` | Put TLS / reverse proxy in front |
 
+
+## In-process session state (multi-replica)
+
+STS mount sessions (`internal/sts`) and drive write barriers are held in **process memory** on the API instance that issued them. With multiple API replicas you need **sticky sessions** (or a future shared/persistent session store) so hubd/runner refresh and barrier calls hit the same instance that holds the grant. Postgres/Redis alone do not currently replicate these maps.
+
 ## Optional policy / STS / Stage C
 
 | Feature | Env | Docs |

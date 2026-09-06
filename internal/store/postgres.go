@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS agents (
   allowed_drive_ids TEXT NOT NULL DEFAULT '[]',
   read_prefixes TEXT NOT NULL DEFAULT '[]',
   write_prefixes TEXT NOT NULL DEFAULT '[]',
+  token_version INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
@@ -237,6 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS allowed_drive_ids TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS read_prefixes TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS write_prefixes TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = p.db.Exec(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`)
 	_, _ = p.db.Exec(`ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS agent_id TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS agent_id TEXT`)
 	_, _ = p.db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_by_agent_id TEXT`)
@@ -420,6 +422,18 @@ func (p *Postgres) BumpTokenVersion(userID string) (int, error) {
 	return ver, nil
 }
 
+func (p *Postgres) BumpAgentTokenVersion(agentID string) (int, error) {
+	var ver int
+	err := p.db.QueryRow(
+		`UPDATE agents SET token_version = COALESCE(token_version,0) + 1 WHERE id = $1 RETURNING token_version`,
+		agentID,
+	).Scan(&ver)
+	if err != nil {
+		return 0, fmt.Errorf("agent not found")
+	}
+	return ver, nil
+}
+
 func (p *Postgres) RevokeJTI(jti string, expiresAt time.Time) error {
 	if jti == "" {
 		return fmt.Errorf("jti required")
@@ -479,13 +493,13 @@ func (p *Postgres) GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error
 }
 
 func (p *Postgres) RevokeRefreshToken(id string) error {
-	res, err := p.db.Exec(`UPDATE refresh_tokens SET revoked = TRUE WHERE id = $1`, id)
+	res, err := p.db.Exec(`UPDATE refresh_tokens SET revoked = TRUE WHERE id = $1 AND revoked = FALSE`, id)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("refresh token not found")
+		return fmt.Errorf("refresh token already revoked")
 	}
 	return nil
 }
@@ -505,11 +519,11 @@ func pgAgentJSON(v []string) string {
 
 func (p *Postgres) CreateAgent(a *Agent) error {
 	_, err := p.db.Exec(
-		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, allowed_drive_ids, read_prefixes, write_prefixes, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, allowed_drive_ids, read_prefixes, write_prefixes, token_version, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status,
 		pgAgentJSON(a.DefaultScopes), pgAgentJSON(a.AllowedDriveIDs),
-		pgAgentJSON(a.ReadPrefixes), pgAgentJSON(a.WritePrefixes), a.CreatedAt.UTC(),
+		pgAgentJSON(a.ReadPrefixes), pgAgentJSON(a.WritePrefixes), a.TokenVersion, a.CreatedAt.UTC(),
 	)
 	return err
 }
@@ -517,7 +531,7 @@ func (p *Postgres) CreateAgent(a *Agent) error {
 func (p *Postgres) scanAgentRow(row interface{ Scan(dest ...any) error }) (*Agent, error) {
 	var a Agent
 	var scopes, drives, rpref, wpref string
-	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &drives, &rpref, &wpref, &a.CreatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &drives, &rpref, &wpref, &a.TokenVersion, &a.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("agent not found")
 		}
@@ -533,7 +547,7 @@ func (p *Postgres) scanAgentRow(row interface{ Scan(dest ...any) error }) (*Agen
 func (p *Postgres) GetAgent(ownerUserID, id string) (*Agent, error) {
 	row := p.db.QueryRow(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE id = $1 AND owner_user_id = $2`,
 		id, ownerUserID,
 	)
@@ -543,7 +557,7 @@ func (p *Postgres) GetAgent(ownerUserID, id string) (*Agent, error) {
 func (p *Postgres) GetAgentByID(id string) (*Agent, error) {
 	row := p.db.QueryRow(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE id = $1`,
 		id,
 	)
@@ -553,7 +567,7 @@ func (p *Postgres) GetAgentByID(id string) (*Agent, error) {
 func (p *Postgres) ListAgents(ownerUserID string) ([]*Agent, error) {
 	rows, err := p.db.Query(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE owner_user_id = $1 ORDER BY created_at DESC`,
 		ownerUserID,
 	)
@@ -574,12 +588,12 @@ func (p *Postgres) ListAgents(ownerUserID string) ([]*Agent, error) {
 
 func (p *Postgres) UpdateAgent(a *Agent) error {
 	res, err := p.db.Exec(
-		`UPDATE agents SET name=$1, description=$2, status=$3, default_scopes=$4, allowed_drive_ids=$5, read_prefixes=$6, write_prefixes=$7
-		 WHERE id=$8 AND owner_user_id=$9`,
+		`UPDATE agents SET name=$1, description=$2, status=$3, default_scopes=$4, allowed_drive_ids=$5, read_prefixes=$6, write_prefixes=$7, token_version=$8
+		 WHERE id=$9 AND owner_user_id=$10`,
 		a.Name, a.Description, a.Status,
 		pgAgentJSON(a.DefaultScopes), pgAgentJSON(a.AllowedDriveIDs),
 		pgAgentJSON(a.ReadPrefixes), pgAgentJSON(a.WritePrefixes),
-		a.ID, a.OwnerUserID,
+		a.TokenVersion, a.ID, a.OwnerUserID,
 	)
 	if err != nil {
 		return err

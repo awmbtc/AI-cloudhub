@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +29,9 @@ import (
 
 	"github.com/awmbtc/AI-cloudhub/internal/runtimeenv"
 )
+
+// hubdHTTPClient is used for all control-plane calls (avoid DefaultClient with no timeout).
+var hubdHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	mode := parseHubdMode(os.Args[1:])
@@ -133,7 +137,10 @@ func main() {
 		mp.driveID = b.DriveID
 		mp.bindingMode = strings.TrimSpace(b.Mode)
 		active[id] = mp
-		_ = reportActual(api, token, id, "mounted", "")
+		if err := reportActualRetry(api, token, id, "mounted", "", 3); err != nil {
+			log.Printf("report mounted %s failed after retries: %v; marking error", id, err)
+			_ = reportActualRetry(api, token, id, "error", "report mounted failed: "+err.Error(), 2)
+		}
 		log.Printf("mounted %s drive=%s mode=%s workspace=%s expires=%s",
 			id, b.DriveID, mp.mode, sess.workspace(), sess.Session.ExpiresAt.Format(time.RFC3339))
 	}
@@ -594,9 +601,37 @@ func (m *mountProc) stop() {
 	}
 	// Best-effort unmount leftover (Linux fusermount; no-op when already gone).
 	if m.mode == "mount" && m.mountPoint != "" && runtime.GOOS != "windows" {
-		_ = exec.Command("fusermount", "-u", m.mountPoint).Run()
-		_ = exec.Command("umount", m.mountPoint).Run()
+		runUmountWithTimeout(m.mountPoint, 3*time.Second)
 	}
+}
+
+// runUmountWithTimeout runs fusermount then umount, each with a short CommandContext timeout.
+func runUmountWithTimeout(mountPoint string, timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	_ = exec.CommandContext(ctx, "fusermount", "-u", mountPoint).Run()
+	cancel()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), timeout)
+	_ = exec.CommandContext(ctx2, "umount", mountPoint).Run()
+	cancel2()
+}
+
+// reportActualRetry calls reportActual up to attempts times.
+func reportActualRetry(api, token, bindingID, actual, lastErr string, attempts int) error {
+	if attempts <= 0 {
+		attempts = 1
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		err = reportActual(api, token, bindingID, actual, lastErr)
+		if err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(200*(i+1)) * time.Millisecond)
+	}
+	return err
 }
 
 func startMount(stateDir, bindingID string, sess *sessionBundle, mode, rcloneBin string, winFspOK bool) (*mountProc, error) {
@@ -688,29 +723,42 @@ func startMount(stateDir, bindingID string, sess *sessionBundle, mode, rcloneBin
 	// Fail fast if rclone dies immediately (common when WinFsp missing).
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil {
+	mpProc.cmd = cmd
+	mpProc.cancel = func() {}
+	mpProc.waitCh = done
+
+	// Wait until mount is reachable (or rclone dies / timeout). Do not report mounted on process-alive alone.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		select {
+		case err := <-done:
 			hint := ""
 			if runtime.GOOS == "windows" {
 				hint = " — check WinFsp (scripts\\windows\\install-deps.ps1) or use mode=sync_workspace"
 			}
-			return nil, fmt.Errorf("rclone mount exited: %w%s", err, hint)
+			if err != nil {
+				return nil, fmt.Errorf("rclone mount exited: %w%s", err, hint)
+			}
+			return nil, fmt.Errorf("rclone mount exited unexpectedly%s", hint)
+		default:
 		}
-	case <-time.After(1500 * time.Millisecond):
-		// still running — keep waitCh for stop()
-		mpProc.waitCh = done
+		if !mountPointUnreachable(mp, 2*time.Second) {
+			return mpProc, nil
+		}
+		if time.Now().After(deadline) {
+			// cleanup hung/unusable mount
+			mpProc.stop()
+			return nil, fmt.Errorf("mount path unreachable after start: %s", mp)
+		}
+		time.Sleep(400 * time.Millisecond)
 	}
-	mpProc.cmd = cmd
-	mpProc.cancel = func() {}
-	return mpProc, nil
 }
 
 func listBindings(api, token, device string) ([]bindingDTO, error) {
 	url := api + "/v1/bindings?device_id=" + device
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := hubdHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +780,7 @@ func issueSession(api, token, bindingID string) (*sessionBundle, error) {
 	url := api + "/v1/bindings/" + bindingID + "/session"
 	req, _ := http.NewRequest(http.MethodPost, url, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	res, err := http.DefaultClient.Do(req)
+	res, err := hubdHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +804,7 @@ func refreshSession(api, token, sessionToken, driveID string) (*sessionBundle, e
 	req, _ := http.NewRequest(http.MethodPost, api+"/v1/sessions/refresh", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := hubdHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +826,7 @@ func reportActual(api, token, bindingID, actual, lastErr string) error {
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := hubdHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("report actual %s=%s: %v", bindingID, actual, err)
 		return err
@@ -806,7 +854,7 @@ func postBarrier(api, token, driveID, deviceID string) error {
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := hubdHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("barrier %s: %v", driveID, err)
 		return err

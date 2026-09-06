@@ -187,6 +187,17 @@ func (m *Memory) BumpTokenVersion(userID string) (int, error) {
 	return 0, fmt.Errorf("user not found")
 }
 
+func (m *Memory) BumpAgentTokenVersion(agentID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agents[agentID]
+	if !ok {
+		return 0, fmt.Errorf("agent not found")
+	}
+	a.TokenVersion++
+	return a.TokenVersion, nil
+}
+
 func (m *Memory) RevokeJTI(jti string, expiresAt time.Time) error {
 	if jti == "" {
 		return fmt.Errorf("jti required")
@@ -255,6 +266,9 @@ func (m *Memory) RevokeRefreshToken(id string) error {
 	t, ok := m.refresh[id]
 	if !ok {
 		return fmt.Errorf("refresh token not found")
+	}
+	if t.Revoked {
+		return fmt.Errorf("refresh token already revoked")
 	}
 	t.Revoked = true
 	return nil

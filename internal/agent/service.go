@@ -29,6 +29,7 @@ type Record struct {
 	AllowedDriveIDs []string  `json:"allowed_drive_ids"`
 	ReadPrefixes    []string  `json:"read_prefixes,omitempty"`
 	WritePrefixes   []string  `json:"write_prefixes,omitempty"`
+	TokenVersion    int       `json:"token_version"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -153,11 +154,18 @@ func (s *Service) List(ownerUserID string) []*Record {
 }
 
 // Update patches agent fields (human only).
+// Disabling or tightening DefaultScopes / AllowedDriveIDs / path prefixes bumps
+// TokenVersion so existing agent JWTs fail auth immediately.
 func (s *Service) Update(ownerUserID, id string, in UpdateInput) (*Record, error) {
 	a, err := s.store.GetAgent(ownerUserID, id)
 	if err != nil {
 		return nil, fmt.Errorf("agent not found")
 	}
+	prevStatus := a.Status
+	prevScopes := append([]string(nil), a.DefaultScopes...)
+	prevDrives := append([]string(nil), a.AllowedDriveIDs...)
+	prevRead := append([]string(nil), a.ReadPrefixes...)
+	prevWrite := append([]string(nil), a.WritePrefixes...)
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" {
@@ -197,6 +205,22 @@ func (s *Service) Update(ownerUserID, id string, in UpdateInput) (*Record, error
 	if in.WritePrefixes != nil {
 		a.WritePrefixes = normalizePrefixes(in.WritePrefixes)
 	}
+	revoke := false
+	if a.Status == StatusDisabled && prevStatus != StatusDisabled {
+		revoke = true
+	}
+	if scopesTightened(prevScopes, a.DefaultScopes) {
+		revoke = true
+	}
+	if drivesTightened(prevDrives, a.AllowedDriveIDs) {
+		revoke = true
+	}
+	if prefixesTightened(prevRead, a.ReadPrefixes) || prefixesTightened(prevWrite, a.WritePrefixes) {
+		revoke = true
+	}
+	if revoke {
+		a.TokenVersion++
+	}
 	if err := s.store.UpdateAgent(a); err != nil {
 		return nil, err
 	}
@@ -218,16 +242,21 @@ func (s *Service) CheckAccess(req policy.Request) error {
 	}
 	// Fill agent path/drive prefixes from record when agent known.
 	if req.AgentID != "" {
-		if a, err := s.store.GetAgentByID(req.AgentID); err == nil && a != nil {
-			if len(req.AllowedDriveIDs) == 0 {
-				req.AllowedDriveIDs = a.AllowedDriveIDs
-			}
-			if len(req.ReadPrefixes) == 0 {
-				req.ReadPrefixes = a.ReadPrefixes
-			}
-			if len(req.WritePrefixes) == 0 {
-				req.WritePrefixes = a.WritePrefixes
-			}
+		a, err := s.store.GetAgentByID(req.AgentID)
+		if err != nil || a == nil {
+			return fmt.Errorf("agent not found")
+		}
+		if a.Status == StatusDisabled {
+			return fmt.Errorf("agent disabled")
+		}
+		if len(req.AllowedDriveIDs) == 0 {
+			req.AllowedDriveIDs = a.AllowedDriveIDs
+		}
+		if len(req.ReadPrefixes) == 0 {
+			req.ReadPrefixes = a.ReadPrefixes
+		}
+		if len(req.WritePrefixes) == 0 {
+			req.WritePrefixes = a.WritePrefixes
 		}
 	}
 	d := s.engine.Evaluate(req)
@@ -245,6 +274,9 @@ func (s *Service) CheckDriveAccess(agentID, driveID string) error {
 	a, err := s.store.GetAgentByID(agentID)
 	if err != nil {
 		return fmt.Errorf("agent not found")
+	}
+	if a.Status == StatusDisabled {
+		return fmt.Errorf("agent disabled")
 	}
 	return policy.CanAccessDrive(agentID, a.AllowedDriveIDs, driveID)
 }
@@ -307,6 +339,99 @@ func fromStore(a *store.Agent) *Record {
 		AllowedDriveIDs: append([]string(nil), a.AllowedDriveIDs...),
 		ReadPrefixes:    append([]string(nil), a.ReadPrefixes...),
 		WritePrefixes:   append([]string(nil), a.WritePrefixes...),
+		TokenVersion:    a.TokenVersion,
 		CreatedAt:       a.CreatedAt,
 	}
+}
+
+// scopesTightened is true when new scopes omit at least one previously granted scope
+// (or become empty while old was non-empty). Expanding scopes does not revoke.
+func scopesTightened(oldS, newS []string) bool {
+	if oldS == nil && newS == nil {
+		return false
+	}
+	if stringSlicesEqual(oldS, newS) {
+		return false
+	}
+	oldSet := map[string]bool{}
+	for _, s := range oldS {
+		oldSet[s] = true
+	}
+	newSet := map[string]bool{}
+	for _, s := range newS {
+		newSet[s] = true
+	}
+	for s := range oldSet {
+		if !newSet[s] {
+			return true
+		}
+	}
+	return false
+}
+
+// drivesTightened: empty allowlist means all drives; non-empty is a restriction.
+// Tightening = empty→non-empty, or removing an id from a non-empty list.
+func drivesTightened(oldD, newD []string) bool {
+	if stringSlicesEqual(oldD, newD) {
+		return false
+	}
+	if len(oldD) == 0 && len(newD) > 0 {
+		return true // newly restricted
+	}
+	if len(oldD) > 0 && len(newD) == 0 {
+		return false // expanded to all
+	}
+	oldSet := map[string]bool{}
+	for _, id := range oldD {
+		oldSet[id] = true
+	}
+	newSet := map[string]bool{}
+	for _, id := range newD {
+		newSet[id] = true
+	}
+	for id := range oldSet {
+		if !newSet[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// prefixesTightened: empty = full workspace; adding/removing that shrinks access revokes.
+func prefixesTightened(oldP, newP []string) bool {
+	if stringSlicesEqual(oldP, newP) {
+		return false
+	}
+	if len(oldP) == 0 && len(newP) > 0 {
+		return true
+	}
+	if len(oldP) > 0 && len(newP) == 0 {
+		return false
+	}
+	oldSet := map[string]bool{}
+	for _, p := range oldP {
+		oldSet[p] = true
+	}
+	newSet := map[string]bool{}
+	for _, p := range newP {
+		newSet[p] = true
+	}
+	for p := range oldSet {
+		if !newSet[p] {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

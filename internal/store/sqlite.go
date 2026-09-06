@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS agents (
   allowed_drive_ids TEXT NOT NULL DEFAULT '[]',
   read_prefixes TEXT NOT NULL DEFAULT '[]',
   write_prefixes TEXT NOT NULL DEFAULT '[]',
+  token_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner_user_id);
@@ -284,6 +285,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 		`ALTER TABLE agents ADD COLUMN allowed_drive_ids TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE agents ADD COLUMN read_prefixes TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE agents ADD COLUMN write_prefixes TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE agents ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE audit_events ADD COLUMN agent_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN agent_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN claimed_by_agent_id TEXT`,
@@ -475,6 +477,22 @@ func (s *SQLite) BumpTokenVersion(userID string) (int, error) {
 	return ver, nil
 }
 
+func (s *SQLite) BumpAgentTokenVersion(agentID string) (int, error) {
+	res, err := s.db.Exec(`UPDATE agents SET token_version = COALESCE(token_version,0) + 1 WHERE id = ?`, agentID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return 0, fmt.Errorf("agent not found")
+	}
+	var ver int
+	if err := s.db.QueryRow(`SELECT COALESCE(token_version,0) FROM agents WHERE id = ?`, agentID).Scan(&ver); err != nil {
+		return 0, err
+	}
+	return ver, nil
+}
+
 func (s *SQLite) RevokeJTI(jti string, expiresAt time.Time) error {
 	if jti == "" {
 		return fmt.Errorf("jti required")
@@ -547,13 +565,13 @@ func (s *SQLite) GetRefreshTokenByHash(tokenHash string) (*RefreshToken, error) 
 }
 
 func (s *SQLite) RevokeRefreshToken(id string) error {
-	res, err := s.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE id = ?`, id)
+	res, err := s.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE id = ? AND revoked = 0`, id)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("refresh token not found")
+		return fmt.Errorf("refresh token already revoked")
 	}
 	return nil
 }
@@ -573,12 +591,12 @@ func agentJSONField(v []string) string {
 
 func (s *SQLite) CreateAgent(a *Agent) error {
 	_, err := s.db.Exec(
-		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, allowed_drive_ids, read_prefixes, write_prefixes, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO agents (id, owner_user_id, name, description, status, default_scopes, allowed_drive_ids, read_prefixes, write_prefixes, token_version, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		a.ID, a.OwnerUserID, a.Name, a.Description, a.Status,
 		agentJSONField(a.DefaultScopes), agentJSONField(a.AllowedDriveIDs),
 		agentJSONField(a.ReadPrefixes), agentJSONField(a.WritePrefixes),
-		a.CreatedAt.UTC().Format(time.RFC3339Nano),
+		a.TokenVersion, a.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -586,7 +604,7 @@ func (s *SQLite) CreateAgent(a *Agent) error {
 func (s *SQLite) GetAgent(ownerUserID, id string) (*Agent, error) {
 	row := s.db.QueryRow(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE id = ? AND owner_user_id = ?`,
 		id, ownerUserID,
 	)
@@ -596,7 +614,7 @@ func (s *SQLite) GetAgent(ownerUserID, id string) (*Agent, error) {
 func (s *SQLite) GetAgentByID(id string) (*Agent, error) {
 	row := s.db.QueryRow(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE id = ?`,
 		id,
 	)
@@ -606,7 +624,7 @@ func (s *SQLite) GetAgentByID(id string) (*Agent, error) {
 func (s *SQLite) ListAgents(ownerUserID string) ([]*Agent, error) {
 	rows, err := s.db.Query(
 		`SELECT id, owner_user_id, name, description, status, default_scopes,
-		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), created_at
+		 COALESCE(allowed_drive_ids,'[]'), COALESCE(read_prefixes,'[]'), COALESCE(write_prefixes,'[]'), COALESCE(token_version,0), created_at
 		 FROM agents WHERE owner_user_id = ? ORDER BY created_at DESC`,
 		ownerUserID,
 	)
@@ -627,12 +645,12 @@ func (s *SQLite) ListAgents(ownerUserID string) ([]*Agent, error) {
 
 func (s *SQLite) UpdateAgent(a *Agent) error {
 	res, err := s.db.Exec(
-		`UPDATE agents SET name=?, description=?, status=?, default_scopes=?, allowed_drive_ids=?, read_prefixes=?, write_prefixes=?
+		`UPDATE agents SET name=?, description=?, status=?, default_scopes=?, allowed_drive_ids=?, read_prefixes=?, write_prefixes=?, token_version=?
 		 WHERE id=? AND owner_user_id=?`,
 		a.Name, a.Description, a.Status,
 		agentJSONField(a.DefaultScopes), agentJSONField(a.AllowedDriveIDs),
 		agentJSONField(a.ReadPrefixes), agentJSONField(a.WritePrefixes),
-		a.ID, a.OwnerUserID,
+		a.TokenVersion, a.ID, a.OwnerUserID,
 	)
 	if err != nil {
 		return err
@@ -659,7 +677,7 @@ func (s *SQLite) DeleteAgent(ownerUserID, id string) error {
 func scanAgent(row interface{ Scan(dest ...any) error }) (*Agent, error) {
 	var a Agent
 	var scopes, drives, rpref, wpref, created string
-	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &drives, &rpref, &wpref, &created); err != nil {
+	if err := row.Scan(&a.ID, &a.OwnerUserID, &a.Name, &a.Description, &a.Status, &scopes, &drives, &rpref, &wpref, &a.TokenVersion, &created); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("agent not found")
 		}
