@@ -251,3 +251,48 @@ func TestMemoryCRUD(t *testing.T) {
 		t.Fatalf("memory drive region: %+v %v", drv, err)
 	}
 }
+
+func TestDriveAliasUniqueAndMigrate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alias.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	if err := st.CreateDrive(&Drive{
+		ID: "d1", UserID: "u1", Name: "one", Alias: "A",
+		ProviderID: "p", Bucket: "b", MountPoint: "/w", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetDriveByAlias("u1", "A")
+	if err != nil || got.ID != "d1" {
+		t.Fatalf("get by alias: %+v %v", got, err)
+	}
+	err = st.CreateDrive(&Drive{
+		ID: "d2", UserID: "u1", Name: "two", Alias: "A",
+		ProviderID: "p", Bucket: "b2", MountPoint: "/w2", CreatedAt: now,
+	})
+	if err == nil {
+		t.Fatal("expected unique alias failure")
+	}
+	// empty aliases allowed twice
+	if err := st.CreateDrive(&Drive{
+		ID: "d3", UserID: "u1", Name: "three", Alias: "",
+		ProviderID: "p", Bucket: "b3", MountPoint: "/w3", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateDrive(&Drive{
+		ID: "d4", UserID: "u1", Name: "four", Alias: "",
+		ProviderID: "p", Bucket: "b4", MountPoint: "/w4", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.GetDrive("u1", "d1")
+	if err != nil || d.Alias != "A" {
+		t.Fatalf("get: %+v %v", d, err)
+	}
+}

@@ -2,6 +2,7 @@ package drive
 
 import (
 	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type Map struct {
 	ID         string    `json:"id"`
 	UserID     string    `json:"user_id"`
 	Name       string    `json:"name"`
+	Alias      string    `json:"alias,omitempty"` // optional stable label (e.g. A, WORK); unique per user
 	ProviderID string    `json:"provider_id"`
 	Bucket     string    `json:"bucket"`
 	Prefix     string    `json:"prefix,omitempty"`
@@ -61,11 +63,22 @@ func (s *Service) SetQuota(q policy.Quota) {
 // CreateInput is the body for defining a drive.
 type CreateInput struct {
 	Name       string `json:"name"`
+	Alias      string `json:"alias"` // optional; see NormalizeAlias
 	ProviderID string `json:"provider_id"`
 	Bucket     string `json:"bucket"`
 	Prefix     string `json:"prefix"`
 	MountPoint string `json:"mount_point"`
 	Region     string `json:"region"` // optional P2 scheduling/locality hint
+}
+
+// UpdateInput patches mutable drive fields. When SetAlias is true, Alias (including empty) replaces the stored value.
+type UpdateInput struct {
+	Name       string  `json:"name"`
+	Alias      string  `json:"alias"`
+	SetAlias   bool    `json:"-"` // set by HTTP when "alias" key present (incl. "")
+	Prefix     *string `json:"prefix"`
+	MountPoint string  `json:"mount_point"`
+	Region     *string `json:"region"`
 }
 
 // Create registers a logical drive.
@@ -96,11 +109,21 @@ func (s *Service) Create(userID string, in CreateInput) (*Map, error) {
 	}
 	prefix := strings.Trim(strings.TrimSpace(in.Prefix), "/")
 	region := strings.TrimSpace(in.Region)
+	alias, err := NormalizeAlias(in.Alias)
+	if err != nil {
+		return nil, err
+	}
+	if alias != "" {
+		if _, err := s.store.GetDriveByAlias(userID, alias); err == nil {
+			return nil, fmt.Errorf("alias already in use")
+		}
+	}
 
 	m := &Map{
 		ID:         uuid.NewString(),
 		UserID:     userID,
 		Name:       in.Name,
+		Alias:      alias,
 		ProviderID: in.ProviderID,
 		Bucket:     in.Bucket,
 		Prefix:     prefix,
@@ -134,6 +157,85 @@ func (s *Service) List(userID string) []*Map {
 		out = append(out, mapFromStore(d))
 	}
 	return out
+}
+
+// Resolve finds a drive by alias (preferred) or exact name when alias lookup misses.
+// Matching is case-insensitive for alias (canonical uppercase) and exact for name.
+func (s *Service) Resolve(userID, aliasOrName string) (*Map, error) {
+	q := strings.TrimSpace(aliasOrName)
+	if q == "" {
+		return nil, fmt.Errorf("alias or name required")
+	}
+	if alias, err := NormalizeAlias(q); err == nil && alias != "" {
+		if d, err := s.store.GetDriveByAlias(userID, alias); err == nil {
+			return mapFromStore(d), nil
+		}
+	}
+	list, err := s.store.ListDrives(userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range list {
+		if d.Name == q {
+			return mapFromStore(d), nil
+		}
+	}
+	return nil, fmt.Errorf("drive not found")
+}
+
+// GetByAlias returns a drive by canonical alias.
+func (s *Service) GetByAlias(userID, alias string) (*Map, error) {
+	a, err := NormalizeAlias(alias)
+	if err != nil {
+		return nil, err
+	}
+	if a == "" {
+		return nil, fmt.Errorf("drive not found")
+	}
+	d, err := s.store.GetDriveByAlias(userID, a)
+	if err != nil {
+		return nil, fmt.Errorf("drive not found")
+	}
+	return mapFromStore(d), nil
+}
+
+// Update patches mutable fields on a drive owned by user.
+func (s *Service) Update(userID, id string, in UpdateInput) (*Map, error) {
+	cur, err := s.Get(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if name := strings.TrimSpace(in.Name); name != "" {
+		cur.Name = name
+	}
+	if in.SetAlias {
+		alias, err := NormalizeAlias(in.Alias)
+		if err != nil {
+			return nil, err
+		}
+		if alias != "" && alias != cur.Alias {
+			if _, err := s.store.GetDriveByAlias(userID, alias); err == nil {
+				return nil, fmt.Errorf("alias already in use")
+			}
+		}
+		cur.Alias = alias
+	}
+	if in.Prefix != nil {
+		cur.Prefix = strings.Trim(strings.TrimSpace(*in.Prefix), "/")
+	}
+	if mp := strings.TrimSpace(in.MountPoint); mp != "" {
+		if err := validateMountPoint(mp); err != nil {
+			return nil, err
+		}
+		cur.MountPoint = mp
+	}
+	if in.Region != nil {
+		cur.Region = strings.TrimSpace(*in.Region)
+	}
+	if err := s.store.UpdateDrive(mapToStore(cur)); err != nil {
+		return nil, err
+	}
+	return cur, nil
 }
 
 // Delete removes a drive map.
@@ -222,6 +324,7 @@ func mapToStore(m *Map) *store.Drive {
 		ID:         m.ID,
 		UserID:     m.UserID,
 		Name:       m.Name,
+		Alias:      m.Alias,
 		ProviderID: m.ProviderID,
 		Bucket:     m.Bucket,
 		Prefix:     m.Prefix,
@@ -236,6 +339,7 @@ func mapFromStore(d *store.Drive) *Map {
 		ID:         d.ID,
 		UserID:     d.UserID,
 		Name:       d.Name,
+		Alias:      d.Alias,
 		ProviderID: d.ProviderID,
 		Bucket:     d.Bucket,
 		Prefix:     d.Prefix,
@@ -243,4 +347,21 @@ func mapFromStore(d *store.Drive) *Map {
 		Region:     d.Region,
 		CreatedAt:  d.CreatedAt,
 	}
+}
+
+// aliasPattern: 1–16 chars, start with letter; letters/digits/_/- thereafter.
+var aliasPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,15}$`)
+
+// NormalizeAlias trims and uppercases a drive alias. Empty input yields "".
+// Non-empty values must match ^[A-Za-z][A-Za-z0-9_-]{0,15}$.
+// Stored form is uppercase so uniqueness is case-insensitive (A == a; work == WORK).
+func NormalizeAlias(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", nil
+	}
+	if !aliasPattern.MatchString(s) {
+		return "", fmt.Errorf("invalid alias: must match ^[A-Za-z][A-Za-z0-9_-]{0,15}$")
+	}
+	return strings.ToUpper(s), nil
 }

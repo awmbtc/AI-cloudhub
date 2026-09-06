@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 )
 
 const serverName = "ai-cloudhub-mcp"
+
 // Keep in sync with internal/version.Version / release tags.
 const serverVersion = "0.2.50"
 
@@ -149,7 +151,7 @@ func handleLine(api, token, workspace string, pc *principalCache, line string) *
 			return okResp(id, toolResult(true, err.Error()))
 		}
 		return okResp(id, result)
-	case "list_drives", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "job_stats", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job", "list_providers",
+	case "list_drives", "resolve_drive", "list_bindings", "ensure_mounted_hint", "workspace_env", "resolve_path", "list_snapshots", "create_snapshot", "whoami", "list_objects", "object_restore_plan", "object_presign_get", "object_restore_version", "list_jobs", "job_stats", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job", "list_providers",
 		"list_marketplace", "install_marketplace", "list_memory", "put_memory", "search_memory", "list_graph", "link_graph", "list_connectors", "connectors_catalog", "create_connector", "get_connector", "delete_connector", "marketplace_checkout", "list_lineage", "record_lineage":
 		result, err := callTool(api, token, workspace, pc, req.Method, req.Params)
 		if err != nil {
@@ -186,9 +188,22 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
-			name: "list_drives", description: "List logical drives (GET /v1/drives). Requires drive.read for agent tokens.",
+			name: "list_drives", description: "List logical drives (GET /v1/drives). Response includes optional alias. Requires drive.read for agent tokens.",
 			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
 			schema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			name: "resolve_drive",
+			description: "Resolve drive alias (preferred) or display name to drive id + alias + name + mount_point. " +
+				"Uses GET /v1/drives?alias= or ?name= (agent allowlist applied). Requires drive.read.",
+			scopes: []string{auth.ScopeDriveRead, auth.ScopeDriveWrite},
+			schema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"alias": map[string]interface{}{"type": "string", "description": "Stable alias e.g. A or WORK (case-insensitive)"},
+					"name":  map[string]interface{}{"type": "string", "description": "Exact display name fallback when alias unset"},
+				},
+			},
 		},
 		{
 			name: "list_bindings", description: "List mount bindings (GET /v1/bindings). Optional device_id filter. Requires drive.read for agent tokens.",
@@ -346,16 +361,16 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"drive_id":     map[string]interface{}{"type": "string"},
-					"command":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-					"mode":         map[string]interface{}{"type": "string", "description": "mount | sync_workspace | direct"},
-					"binding_id":   map[string]interface{}{"type": "string"},
-					"region_hint":  map[string]interface{}{"type": "string"},
-					"note":         map[string]interface{}{"type": "string"},
-					"connector_id": map[string]interface{}{"type": "string", "description": "Optional Stage C connector (e.g. git) for runner materialization"},
-					"timeout_sec":  map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
-					"max_attempts": map[string]interface{}{"type": "integer", "description": "Max claims before lease expiry fails job (0=unlimited)"},
-					"priority":     map[string]interface{}{"type": "integer", "description": "Higher claimed first (default 0, clamped ±1000)"},
+					"drive_id":        map[string]interface{}{"type": "string"},
+					"command":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"mode":            map[string]interface{}{"type": "string", "description": "mount | sync_workspace | direct"},
+					"binding_id":      map[string]interface{}{"type": "string"},
+					"region_hint":     map[string]interface{}{"type": "string"},
+					"note":            map[string]interface{}{"type": "string"},
+					"connector_id":    map[string]interface{}{"type": "string", "description": "Optional Stage C connector (e.g. git) for runner materialization"},
+					"timeout_sec":     map[string]interface{}{"type": "integer", "description": "Hard wall-clock seconds from claim (0=none)"},
+					"max_attempts":    map[string]interface{}{"type": "integer", "description": "Max claims before lease expiry fails job (0=unlimited)"},
+					"priority":        map[string]interface{}{"type": "integer", "description": "Higher claimed first (default 0, clamped ±1000)"},
 					"labels":          map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Optional string labels (max 16)"},
 					"idempotency_key": map[string]interface{}{"type": "string", "description": "Client dedup key unique per user (replay returns same job)"},
 				},
@@ -379,11 +394,11 @@ func toolRegistry() []toolMeta {
 			schema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"job_id":      map[string]interface{}{"type": "string"},
-					"ok":          map[string]interface{}{"type": "boolean", "description": "true=succeeded (default true)"},
-					"note":        map[string]interface{}{"type": "string"},
-					"exit_code":   map[string]interface{}{"type": "integer", "description": "Process exit code from runner"},
-					"duration_ms": map[string]interface{}{"type": "integer", "description": "Wall time ms"},
+					"job_id":           map[string]interface{}{"type": "string"},
+					"ok":               map[string]interface{}{"type": "boolean", "description": "true=succeeded (default true)"},
+					"note":             map[string]interface{}{"type": "string"},
+					"exit_code":        map[string]interface{}{"type": "integer", "description": "Process exit code from runner"},
+					"duration_ms":      map[string]interface{}{"type": "integer", "description": "Wall time ms"},
 					"stdout":           map[string]interface{}{"type": "string", "description": "Capped process stdout (tail)"},
 					"stderr":           map[string]interface{}{"type": "string", "description": "Capped process stderr (tail)"},
 					"stdout_truncated": map[string]interface{}{"type": "boolean"},
@@ -636,6 +651,15 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolWhoami(api, token, pc)
 	case "list_drives":
 		return toolListDrives(api, token)
+	case "resolve_drive":
+		var args struct {
+			Alias string `json:"alias"`
+			Name  string `json:"name"`
+		}
+		if err := decodeArgs(argsJSON, &args); err != nil {
+			return nil, err
+		}
+		return toolResolveDrive(api, token, args.Alias, args.Name)
 	case "list_bindings":
 		var args struct {
 			DeviceID string `json:"device_id"`
@@ -782,15 +806,15 @@ func callTool(api, token, workspace string, pc *principalCache, name string, arg
 		return toolGetJob(api, token, args.JobID)
 	case "create_job":
 		var args struct {
-			DriveID     string   `json:"drive_id"`
-			Command     []string `json:"command"`
-			Mode        string   `json:"mode"`
-			BindingID   string   `json:"binding_id"`
-			RegionHint  string   `json:"region_hint"`
-			Note        string   `json:"note"`
-			ConnectorID string   `json:"connector_id"`
-			TimeoutSec  int               `json:"timeout_sec"`
-			MaxAttempts int               `json:"max_attempts"`
+			DriveID        string            `json:"drive_id"`
+			Command        []string          `json:"command"`
+			Mode           string            `json:"mode"`
+			BindingID      string            `json:"binding_id"`
+			RegionHint     string            `json:"region_hint"`
+			Note           string            `json:"note"`
+			ConnectorID    string            `json:"connector_id"`
+			TimeoutSec     int               `json:"timeout_sec"`
+			MaxAttempts    int               `json:"max_attempts"`
 			Priority       int               `json:"priority"`
 			Labels         map[string]string `json:"labels"`
 			IdempotencyKey string            `json:"idempotency_key"`
@@ -1133,8 +1157,53 @@ func toolListDrives(api, token string) (interface{}, error) {
 	}
 	return toolResultJSON(map[string]interface{}{
 		"drives": parsed,
-		"hint":   "Use ensure_mounted_hint with drive_id; hubd/runner for actual mount.",
+		"hint":   "Use ensure_mounted_hint with drive_id (or resolve_drive by alias); hubd/runner for actual mount.",
 	})
+}
+
+func toolResolveDrive(api, token, alias, name string) (interface{}, error) {
+	alias = strings.TrimSpace(alias)
+	name = strings.TrimSpace(name)
+	if alias == "" && name == "" {
+		return nil, fmt.Errorf("alias or name required")
+	}
+	endpoint := api + "/v1/drives"
+	if alias != "" {
+		endpoint += "?alias=" + url.QueryEscape(alias)
+	} else {
+		endpoint += "?name=" + url.QueryEscape(name)
+	}
+	body, status, err := httpDo(http.MethodGet, endpoint, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("GET /v1/drives HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var wrap struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, fmt.Errorf("parse drives: %w", err)
+	}
+	if len(wrap.Items) == 0 {
+		return nil, fmt.Errorf("drive not found")
+	}
+	if len(wrap.Items) > 1 {
+		return toolResultJSON(map[string]interface{}{
+			"matches": wrap.Items,
+			"hint":    "Multiple matches; prefer unique alias.",
+		})
+	}
+	item := wrap.Items[0]
+	out := map[string]interface{}{
+		"id":          item["id"],
+		"alias":       item["alias"],
+		"name":        item["name"],
+		"mount_point": item["mount_point"],
+		"hint":        "Use id with ensure_mounted_hint / object tools; hubd/runner for actual mount.",
+	}
+	return toolResultJSON(out)
 }
 
 func toolListBindings(api, token, deviceID string) (interface{}, error) {
@@ -1549,7 +1618,7 @@ func toolWorkspaceEnv(workspace string) interface{} {
 			"mcp_version": serverVersion,
 		},
 		"tools": []string{
-			"whoami", "list_drives", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
+			"whoami", "list_drives", "resolve_drive", "list_bindings", "list_providers", "ensure_mounted_hint", "workspace_env", "resolve_path",
 			"list_snapshots", "create_snapshot", "list_objects",
 			"list_jobs", "job_stats", "get_job", "create_job", "claim_next_job", "complete_job", "heartbeat_job", "cancel_job",
 			"list_marketplace", "install_marketplace", "marketplace_checkout", "list_memory", "put_memory", "search_memory",

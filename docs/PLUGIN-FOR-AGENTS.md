@@ -84,12 +84,12 @@ Agent 应：
 
 | 能力 | 现状 | 缺口 / 备注 |
 |------|------|-------------|
-| Provider + Drive CRUD | ✅ API | 缺友好「盘符别名」一等字段时可先用 `name` |
+| Provider + Drive CRUD | ✅ API | **`alias` 字段**（唯一 / 大写规范化）+ list `?alias=` |
 | Agent Token + scopes + drive 白名单 | ✅ | 禁用/降权即时失效已加强 |
 | MCP tools（list drives/objects、job…） | ✅ `cmd/mcp`（compatible-ish） | 各宿主「一键安装」体验未产品化 |
 | 本机自动挂载 | ✅ hubd | 依赖 rclone + FUSE；无 FUSE 用 sync_workspace |
 | 登录 / OAuth 装插件向导 | ⚠️ 现为 API login | **产品缺口**：宿主内登录页、深链、token 注入 |
-| 「A 盘」口语 → Drive 解析 | ⚠️ 靠 name/约定 | 可补：稳定 alias、MCP `resolve_drive("A")` |
+| 「A 盘」口语 → Drive 解析 | ✅ `alias` + MCP `resolve_drive` | 见 [CURSOR-MCP.md](./CURSOR-MCP.md) |
 | 跨宿主官方插件包 | ❌ | Cursor / Claude Desktop 等需分别适配 |
 
 ---
@@ -123,8 +123,8 @@ Agent 应：
 
 | 优先级 | 项 |
 |--------|-----|
-| P0 | 盘符别名约定写进 OpenAPI / MCP（`name` 或 `alias=A`），并在 QUICKSTART 给「对 Agent 怎么说」例句 |
-| P1 | 某一宿主（如 Cursor MCP）一页安装说明：命令、env、登录换 token |
+| P0 | ✅ 盘符 `alias` + OpenAPI + MCP `resolve_drive`；Cursor：[CURSOR-MCP.md](./CURSOR-MCP.md) |
+| P1 | ✅ Cursor MCP 一页安装说明（同上） |
 | P2 | 控制面简易「连接向导」或落地页引导（仍可不做完整网盘 UI） |
 | 冻结 | 不为插件叙事新开 Job admin / 平台 Runner 池 |
 
@@ -135,3 +135,4 @@ Agent 应：
 | 日期 | 说明 |
 |------|------|
 | 2026-09-06 | 初稿：确认「后台配桶 → 盘符 → 他端 Agent 插件登录 → 按盘符写入 BYOS」逻辑与现有架构同构，并记录缺口 |
+| 2026-09-07 | 落地 Drive.`alias`、list `?alias=`、MCP `resolve_drive`、[CURSOR-MCP.md](./CURSOR-MCP.md) |

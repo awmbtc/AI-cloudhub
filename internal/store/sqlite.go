@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS drives (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  alias TEXT,
   provider_id TEXT NOT NULL,
   bucket TEXT NOT NULL,
   prefix TEXT,
@@ -280,6 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 	// Soft migrations for existing DBs (ignore "duplicate column" errors).
 	for _, stmt := range []string{
 		`ALTER TABLE drives ADD COLUMN region TEXT`,
+		`ALTER TABLE drives ADD COLUMN alias TEXT`,
 		`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE agents ADD COLUMN allowed_drive_ids TEXT NOT NULL DEFAULT '[]'`,
@@ -320,6 +322,8 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 		ON jobs(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != ''`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`)
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_drives_user_alias
+		ON drives(user_id, alias) WHERE alias IS NOT NULL AND alias != ''`)
 	return nil
 }
 
@@ -769,9 +773,9 @@ func (s *SQLite) DeleteProvider(userID, id string) error {
 
 func (s *SQLite) CreateDrive(d *Drive) error {
 	_, err := s.db.Exec(
-		`INSERT INTO drives (id, user_id, name, provider_id, bucket, prefix, mount_point, region, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.UserID, d.Name, d.ProviderID, d.Bucket, d.Prefix, d.MountPoint, d.Region,
+		`INSERT INTO drives (id, user_id, name, alias, provider_id, bucket, prefix, mount_point, region, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.UserID, d.Name, d.Alias, d.ProviderID, d.Bucket, d.Prefix, d.MountPoint, d.Region,
 		d.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -782,16 +786,28 @@ func (s *SQLite) CreateDrive(d *Drive) error {
 
 func (s *SQLite) GetDrive(userID, id string) (*Drive, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, name, provider_id, bucket, prefix, mount_point, region, created_at
+		`SELECT id, user_id, name, alias, provider_id, bucket, prefix, mount_point, region, created_at
 		 FROM drives WHERE id = ? AND user_id = ?`,
 		id, userID,
 	)
 	return scanDrive(row)
 }
 
+func (s *SQLite) GetDriveByAlias(userID, alias string) (*Drive, error) {
+	if alias == "" {
+		return nil, fmt.Errorf("drive not found")
+	}
+	row := s.db.QueryRow(
+		`SELECT id, user_id, name, alias, provider_id, bucket, prefix, mount_point, region, created_at
+		 FROM drives WHERE user_id = ? AND alias = ?`,
+		userID, alias,
+	)
+	return scanDrive(row)
+}
+
 func (s *SQLite) ListDrives(userID string) ([]*Drive, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, name, provider_id, bucket, prefix, mount_point, region, created_at
+		`SELECT id, user_id, name, alias, provider_id, bucket, prefix, mount_point, region, created_at
 		 FROM drives WHERE user_id = ?`,
 		userID,
 	)
@@ -812,8 +828,8 @@ func (s *SQLite) ListDrives(userID string) ([]*Drive, error) {
 
 func (s *SQLite) UpdateDrive(d *Drive) error {
 	res, err := s.db.Exec(
-		`UPDATE drives SET name=?, prefix=?, mount_point=?, region=? WHERE id=? AND user_id=?`,
-		d.Name, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
+		`UPDATE drives SET name=?, alias=?, prefix=?, mount_point=?, region=? WHERE id=? AND user_id=?`,
+		d.Name, d.Alias, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
 	)
 	if err != nil {
 		return err
@@ -994,12 +1010,15 @@ func scanProviderRows(rows *sql.Rows) (*Provider, error) {
 func scanDrive(row scannable) (*Drive, error) {
 	var d Drive
 	var created string
-	var region sql.NullString
-	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &created); err != nil {
+	var region, alias sql.NullString
+	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &alias, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &created); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("drive not found")
 		}
 		return nil, err
+	}
+	if alias.Valid {
+		d.Alias = alias.String
 	}
 	if region.Valid {
 		d.Region = region.String
@@ -1329,7 +1348,7 @@ func (s *SQLite) ListRunningJobs(userID string) ([]*Job, error) {
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT `+jobSelectCols+` FROM jobs WHERE status = 'running'
+			`SELECT ` + jobSelectCols + ` FROM jobs WHERE status = 'running'
 			 ORDER BY created_at ASC, id ASC`,
 		)
 	}

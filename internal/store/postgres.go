@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS drives (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  alias TEXT,
   provider_id TEXT NOT NULL,
   bucket TEXT NOT NULL,
   prefix TEXT,
@@ -264,6 +265,9 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_user ON job_webhook_outbox(user_id
 	_, _ = p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_user_idempotency ON jobs(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''`)
 	_, _ = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at)`)
 	_, _ = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`)
+	_, _ = p.db.Exec(`ALTER TABLE drives ADD COLUMN IF NOT EXISTS alias TEXT`)
+	_, _ = p.db.Exec(`ALTER TABLE drives ADD COLUMN IF NOT EXISTS region TEXT`)
+	_, _ = p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_drives_user_alias ON drives(user_id, alias) WHERE alias IS NOT NULL AND alias <> ''`)
 	return nil
 }
 
@@ -694,20 +698,42 @@ func (p *Postgres) DeleteProvider(userID, id string) error {
 
 func (p *Postgres) CreateDrive(d *Drive) error {
 	_, err := p.db.Exec(
-		`INSERT INTO drives (id,user_id,name,provider_id,bucket,prefix,mount_point,region,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		d.ID, d.UserID, d.Name, d.ProviderID, d.Bucket, d.Prefix, d.MountPoint, d.Region, d.CreatedAt.UTC(),
+		`INSERT INTO drives (id,user_id,name,alias,provider_id,bucket,prefix,mount_point,region,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		d.ID, d.UserID, d.Name, d.Alias, d.ProviderID, d.Bucket, d.Prefix, d.MountPoint, d.Region, d.CreatedAt.UTC(),
 	)
 	return err
 }
 
 func (p *Postgres) GetDrive(userID, id string) (*Drive, error) {
 	row := p.db.QueryRow(
-		`SELECT id,user_id,name,provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE id=$1 AND user_id=$2`,
+		`SELECT id,user_id,name,COALESCE(alias,''),provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE id=$1 AND user_id=$2`,
 		id, userID,
 	)
 	var d Drive
 	var region sql.NullString
-	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &d.CreatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.Alias, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &d.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("drive not found")
+		}
+		return nil, err
+	}
+	if region.Valid {
+		d.Region = region.String
+	}
+	return &d, nil
+}
+
+func (p *Postgres) GetDriveByAlias(userID, alias string) (*Drive, error) {
+	if alias == "" {
+		return nil, fmt.Errorf("drive not found")
+	}
+	row := p.db.QueryRow(
+		`SELECT id,user_id,name,COALESCE(alias,''),provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE user_id=$1 AND alias=$2`,
+		userID, alias,
+	)
+	var d Drive
+	var region sql.NullString
+	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.Alias, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &d.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("drive not found")
 		}
@@ -721,8 +747,8 @@ func (p *Postgres) GetDrive(userID, id string) (*Drive, error) {
 
 func (p *Postgres) UpdateDrive(d *Drive) error {
 	res, err := p.db.Exec(
-		`UPDATE drives SET name=$1, prefix=$2, mount_point=$3, region=$4 WHERE id=$5 AND user_id=$6`,
-		d.Name, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
+		`UPDATE drives SET name=$1, alias=$2, prefix=$3, mount_point=$4, region=$5 WHERE id=$6 AND user_id=$7`,
+		d.Name, d.Alias, d.Prefix, d.MountPoint, d.Region, d.ID, d.UserID,
 	)
 	if err != nil {
 		return err
@@ -736,7 +762,7 @@ func (p *Postgres) UpdateDrive(d *Drive) error {
 
 func (p *Postgres) ListDrives(userID string) ([]*Drive, error) {
 	rows, err := p.db.Query(
-		`SELECT id,user_id,name,provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE user_id=$1`, userID,
+		`SELECT id,user_id,name,COALESCE(alias,''),provider_id,bucket,prefix,mount_point,region,created_at FROM drives WHERE user_id=$1`, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -746,7 +772,7 @@ func (p *Postgres) ListDrives(userID string) ([]*Drive, error) {
 	for rows.Next() {
 		var d Drive
 		var region sql.NullString
-		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.Alias, &d.ProviderID, &d.Bucket, &d.Prefix, &d.MountPoint, &region, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		if region.Valid {
@@ -1124,7 +1150,7 @@ func (p *Postgres) ListRunningJobs(userID string) ([]*Job, error) {
 		)
 	} else {
 		rows, err = p.db.Query(
-			`SELECT `+jobSelectColsPG+` FROM jobs
+			`SELECT ` + jobSelectColsPG + ` FROM jobs
 			 WHERE status='running'
 			 ORDER BY created_at ASC, id ASC`,
 		)

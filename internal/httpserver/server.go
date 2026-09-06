@@ -14,9 +14,9 @@ import (
 	"github.com/awmbtc/AI-cloudhub/internal/agent"
 	"github.com/awmbtc/AI-cloudhub/internal/auth"
 	"github.com/awmbtc/AI-cloudhub/internal/config"
+	"github.com/awmbtc/AI-cloudhub/internal/connector"
 	"github.com/awmbtc/AI-cloudhub/internal/device"
 	"github.com/awmbtc/AI-cloudhub/internal/drive"
-	"github.com/awmbtc/AI-cloudhub/internal/connector"
 	"github.com/awmbtc/AI-cloudhub/internal/idgraph"
 	"github.com/awmbtc/AI-cloudhub/internal/job"
 	"github.com/awmbtc/AI-cloudhub/internal/lineage"
@@ -37,14 +37,14 @@ const principalCtxKey ctxKey = 1
 
 // Server is the HTTP control plane.
 type Server struct {
-	cfg       config.Config
-	auth      *auth.Service
-	ws        *workspace.Service // optional legacy
-	providers *provider.Service
-	drives    *drive.Service
-	devices   *device.Service
-	jobs      *job.Service
-	agents    *agent.Service
+	cfg        config.Config
+	auth       *auth.Service
+	ws         *workspace.Service // optional legacy
+	providers  *provider.Service
+	drives     *drive.Service
+	devices    *device.Service
+	jobs       *job.Service
+	agents     *agent.Service
 	memory     *memkernel.Service
 	market     *marketplace.Service
 	lineage    *lineage.Service
@@ -98,23 +98,23 @@ func New(d Deps) http.Handler {
 		agentsSvc = agent.NewService(d.Store)
 	}
 	s := &Server{
-		cfg:       d.Config,
-		auth:      d.Auth,
-		ws:        d.Workspace,
-		providers: d.Providers,
-		drives:    d.Drives,
-		devices:   d.Devices,
-		jobs:      d.Jobs,
-		agents:    agentsSvc,
+		cfg:        d.Config,
+		auth:       d.Auth,
+		ws:         d.Workspace,
+		providers:  d.Providers,
+		drives:     d.Drives,
+		devices:    d.Devices,
+		jobs:       d.Jobs,
+		agents:     agentsSvc,
 		memory:     d.Memory,
 		market:     d.Market,
 		lineage:    d.Lineage,
 		idgraph:    d.IDGraph,
 		connectors: d.Connectors,
 		limit:      lim,
-		authLim:   policy.NewAuthLimiter(authRate, 5),
-		authFail:  policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
-		store:     d.Store,
+		authLim:    policy.NewAuthLimiter(authRate, 5),
+		authFail:   policy.NewFailureTracker(failMax, time.Duration(failWin)*time.Minute),
+		store:      d.Store,
 	}
 	mux := http.NewServeMux()
 	// Browser landing for domain front door (e.g. https://sstc.chat/) — not a full web UI.
@@ -1041,14 +1041,18 @@ func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID,
 		}
 		m, err := s.drives.Create(userID, in)
 		if err != nil {
-			if strings.Contains(err.Error(), "quota exceeded") {
+			if strings.Contains(err.Error(), "quota exceeded") || strings.Contains(err.Error(), "alias already in use") {
 				writeErr(w, http.StatusConflict, err.Error())
 				return
 			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.auth.Audit(userID, "drive.create", m.ID, m.Name)
+		detail := m.Name
+		if m.Alias != "" {
+			detail = m.Name + " alias=" + m.Alias
+		}
+		s.auth.Audit(userID, "drive.create", m.ID, detail)
 		writeJSON(w, http.StatusCreated, m)
 	case http.MethodGet:
 		if !s.requireScope(w, r, auth.ScopeDriveRead) {
@@ -1069,6 +1073,29 @@ func (s *Server) routeDrivesRoot(w http.ResponseWriter, r *http.Request, userID,
 				}
 				items = filtered
 			}
+		}
+		if aliasQ := strings.TrimSpace(r.URL.Query().Get("alias")); aliasQ != "" {
+			canon, err := drive.NormalizeAlias(aliasQ)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			filtered := make([]*drive.Map, 0, 1)
+			for _, m := range items {
+				if m.Alias == canon {
+					filtered = append(filtered, m)
+				}
+			}
+			items = filtered
+		}
+		if nameQ := strings.TrimSpace(r.URL.Query().Get("name")); nameQ != "" {
+			filtered := make([]*drive.Map, 0, 1)
+			for _, m := range items {
+				if m.Name == nameQ {
+					filtered = append(filtered, m)
+				}
+			}
+			items = filtered
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 	default:
@@ -1156,6 +1183,43 @@ func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, 
 				writeErr(w, http.StatusNotFound, err.Error())
 				return
 			}
+			writeJSON(w, http.StatusOK, m)
+		case http.MethodPatch, http.MethodPut:
+			if !s.requireScope(w, r, auth.ScopeDriveWrite) {
+				return
+			}
+			if !s.allowAgentDrive(w, r, id) {
+				return
+			}
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			var rawMap map[string]json.RawMessage
+			_ = json.Unmarshal(raw, &rawMap)
+			var in drive.UpdateInput
+			if err := json.Unmarshal(raw, &in); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if _, ok := rawMap["alias"]; ok {
+				in.SetAlias = true
+			}
+			m, err := s.drives.Update(userID, id, in)
+			if err != nil {
+				if strings.Contains(err.Error(), "alias already in use") {
+					writeErr(w, http.StatusConflict, err.Error())
+					return
+				}
+				if strings.Contains(err.Error(), "not found") {
+					writeErr(w, http.StatusNotFound, err.Error())
+					return
+				}
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.auth.Audit(userID, "drive.update", m.ID, m.Name)
 			writeJSON(w, http.StatusOK, m)
 		case http.MethodDelete:
 			if !s.requireScope(w, r, auth.ScopeDriveWrite) {
@@ -2508,7 +2572,7 @@ func (s *Server) handleAdminJobsList(w http.ResponseWriter, r *http.Request, adm
 		"region":    filt.RegionHint,
 		"runner_id": filt.ClaimedByRunnerID,
 		"limit":     effLimit,
-		"count":   len(items),
+		"count":     len(items),
 	}
 	if nextCursor != "" {
 		resp["next_cursor"] = nextCursor

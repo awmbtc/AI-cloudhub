@@ -1,6 +1,6 @@
 # MCP helper (agent tool server)
 
-`cmd/mcp` is a **stdio JSON-RPC** helper for agents. MCP-compatible-ish (`initialize` / `tools/list` / `tools/call`), not a full MCP SDK host.
+`cmd/mcp` is a **stdio JSON-RPC** helper for agents. **Cursor wiring:** [CURSOR-MCP.md](./CURSOR-MCP.md). MCP-compatible-ish (`initialize` / `tools/list` / `tools/call`), not a full MCP SDK host.
 
 ## Version 0.2 security
 
@@ -35,16 +35,17 @@ go build -o .bin/mcp ./cmd/mcp
 | Tool | Scopes (agent) | Behavior |
 |------|----------------|----------|
 | `whoami` | — | `GET /v1/me` principal + scopes |
-| `list_drives` | drive.read\|write | `GET /v1/drives` |
-| `list_bindings` | drive.read\|write | `GET /v1/bindings` (optional `device_id`) |
-| `ensure_mounted_hint` | drive.read\|write | Instructions + optional session probe; path jail on mount_point |
+| `list_drives` | drive.read|write | `GET /v1/drives` (includes optional `alias`) |
+| `resolve_drive` | drive.read|write | Resolve `alias` or `name` → drive id + alias + name + mount_point (`GET /v1/drives?alias=` / `?name=`) |
+| `list_bindings` | drive.read|write | `GET /v1/bindings` (optional `device_id`) |
+| `ensure_mounted_hint` | drive.read|write | Instructions + optional session probe; path jail on mount_point |
 | `workspace_env` | — | Env contract (local) |
 | `resolve_path` | — | Local path jail check |
-| `list_snapshots` | drive.read\|write | `GET /v1/drives/{id}/snapshots` |
+| `list_snapshots` | drive.read|write | `GET /v1/drives/{id}/snapshots` |
 | `create_snapshot` | drive.write | `POST /v1/drives/{id}/snapshots` |
-| `list_objects` | drive.read\|write | `GET /v1/drives/{id}/objects` live inventory |
-| `object_restore_plan` | drive.read\|write | restore guidance: CLI + optional presign + api path |
-| `object_presign_get` | drive.read\|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
+| `list_objects` | drive.read|write | `GET /v1/drives/{id}/objects` live inventory |
+| `object_restore_plan` | drive.read|write | restore guidance: CLI + optional presign + api path |
+| `object_presign_get` | drive.read|write | short-lived GET URL; `type=qiniu` → `method=qiniu_download`; else S3 presign |
 | `object_restore_version` | drive.write | BYOS server-side `CopyObject` version→current (no body proxy) |
 | `list_jobs` | job.run | status / agent / labels 过滤；`limit`/`cursor` keyset |
 | `job_stats` | job.run | `GET /v1/jobs/stats` 各状态计数 |

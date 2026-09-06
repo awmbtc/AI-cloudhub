@@ -2,7 +2,7 @@
 
 Goal: from a clean clone to **agent token → MCP tools → optional hubd mount hint** in about 30 minutes.
 
-This is the short path. Full tool tables live in [MCP.md](./MCP.md); production hardening in [PRODUCTION.md](./PRODUCTION.md); policy in [POLICY.md](./POLICY.md). Automated regression: `make smoke-agent` / `make smoke-mcp` / **`make smoke-quickstart-agent`**.
+This is the short path. Full tool tables live in [MCP.md](./MCP.md); **Cursor install:** [CURSOR-MCP.md](./CURSOR-MCP.md); production hardening in [PRODUCTION.md](./PRODUCTION.md); policy in [POLICY.md](./POLICY.md). Automated regression: `make smoke-agent` / `make smoke-mcp` / **`make smoke-quickstart-agent`**.
 
 **Verified on v0.2.51** (local SQLite, free high port, no live MinIO): register → agent token → MCP `whoami` / `list_drives` → create/claim/complete job → `ensure_mounted_hint` → offline Qiniu `object_presign_get` (`method=qiniu_download`). Product spine: [GOLDEN-PATH.md](./GOLDEN-PATH.md) / `make smoke-golden`.
 

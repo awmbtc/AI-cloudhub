@@ -18,7 +18,7 @@ type Memory struct {
 	devices    map[string]*Device // id -> device
 	jobs       map[string]*Job
 	audits     []*AuditEvent
-	revokedJTI map[string]time.Time // jti -> expiresAt
+	revokedJTI map[string]time.Time     // jti -> expiresAt
 	refresh    map[string]*RefreshToken // id -> token
 	agents     map[string]*Agent        // id -> agent
 	snapshots  map[string]*Snapshot     // id -> snapshot
@@ -434,6 +434,21 @@ func (m *Memory) GetDrive(userID, id string) (*Drive, error) {
 	}
 	cp := *d
 	return &cp, nil
+}
+
+func (m *Memory) GetDriveByAlias(userID, alias string) (*Drive, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if alias == "" {
+		return nil, fmt.Errorf("drive not found")
+	}
+	for _, d := range m.drives {
+		if d.UserID == userID && d.Alias == alias {
+			cp := *d
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("drive not found")
 }
 
 func (m *Memory) ListDrives(userID string) ([]*Drive, error) {
@@ -1493,8 +1508,8 @@ func (m *Memory) PurgeWebhookOutbox(olderThan time.Time, limit int) (int, error)
 		limit = 5000
 	}
 	type cand struct {
-		id  string
-		at  time.Time
+		id string
+		at time.Time
 	}
 	var list []cand
 	for id, e := range m.webhooks {

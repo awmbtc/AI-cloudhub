@@ -86,6 +86,7 @@ Also present under `scripts/`: `smoke-drive.sh`, `smoke-p1.sh` (not all wired as
 - Stage C: `docs/STAGE-C.md` · Memory scope: `docs/STAGE-C-SCOPE-MEMORY.md` · connectors: `docs/CONNECTORS.md`
 - OpenAPI: `docs/openapi.yaml` (includes Stage C paths)
 - MCP tools: `docs/MCP.md`
+- Cursor MCP install: `docs/CURSOR-MCP.md`
 
 ## Agent hygiene
 

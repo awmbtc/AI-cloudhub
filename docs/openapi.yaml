@@ -362,6 +362,11 @@ components:
           type: string
         name:
           type: string
+        alias:
+          type: string
+          description: >
+            Optional stable human/agent label (e.g. A, WORK). Pattern
+            ^[A-Za-z][A-Za-z0-9_-]{0,15}$; stored uppercase; unique per user when set.
         provider_id:
           type: string
         bucket:
@@ -384,10 +389,28 @@ components:
       properties:
         name:
           type: string
+        alias:
+          type: string
+          description: Optional alias (see Drive.alias)
         provider_id:
           type: string
         bucket:
           type: string
+        prefix:
+          type: string
+        mount_point:
+          type: string
+        region:
+          type: string
+
+    DriveUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        alias:
+          type: string
+          description: Set or clear (empty string clears) alias when present in body
         prefix:
           type: string
         mount_point:
@@ -2662,6 +2685,17 @@ paths:
       operationId: listDrives
       security:
         - bearerAuth: []
+      parameters:
+        - name: alias
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by canonical alias (case-insensitive; e.g. A or work)
+        - name: name
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by exact display name
       responses:
         '200':
           description: Drive list
@@ -2724,6 +2758,74 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [drives]
+      summary: Update drive (name, alias, prefix, mount_point, region)
+      operationId: updateDrive
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriveUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Drive'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Alias already in use
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      tags: [drives]
+      summary: Update drive (same as PATCH)
+      operationId: putDrive
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriveUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Drive'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Alias already in use
         '429':
           $ref: '#/components/responses/RateLimited'
     delete:

@@ -38,6 +38,8 @@ type Drive struct {
 	ID         string
 	UserID     string
 	Name       string
+	// Alias is an optional stable human/agent label (e.g. "A", "WORK"), unique per user when set.
+	Alias      string
 	ProviderID string
 	Bucket     string
 	Prefix     string
@@ -391,8 +393,11 @@ type Store interface {
 	// Drives
 	CreateDrive(d *Drive) error
 	GetDrive(userID, id string) (*Drive, error)
+	// GetDriveByAlias returns the drive whose Alias equals alias (exact, canonical form).
+	// Empty alias is invalid and returns not found.
+	GetDriveByAlias(userID, alias string) (*Drive, error)
 	ListDrives(userID string) ([]*Drive, error)
-	// UpdateDrive updates mutable drive fields (name, prefix, mount_point, region).
+	// UpdateDrive updates mutable drive fields (name, alias, prefix, mount_point, region).
 	UpdateDrive(d *Drive) error
 	DeleteDrive(userID, id string) error
 

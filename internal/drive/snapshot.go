@@ -308,6 +308,18 @@ func (s *Service) RestoreSnapshot(userID, driveID, id string, apply bool) (map[s
 	if strings.TrimSpace(snapMap.Name) != "" {
 		cur.Name = snapMap.Name
 	}
+	if strings.TrimSpace(snapMap.Alias) != "" {
+		alias, err := NormalizeAlias(snapMap.Alias)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot alias: %w", err)
+		}
+		if alias != "" && alias != cur.Alias {
+			if _, err := s.store.GetDriveByAlias(userID, alias); err == nil {
+				return nil, fmt.Errorf("alias already in use")
+			}
+		}
+		cur.Alias = alias
+	}
 	cur.Prefix = snapMap.Prefix
 	if strings.TrimSpace(snapMap.MountPoint) != "" {
 		if err := validateMountPoint(snapMap.MountPoint); err != nil {
