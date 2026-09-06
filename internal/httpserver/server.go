@@ -1159,12 +1159,52 @@ func (s *Server) sessionOptsFrom(r *http.Request) drive.SessionOpts {
 	}
 }
 
+// routeDriveByAlias handles GET /v1/drives/by-alias/{alias}.
+// Auth + drive.read + agent allowlist/policy match get-drive-by-id.
+// Alias is normalized like create (trim + uppercase). 404 if missing; 403 if agent denied.
+func (s *Server) routeDriveByAlias(w http.ResponseWriter, r *http.Request, userID string, rest []string) {
+	if len(rest) != 1 || rest[0] == "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.requireScope(w, r, auth.ScopeDriveRead) {
+		return
+	}
+	alias, err := drive.NormalizeAlias(rest[0])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if alias == "" {
+		writeErr(w, http.StatusNotFound, "drive not found")
+		return
+	}
+	m, err := s.drives.GetByAlias(userID, alias)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !s.allowAgentDrive(w, r, m.ID) {
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
 func (s *Server) routeDrivesSub(w http.ResponseWriter, r *http.Request, userID, _, _ string) {
 	path := strings.TrimPrefix(r.URL.Path, "/v1/drives/")
 	path = strings.Trim(path, "/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	// GET /v1/drives/by-alias/{alias} must be handled before treating parts[0] as {id}.
+	if parts[0] == "by-alias" {
+		s.routeDriveByAlias(w, r, userID, parts[1:])
 		return
 	}
 	id := parts[0]

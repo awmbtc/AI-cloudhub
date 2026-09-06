@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ai-cloudhub": {
+      "command": "/ABSOLUTE/PATH/TO/AI-cloudhub/.bin/mcp",
+      "args": [],
+      "env": {
+        "AI_CLOUDHUB_API": "http://127.0.0.1:8080",
+        "AI_CLOUDHUB_TOKEN": "<paste agent token or load from your secrets manager>",
+        "AI_CLOUDHUB_WORKSPACE": "/workspace"
+      }
+    }
+  }
+}

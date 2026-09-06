@@ -27,7 +27,8 @@
 | [docs/BUDGET-WOOL.md](docs/BUDGET-WOOL.md) | 穷部署 |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | **实现进度对照表** |
 | [docs/MCP.md](docs/MCP.md) | MCP-compatible-ish agent tool helper |
-| [docs/CURSOR-MCP.md](docs/CURSOR-MCP.md) | **Cursor**：`.bin/mcp` + Agent Token + 「写到 A 盘」 |
+| [docs/CURSOR-MCP.md](docs/CURSOR-MCP.md) | **Cursor 一键**：`scripts/cursor-mcp-install.sh` + Agent Token + 「写到 A 盘」 |
+| [docs/PLUGIN-OAUTH.md](docs/PLUGIN-OAUTH.md) | 宿主 OAuth / 应用商店：**设计**（Phase 0 手动 token） |
 | [docs/QUICKSTART-AGENT.md](docs/QUICKSTART-AGENT.md) | **Agent 30 分钟**：token + MCP + hubd 挂载提示 |
 | [docs/STS.md](docs/STS.md) | 多厂商 STS / Qiniu 下载 token / OCI IAM |
 | [docs/STS-RUNBOOK.md](docs/STS-RUNBOOK.md) | **STS 联调剧本**（fail-open + live MinIO） |
@@ -139,7 +140,7 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 | `list_jobs` / `create_job` / `claim_next_job` / `complete_job` / `cancel_job` | job.run | BYOC 任务（用户 runner，D-001） |
 | `ensure_mounted_hint` / `workspace_env` / `resolve_path` | drive / local | 挂载提示与路径 jail |
 
-详情：[docs/MCP.md](docs/MCP.md) · 现场：`make smoke-mcp`
+详情：[docs/MCP.md](docs/MCP.md) · Cursor 一键：`./scripts/cursor-mcp-install.sh`（[CURSOR-MCP.md](docs/CURSOR-MCP.md)）· 现场：`make smoke-mcp`
 
 ## 主要 API
 
@@ -152,6 +153,7 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-deps.ps1
 | GET | `/metrics` | Prometheus 指标 |
 | GET | `/v1/runtime/check` | 本机 rclone/FUSE 预检 |
 | GET | `/v1/providers/catalog` | 厂商目录 |
+| GET | `/v1/drives/by-alias/{alias}` | 按别名取盘（`drive.read`；alias 大写规范化） |
 | POST | `/v1/auth/register` `login` | 账号（首用户 admin） |
 | GET | `/v1/me` | 当前用户与角色 |
 | POST | `/v1/me/password` | 改密 `{old_password,new_password}` |

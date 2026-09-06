@@ -2735,6 +2735,43 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/drives/by-alias/{alias}:
+    get:
+      tags: [drives]
+      summary: Get drive by alias
+      description: |
+        Resolve a drive by its stable alias (trim + uppercase, same rules as create).
+        Requires scope **drive.read**. Agent tokens use the same allowlist/policy as
+        `GET /v1/drives/{id}`. Prefer this over list `?alias=` when you need a single
+        object with 404/403 semantics. Registered before `{id}` so `by-alias` is not
+        treated as a drive id.
+      operationId: getDriveByAlias
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: alias
+          in: path
+          required: true
+          schema: { type: string }
+          description: Drive alias (case-insensitive; e.g. A or work → WORK)
+      responses:
+        '200':
+          description: Drive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Drive'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/drives/{id}:
     get:
       tags: [drives]
@@ -2756,6 +2793,8 @@ paths:
                 $ref: '#/components/schemas/Drive'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':

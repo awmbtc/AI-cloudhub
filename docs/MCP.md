@@ -36,7 +36,7 @@ go build -o .bin/mcp ./cmd/mcp
 |------|----------------|----------|
 | `whoami` | — | `GET /v1/me` principal + scopes |
 | `list_drives` | drive.read|write | `GET /v1/drives` (includes optional `alias`) |
-| `resolve_drive` | drive.read|write | Resolve `alias` or `name` → drive id + alias + name + mount_point (`GET /v1/drives?alias=` / `?name=`) |
+| `resolve_drive` | drive.read|write | Resolve `alias` or `name` → drive id + alias + name + mount_point (`GET /v1/drives/by-alias/{alias}` preferred; also list `?alias=` / `?name=`) |
 | `list_bindings` | drive.read|write | `GET /v1/bindings` (optional `device_id`) |
 | `ensure_mounted_hint` | drive.read|write | Instructions + optional session probe; path jail on mount_point |
 | `workspace_env` | — | Env contract (local) |

@@ -6,6 +6,31 @@ Related: [MCP.md](./MCP.md) · [QUICKSTART-AGENT.md](./QUICKSTART-AGENT.md) · [
 
 ---
 
+## 0. One-command install (recommended)
+
+From the repo root:
+
+```bash
+./scripts/cursor-mcp-install.sh
+# optional:
+#   AI_CLOUDHUB_API=https://hub.example.com ./scripts/cursor-mcp-install.sh
+#   ./scripts/cursor-mcp-install.sh --write-example   # also writes deploy/cursor/mcp.json from example
+```
+
+The script:
+
+1. Builds `.bin/mcp` with `CGO_ENABLED=0` if missing (or if `--force-build`)
+2. Prints a ready-to-paste Cursor MCP snippet (`mcpServers.ai-cloudhub`) with **absolute** `command` path
+3. Uses placeholders for `AI_CLOUDHUB_API` and token (prefer reading a local token file — never commit tokens)
+
+Committed example config: [`deploy/cursor/mcp.json.example`](../deploy/cursor/mcp.json.example).
+
+Then mint an Agent Token (section 2), put it in env or a file your shell exports, and reload Cursor MCP.
+
+HTTP equivalent of `resolve_drive` by alias: `GET /v1/drives/by-alias/{alias}` (scope `drive.read`; agent allowlist same as get-by-id).
+
+---
+
 ## 1. Build the MCP binary
 
 ```bash
