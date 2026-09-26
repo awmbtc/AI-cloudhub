@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- README 重写：项目定位、红线、架构、功能、厂商、快速开始、MCP、API、与 Clodex 云盘插件的集成（含交互稿预览）、安全模型、赞助商。
+- 许可证由 Apache-2.0 改为 MIT（`LICENSE`、`docs/openapi.yaml`）。
+- 新增 `docs/assets/`：Clodex 云盘插件交互稿截图与赞助商标识。
+
 ## v0.2.63
 
 Browser landing for domain front door:
